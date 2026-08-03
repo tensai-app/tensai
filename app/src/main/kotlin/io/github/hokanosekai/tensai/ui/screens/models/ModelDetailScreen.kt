@@ -107,8 +107,6 @@ fun ModelDetailScreen(
                         WrappingMetadataRow("Estimated memory", compatibility.explanation)
                     }
 
-                    // TODO(TEN-30): this only navigates to the loading route so far — the actual
-                    // InferenceQueue.loadModel(...) call for this model's path lands with TEN-30.
                     Button(
                         onClick = { onLoadClick(model.id) },
                         modifier = Modifier.fillMaxWidth().padding(top = 24.dp),

@@ -19,10 +19,7 @@ sealed class TensaiDestination(val route: String) {
         fun route(modelId: String) = "model/$modelId"
     }
 
-    /**
-     * TEN-30 wires the actual [io.github.hokanosekai.tensai.runtime.InferenceQueue.loadModel]
-     * call for [ARG_MODEL_ID] — for now this route only shows the fake looping glyph.
-     */
+    /** Drives [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel] for [ARG_MODEL_ID]. */
     data object Loading : TensaiDestination("loading/{modelId}") {
         const val ARG_MODEL_ID = "modelId"
         fun route(modelId: String) = "loading/$modelId"
