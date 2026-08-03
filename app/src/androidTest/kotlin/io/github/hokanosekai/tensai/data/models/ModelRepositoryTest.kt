@@ -63,6 +63,9 @@ class ModelRepositoryTest {
 
     @After
     fun tearDown() {
+        // setUp may have bailed on its assumeTrue before initializing anything —
+        // tearDown must not turn that skip into a failure.
+        if (!::db.isInitialized) return
         db.close()
         // The repository copies into the real app's filesDir — clean up so repeated runs don't
         // accumulate files or trip the duplicate check against a previous run's copy.

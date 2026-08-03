@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.runtime
 
 import android.content.Context
+import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
@@ -46,6 +47,9 @@ object RuntimeGraph {
      * one observer can't cancel the others.
      */
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** See [DeviceProfiler]'s KDoc for what's cached vs. re-read on each [DeviceProfiler.profile] call. */
+    val deviceProfiler: DeviceProfiler by lazy { DeviceProfiler(appContext) }
 
     private val database: TensaiDb by lazy { TensaiDb.build(appContext) }
 

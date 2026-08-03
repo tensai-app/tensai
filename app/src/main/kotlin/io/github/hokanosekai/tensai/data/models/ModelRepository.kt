@@ -132,6 +132,8 @@ class ModelRepository(
             quantLabel = info.quantLabel,
             paramCount = info.paramCount,
             contextLength = info.contextLength,
+            embeddingLength = info.embeddingLength,
+            blockCount = info.blockCount,
             supportsThinking = info.supportsThinking,
             importedAt = System.currentTimeMillis(),
         )

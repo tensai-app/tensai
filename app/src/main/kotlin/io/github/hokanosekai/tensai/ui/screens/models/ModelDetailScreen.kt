@@ -1,7 +1,9 @@
 package io.github.hokanosekai.tensai.ui.screens.models
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -80,6 +82,20 @@ fun ModelDetailScreen(
                 ) {
                     Text(text = model.displayName, style = MaterialTheme.typography.headlineSmall)
 
+                    val compatibility = modelCompatibility(model)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        CompatDot(compatibility.verdict)
+                        Text(
+                            text = compatibility.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
                     Column(modifier = Modifier.padding(top = 20.dp)) {
                         MetadataRow("Architecture", model.architecture)
                         MetadataRow("Parameters", formatParamCount(model.paramCount))
@@ -87,6 +103,8 @@ fun ModelDetailScreen(
                         MetadataRow("Context length", "${model.contextLength} tokens")
                         MetadataRow("File size", formatFileSize(model.sizeBytes))
                         MetadataRow("Thinking mode", if (model.supportsThinking) "Supported" else "Not supported")
+                        MetadataRow("Recommended backend", compatibility.recommendedBackend.name)
+                        WrappingMetadataRow("Estimated memory", compatibility.explanation)
                     }
 
                     // TODO(TEN-30): this only navigates to the loading route so far — the actual
@@ -167,6 +185,27 @@ private fun MetadataRow(label: String, value: String, modifier: Modifier = Modif
             fontFamily = TensaiMono,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.align(Alignment.CenterEnd),
+        )
+    }
+}
+
+/**
+ * Like [MetadataRow], but stacks [value] below [label] instead of side-by-side — for values too
+ * long to share a line at any reasonable width, e.g. [io.github.hokanosekai.tensai.compat.Compatibility.explanation].
+ */
+@Composable
+private fun WrappingMetadataRow(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            fontFamily = TensaiMono,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 2.dp),
         )
     }
 }

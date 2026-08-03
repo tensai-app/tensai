@@ -15,6 +15,11 @@ import androidx.room.PrimaryKey
  * @param fileName name of the file as stored under `filesDir/models/` (see [ModelRepository]).
  * @param filePath absolute path to the file on disk.
  * @param sizeBytes size of the file on disk, in bytes.
+ * @param embeddingLength embedding (hidden) dimension — see
+ *   [io.github.hokanosekai.tensai.engine.GgufInfo.embeddingLength]. Needed alongside
+ *   [blockCount] and [contextLength] to estimate KV-cache memory in
+ *   [io.github.hokanosekai.tensai.compat.CompatibilityChecker].
+ * @param blockCount number of transformer layers — see [io.github.hokanosekai.tensai.engine.GgufInfo.blockCount].
  * @param importedAt epoch millis when this model was imported.
  */
 @Entity(tableName = "models")
@@ -28,6 +33,8 @@ data class ModelEntity(
     val quantLabel: String,
     val paramCount: Long,
     val contextLength: Long,
+    val embeddingLength: Long,
+    val blockCount: Long,
     val supportsThinking: Boolean,
     val importedAt: Long,
 )
