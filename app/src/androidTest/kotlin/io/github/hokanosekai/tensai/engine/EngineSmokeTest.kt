@@ -12,18 +12,24 @@ import org.junit.runner.RunWith
 /**
  * Instrumented smoke test for [LlamaKtEngineImpl] against a real GGUF.
  *
- * Requires a model pushed to `/data/local/tmp/test-model.gguf` on the
- * device — skipped (not failed) when absent, since no model ships with
- * the repo:
+ * Requires a model in the app's external files dir — skipped (not
+ * failed) when absent, since no model ships with the repo. Note:
+ * `/data/local/tmp` is NOT usable here (SELinux `shell_data_file`, the
+ * app domain can't read it regardless of mode bits):
  *
  * ```
- * adb push some-small-model.gguf /data/local/tmp/test-model.gguf
+ * adb push some-small-model.gguf \
+ *   /sdcard/Android/data/io.github.hokanosekai.tensai/files/test-model.gguf
  * ```
  */
 @RunWith(AndroidJUnit4::class)
 class EngineSmokeTest {
 
-    private val modelPath = "/data/local/tmp/test-model.gguf"
+    private val modelPath: String by lazy {
+        val dir = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation().targetContext.getExternalFilesDir(null)
+        File(dir, "test-model.gguf").absolutePath
+    }
 
     @Test
     fun streamsTokensAndCompletesWithStats() = runBlocking {
