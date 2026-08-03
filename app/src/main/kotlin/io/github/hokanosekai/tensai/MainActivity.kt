@@ -8,13 +8,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.sp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.ui.theme.TensaiTheme
@@ -46,10 +46,6 @@ private fun GlyphScreen() {
             .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = "天",
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 96.sp,
-        )
+        KanjiGlyph(size = 150.dp)
     }
 }
