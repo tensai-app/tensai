@@ -10,11 +10,11 @@ import androidx.navigation.navArgument
 import io.github.hokanosekai.tensai.ui.screens.ChatScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.LoadingScreenPlaceholder
-import io.github.hokanosekai.tensai.ui.screens.ModelDetailPlaceholder
-import io.github.hokanosekai.tensai.ui.screens.ModelsScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.OnboardingPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.ServerScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.SettingsScreenPlaceholder
+import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
+import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
 
 /**
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
@@ -56,8 +56,9 @@ fun TensaiNavGraph(
         }
 
         composable(TensaiDestination.Models.route) {
-            ModelsScreenPlaceholder(
+            ModelsScreen(
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
+                onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
             )
         }
 
@@ -68,10 +69,19 @@ fun TensaiNavGraph(
             val modelId = backStackEntry.arguments
                 ?.getString(TensaiDestination.ModelDetail.ARG_MODEL_ID)
                 .orEmpty()
-            ModelDetailPlaceholder(modelId = modelId)
+            ModelDetailScreen(
+                modelId = modelId,
+                onLoadClick = { navController.navigate(TensaiDestination.Loading.route(it)) },
+                onDeleted = { navController.popBackStack() },
+            )
         }
 
-        composable(TensaiDestination.Loading.route) {
+        composable(
+            route = TensaiDestination.Loading.route,
+            arguments = listOf(navArgument(TensaiDestination.Loading.ARG_MODEL_ID) { type = NavType.StringType }),
+        ) {
+            // TODO(TEN-30): drive the real InferenceQueue.loadModel(...) call for this model's
+            // path here instead of just showing the fake looping glyph.
             LoadingScreenPlaceholder()
         }
 

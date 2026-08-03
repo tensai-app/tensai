@@ -23,6 +23,7 @@ class TensaiApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        RuntimeGraph.init(this)
         RuntimeGraph.applicationScope.launch {
             RuntimeGraph.inferenceQueue.state.collect { state ->
                 if (state !is QueueState.Idle) {

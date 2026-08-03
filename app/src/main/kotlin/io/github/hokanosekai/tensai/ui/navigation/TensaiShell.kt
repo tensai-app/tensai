@@ -42,11 +42,12 @@ private fun detailTitleForRoute(route: String?): String = when {
  * Note: Material3's [ModalNavigationDrawer] only exposes [androidx.compose.material3.DrawerDefaults.scrimColor] —
  * there's no public hook to swap its slide animation for [io.github.hokanosekai.tensai.ui.theme.TensaiMotion].
  *
- * @param hasModels STUB — hardcoded default routes past onboarding straight to home so navigation
- * isn't blocked while the model repository doesn't exist yet. TODO(TEN-28): wire to the real state.
+ * @param hasModels whether at least one model has been imported — picks [TensaiDestination.Home]
+ * vs [TensaiDestination.Onboarding] as the start destination. See `MainActivity` for how this is
+ * resolved from [io.github.hokanosekai.tensai.data.models.ModelRepository] before first composition.
  */
 @Composable
-fun TensaiShell(hasModels: Boolean = true) {
+fun TensaiShell(hasModels: Boolean) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
