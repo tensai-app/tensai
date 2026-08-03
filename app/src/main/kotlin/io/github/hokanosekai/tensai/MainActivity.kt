@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.ui.theme.TensaiTheme
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private val themeRepository by lazy { ThemeRepository(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
