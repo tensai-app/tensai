@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
+        android:name=".TensaiApp"
         android:label="tensai"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Tensai"
@@ -15,6 +20,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+             foregroundServiceType="specialUse": on-device LLM inference doesn't match any
+             predefined FGS type (dataSync is for transfer jobs; mediaProcessing targets
+             one-shot transcode/export and imposes its own timeout via onTimeout(), neither
+             fits a resident model kept in RAM across a long-lived chat). specialUse is
+             Android's own documented escape hatch for exactly this "novel use case" situation
+             (see PROPERTY_SPECIAL_USE_FGS_SUBTYPE below) and carries no built-in timeout.
+        -->
+        <service
+            android:name=".runtime.InferenceService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="on-device LLM inference" />
+        </service>
     </application>
 
 </manifest>

@@ -92,6 +92,24 @@ class InferenceQueue(private val engine: InferenceEngine) {
     private var loadedInfo: LoadedModelInfo? = null
 
     /**
+     * Called just before a currently-loaded model is released — either
+     * because [loadModel] is swapping it for a new one, or because
+     * [unloadModel] is releasing it outright. `null` (the default) means no
+     * hook is installed and nothing happens.
+     *
+     * This is the anchor point for TEN-27's save-before-load: persisting the
+     * outgoing model's session is TEN-34's job, not this one — this field is
+     * just where that future hook attaches.
+     *
+     * Runs under [mutex] in both call sites, so it must be short and must
+     * never itself call back into this [InferenceQueue] (that would
+     * deadlock on the same mutex). Any exception it throws propagates to the
+     * caller of [loadModel]/[unloadModel] and aborts the swap/unload before
+     * the previous model is freed.
+     */
+    var onBeforeModelSwap: (suspend () -> Unit)? = null
+
+    /**
      * The [Job] of the [generate] coroutine currently producing events, if
      * any. Written only under [mutex] (in [generate]'s begin/end steps);
      * read without the lock in [cancelActive] since cancelling a job is
@@ -106,10 +124,10 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * more than one model resident at a time).
      *
      * If a generation is active, it is cancelled first (per spec: stopping
-     * generation takes priority over starting a load; persisting its state
-     * before the swap is TEN-27's job — see the TODO below) and awaited
-     * before the load proceeds, so the previous model is never released
-     * while a decode may still be touching it.
+     * generation takes priority over starting a load) and awaited before the
+     * load proceeds, so the previous model is never released while a decode
+     * may still be touching it. [onBeforeModelSwap], if installed, runs
+     * right before the previous model is freed.
      *
      * On failure, the previous model has already been released and [state]
      * falls back cleanly to [QueueState.Idle] — it does not attempt to
@@ -145,8 +163,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         val previous = loadedModel
         loadedModel = null
         loadedInfo = null
-        // TODO(TEN-27): once save-before-load lands, persist `previous`'s session here
-        // instead of just discarding it.
+        if (previous != null) onBeforeModelSwap?.invoke()
         previous?.let { runCatching { it.free() } }
 
         return try {
@@ -172,7 +189,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * Unloads and releases the currently loaded model, if any. If a
      * generation is active it is cancelled first and awaited, same as
      * [loadModel]. A no-op (besides settling to [QueueState.Idle]) if no
-     * model is loaded.
+     * model is loaded. [onBeforeModelSwap], if installed, runs right before
+     * the model is freed.
      */
     suspend fun unloadModel() {
         while (true) {
@@ -185,6 +203,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                     val previous = loadedModel
                     loadedModel = null
                     loadedInfo = null
+                    if (previous != null) onBeforeModelSwap?.invoke()
                     previous?.let { runCatching { it.free() } }
                     _state.value = QueueState.Idle
                     true
