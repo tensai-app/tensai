@@ -7,32 +7,47 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
+import io.github.hokanosekai.tensai.data.ThemeRepository
+import io.github.hokanosekai.tensai.ui.theme.TensaiTheme
+import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 
 class MainActivity : ComponentActivity() {
+
+    private val themeRepository by lazy { ThemeRepository(applicationContext) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            Bootstrap()
+            val themeMode by themeRepository.themeMode.collectAsState(initial = ThemeMode.System)
+            TensaiTheme(themeMode = themeMode) {
+                GlyphScreen()
+            }
         }
     }
 }
 
-// Placeholder until the Calm Night theme lands (TEN-21).
+// Standing in for the real bootstrap screen until the shell UI lands.
 @Composable
-private fun Bootstrap() {
+private fun GlyphScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F0E17)),
+            .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = "天", color = Color(0xFFA78BFA), fontSize = 96.sp)
+        Text(
+            text = "天",
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 96.sp,
+        )
     }
 }
