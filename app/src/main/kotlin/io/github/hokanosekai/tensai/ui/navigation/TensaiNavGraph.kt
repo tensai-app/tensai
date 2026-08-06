@@ -1,27 +1,22 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import io.github.hokanosekai.tensai.ui.screens.ChatScreenPlaceholder
+import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.OnboardingPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.ServerScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.SettingsScreenPlaceholder
+import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
-
-/**
- * Sentinel [TensaiDestination.Chat.ARG_CONVERSATION_ID] used when a load's success navigates to a
- * brand new conversation rather than resuming a saved one — the real chat screen (TEN-32) resolves
- * this into an actual conversation instead of just echoing it, as `ChatScreenPlaceholder` does today.
- */
-private const val NEW_CONVERSATION_ID = "new"
 
 /**
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
@@ -59,7 +54,23 @@ fun TensaiNavGraph(
             val conversationId = backStackEntry.arguments
                 ?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
                 .orEmpty()
-            ChatScreenPlaceholder(conversationId = conversationId)
+
+            if (conversationId == TensaiDestination.Chat.NEW_CONVERSATION_ID) {
+                // Resolve the sentinel into a real, persisted conversation, then replace this
+                // backstack entry with the resolved id — see TensaiDestination.Chat.NEW_CONVERSATION_ID's
+                // KDoc. Nothing to render meanwhile; this is expected to resolve within one frame.
+                LaunchedEffect(Unit) {
+                    val id = RuntimeGraph.chatRepository.createConversation(modelId = null)
+                    navController.navigate(TensaiDestination.Chat.route(id)) {
+                        popUpTo(TensaiDestination.Chat.route) { inclusive = true }
+                    }
+                }
+            } else {
+                ChatScreen(
+                    conversationId = conversationId,
+                    onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                )
+            }
         }
 
         composable(TensaiDestination.Models.route) {
@@ -93,7 +104,7 @@ fun TensaiNavGraph(
             LoadingScreen(
                 modelId = modelId,
                 onLoaded = {
-                    navController.navigate(TensaiDestination.Chat.route(NEW_CONVERSATION_ID)) {
+                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
                         popUpTo(TensaiDestination.Loading.route) { inclusive = true }
                     }
                 },

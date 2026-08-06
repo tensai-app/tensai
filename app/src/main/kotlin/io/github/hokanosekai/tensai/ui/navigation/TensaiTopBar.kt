@@ -20,7 +20,9 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 
 /**
  * Top bar for [TensaiDestination.Home] and [TensaiDestination.Chat] — hamburger opens the drawer,
- * the centered pill is a stand-in for the active model (STUB: tap always routes to [TensaiDestination.Models]).
+ * the centered pill shows the active model (name + effective context size, from `TensaiShell`'s
+ * live [io.github.hokanosekai.tensai.runtime.QueueState]) or "no model" if none is loaded. Tap
+ * always routes to [TensaiDestination.Models], regardless of whether a model is loaded.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.runtime
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.InferenceEngine
+import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
@@ -277,5 +278,22 @@ class InferenceQueue(private val engine: InferenceEngine) {
      */
     fun cancelActive() {
         activeGenerationJob?.cancel()
+    }
+
+    /**
+     * Best-effort KV-cache fill ratio (0f..1f) for whatever is currently loaded, or `null` if no
+     * model is loaded or [engine] isn't a [LlamaKtEngine] (the only kind that exposes cache
+     * introspection — see its KDoc). Reads [LlamaKtEngine.kvCacheUsedCells] live, so calling this
+     * mid-generation reflects the cache as it fills token by token; there's no push notification
+     * for it, callers that want a live value must poll.
+     *
+     * Reads [state] rather than the mutex-guarded [loadedInfo] field — same rationale as
+     * [cancelActive]: a plain [StateFlow] read is safe from any thread without taking [mutex].
+     */
+    fun kvUsedPercent(): Float? {
+        val info = (_state.value as? QueueState.ModelReady)?.info ?: return null
+        val llamaEngine = engine as? LlamaKtEngine ?: return null
+        if (info.nCtxEffective <= 0) return null
+        return llamaEngine.kvCacheUsedCells().toFloat() / info.nCtxEffective
     }
 }

@@ -7,11 +7,14 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.launch
 
@@ -56,6 +59,11 @@ fun TensaiShell(hasModels: Boolean) {
     val currentRoute = backStackEntry?.destination?.route
     val chrome = chromeForRoute(currentRoute)
 
+    val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
+    val modelPillLabel = (queueState as? QueueState.ModelReady)?.info
+        ?.let { "${it.name} · ${it.nCtxEffective}" }
+        ?: "no model"
+
     val startDestination = if (hasModels) TensaiDestination.Home.route else TensaiDestination.Onboarding.route
 
     ModalNavigationDrawer(
@@ -81,6 +89,7 @@ fun TensaiShell(hasModels: Boolean) {
                     TensaiChrome.Main -> TensaiTopBar(
                         onMenuClick = { scope.launch { drawerState.open() } },
                         onModelPillClick = { navController.navigate(TensaiDestination.Models.route) },
+                        modelLabel = modelPillLabel,
                     )
 
                     TensaiChrome.Detail -> TensaiDetailTopBar(

@@ -89,6 +89,12 @@ class ChatRepository(private val dao: ChatDao) {
     /** Deletes [conversationId] and every message under it. No-op if it doesn't exist. */
     suspend fun deleteConversation(conversationId: String) = dao.deleteConversation(conversationId)
 
+    /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */
+    suspend fun getConversation(conversationId: String): ConversationEntity? = dao.getConversation(conversationId)
+
+    /** Deletes a single message by [id] — used by [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.regenerate] to drop the assistant reply being redone. */
+    suspend fun deleteMessage(id: String) = dao.deleteMessage(id)
+
     /**
      * Converts a conversation's stored history into the engine's [ChatMessage] format — [messages]
      * is expected in [observeMessages]'s chronological order. [systemPrompt], if non-blank, is

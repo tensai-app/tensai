@@ -11,6 +11,15 @@ sealed class TensaiDestination(val route: String) {
 
     data object Chat : TensaiDestination("chat/{conversationId}") {
         const val ARG_CONVERSATION_ID = "conversationId"
+
+        /**
+         * Sentinel used when a load's success navigates to a brand new conversation rather than
+         * resuming a saved one — [io.github.hokanosekai.tensai.ui.navigation.TensaiNavGraph]
+         * resolves this into a real, persisted conversation id before `ChatScreen`/`ChatViewModel`
+         * ever see it; their contract is "conversationId always names an existing conversation".
+         */
+        const val NEW_CONVERSATION_ID = "new"
+
         fun route(conversationId: String) = "chat/$conversationId"
     }
 
