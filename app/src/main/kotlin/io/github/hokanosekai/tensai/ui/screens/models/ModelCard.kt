@@ -10,11 +10,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,10 +34,17 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import java.io.File
 
 /**
  * Card for a single imported model — name, params, quant/size badges, RAM-fit dot, and a
  * full-width "Load model" action. Bordered in primary + a "loaded" chip when [isLoaded].
+ *
+ * If [model]'s file no longer exists on disk (its DB row outlived the file — e.g. storage was
+ * wiped outside the app), [CompatIndicator] is replaced by [MissingFileBadge] and the "Load
+ * model" action is replaced by "Remove", since there's nothing left to load. The delete icon
+ * (top-right) always fires [onDeleteClick] with the file's current existence, letting the caller
+ * decide whether a confirmation is warranted — see `ModelsScreen`'s handling of it.
  */
 @Composable
 internal fun ModelCard(
@@ -38,8 +52,10 @@ internal fun ModelCard(
     isLoaded: Boolean,
     onClick: () -> Unit,
     onLoadClick: () -> Unit,
+    onDeleteClick: (fileExists: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val fileExists = rememberFileExists(model.filePath)
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -64,6 +80,13 @@ internal fun ModelCard(
                         )
                     }
                 }
+                IconButton(onClick = { onDeleteClick(fileExists) }, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete \"${model.displayName}\"",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             Text(
@@ -80,14 +103,58 @@ internal fun ModelCard(
             ) {
                 MonoBadge(model.quantLabel)
                 MonoBadge(formatFileSize(model.sizeBytes))
-                CompatIndicator(model)
+                if (fileExists) CompatIndicator(model) else MissingFileBadge()
             }
 
-            Button(onClick = onLoadClick, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                Text("Load model")
+            if (fileExists) {
+                Button(onClick = onLoadClick, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    Text("Load model")
+                }
+            } else {
+                Button(
+                    onClick = { onDeleteClick(false) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.tensaiTints.error12,
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                ) {
+                    Text("Remove")
+                }
             }
         }
     }
+}
+
+/** Dot + label shown instead of [CompatIndicator] when a model's file is gone — see [ModelCard]. */
+@Composable
+private fun MissingFileBadge(modifier: Modifier = Modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
+        Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+        Text(
+            text = "File missing",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Whether [filePath] exists on disk. A single `stat()` call, same "cheap enough for a
+ * composable" bar as [modelCompatibility]'s `ActivityManager` query below — not worth a
+ * dispatcher hop. Recomputed whenever [filePath] changes, e.g. this composable being reused for
+ * a different [ModelEntity] after the list reorders.
+ */
+// The body below does assign `value` directly — this suppresses a compose-runtime lint false
+// positive (ProduceStateDoesNotAssignValue can't see the assignment under Kotlin 2.0's K2 UAST
+// in this AGP/lint version) rather than a real bug.
+@Suppress("ProduceStateDoesNotAssignValue")
+@Composable
+internal fun rememberFileExists(filePath: String): Boolean {
+    val exists by produceState(initialValue = true, filePath) {
+        value = File(filePath).exists()
+    }
+    return exists
 }
 
 @Composable

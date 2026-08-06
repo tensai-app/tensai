@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,7 +33,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.data.models.DuplicateModelException
 import io.github.hokanosekai.tensai.data.models.InsufficientStorageException
+import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelImportException
+import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelMetadataException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.QueueState
@@ -59,8 +63,19 @@ fun ModelsScreen(
     val loadedModelName = (queueState as? QueueState.ModelReady)?.info?.name
 
     var importProgress by remember { mutableStateOf<Float?>(null) }
+    var pendingDelete by remember { mutableStateOf<ModelEntity?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    fun deleteModel(model: ModelEntity) {
+        scope.launch {
+            try {
+                repository.deleteModel(model.id)
+            } catch (e: ModelInUseException) {
+                snackbarHostState.showSnackbar(e.message ?: "Cannot delete this model.")
+            }
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -104,6 +119,12 @@ fun ModelsScreen(
                                 isLoaded = model.displayName == loadedModelName,
                                 onClick = { onModelClick(model.id) },
                                 onLoadClick = { onLoadModelClick(model.id) },
+                                onDeleteClick = { fileExists ->
+                                    // A missing file has nothing left to lose — delete straight
+                                    // away. A present file is a real, unrecoverable loss, so it
+                                    // goes through the confirmation dialog below instead.
+                                    if (fileExists) pendingDelete = model else deleteModel(model)
+                                },
                             )
                         }
                     }
@@ -124,6 +145,25 @@ fun ModelsScreen(
                     }
                 }
             }
+        }
+
+        pendingDelete?.let { model ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Delete \"${model.displayName}\"?") },
+                text = { Text("This removes the model file from this device. This can't be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingDelete = null
+                        deleteModel(model)
+                    }) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                },
+            )
         }
 
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))

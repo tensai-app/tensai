@@ -124,4 +124,42 @@ class ModelRepositoryTest {
         assertFalse("file should be gone after delete", file.exists())
         assertTrue("DB row should be gone after delete", repository.models.first().isEmpty())
     }
+
+    /**
+     * Simulates TEN-49's orphaned-row scenario: the imported file is deleted from underneath the
+     * row (e.g. storage wiped outside the app), leaving [ModelEntity.filePath] dangling. This is
+     * exactly the `File(entity.filePath).exists()` check the Models list/detail screens run per
+     * model (see `ModelCard.rememberFileExists`) to decide whether to show "File missing".
+     */
+    @Test
+    fun fileExistsReflectsManualDeletionUnderneathTheRow() = runBlocking {
+        val entity = repository.importModel(Uri.fromFile(sourceModelFile)) { }
+        val file = File(entity.filePath)
+        assertTrue("expected the imported file to exist right after import", file.exists())
+
+        assertTrue("expected the file to actually be deletable", file.delete())
+
+        assertFalse("file should read as missing once deleted out from under the row", file.exists())
+        assertEquals(
+            "the row itself should survive an out-of-band file deletion",
+            1,
+            repository.models.first().size,
+        )
+    }
+
+    /**
+     * [ModelRepository.deleteModel]'s cleanup path — a no-op-on-missing-file
+     * `File.delete()` (returns `false`, doesn't throw) followed by the row delete — must handle
+     * an already-missing file (the orphaned-row case) without throwing, since that's the exact
+     * path the Models list's "Remove" action takes for a file-missing card.
+     */
+    @Test
+    fun deleteModelOnAlreadyMissingFileRemovesRowWithoutThrowing() = runBlocking {
+        val entity = repository.importModel(Uri.fromFile(sourceModelFile)) { }
+        File(entity.filePath).delete()
+
+        repository.deleteModel(entity.id)
+
+        assertTrue("DB row should be gone after delete", repository.models.first().isEmpty())
+    }
 }

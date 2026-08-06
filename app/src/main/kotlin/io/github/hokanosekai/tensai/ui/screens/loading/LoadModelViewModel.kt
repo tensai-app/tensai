@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.engine.OutOfMemoryException
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,13 @@ sealed class LoadUiState {
 
     /** [LoadModelViewModel]'s `modelId` didn't resolve to a [ModelEntity] (e.g. deleted meanwhile). */
     data object ModelNotFound : LoadUiState()
+
+    /**
+     * [model]'s row resolved, but its [ModelEntity.filePath] no longer exists on disk — e.g. the
+     * app's storage was wiped outside the app, leaving an orphaned DB row. Distinct from
+     * [ModelNotFound]: the model is still listed, it just can't be loaded until re-imported.
+     */
+    data class FileMissing(val model: ModelEntity) : LoadUiState()
 
     /**
      * [compatibility] is [Verdict.WontFit] and the user hasn't confirmed "Load anyway" yet — the
@@ -96,6 +104,10 @@ class LoadModelViewModel(
             val model = modelRepository.models.first().find { it.id == modelId }
             if (model == null) {
                 _state.value = LoadUiState.ModelNotFound
+                return@launch
+            }
+            if (!File(model.filePath).exists()) {
+                _state.value = LoadUiState.FileMissing(model)
                 return@launch
             }
 

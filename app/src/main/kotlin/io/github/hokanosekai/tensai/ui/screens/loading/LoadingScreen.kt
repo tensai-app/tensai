@@ -69,6 +69,8 @@ fun LoadingScreen(
 
             is LoadUiState.ModelNotFound -> ModelNotFoundContent(onBack = onBack)
 
+            is LoadUiState.FileMissing -> FileMissingDialog(model = state.model, onClose = onBack)
+
             is LoadUiState.Blocked -> BlockedDialog(
                 model = state.model,
                 explanation = state.compatibility.explanation,
@@ -144,6 +146,18 @@ private fun ModelNotFoundContent(onBack: () -> Unit, modifier: Modifier = Modifi
             Text("Back")
         }
     }
+}
+
+@Composable
+private fun FileMissingDialog(model: ModelEntity, onClose: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("File missing") },
+        text = { Text("This model's file is missing — re-import it to load \"${model.displayName}\".") },
+        confirmButton = {
+            TextButton(onClick = onClose) { Text("Back to Models") }
+        },
+    )
 }
 
 @Composable
