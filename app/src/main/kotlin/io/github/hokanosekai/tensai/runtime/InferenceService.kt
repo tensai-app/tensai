@@ -45,13 +45,6 @@ class InferenceService : Service() {
 
     private var observerJob: Job? = null
 
-    /**
-     * Best-effort label for the currently loaded model, remembered across
-     * the [QueueState.ModelReady] → [QueueState.Generating] transition since
-     * [QueueState.Generating] itself carries no model reference.
-     */
-    private var lastKnownModelName: String? = null
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -64,11 +57,9 @@ class InferenceService : Service() {
         observerJob = RuntimeGraph.applicationScope.launch {
             RuntimeGraph.inferenceQueue.state.collect { state ->
                 if (state is QueueState.Idle) {
-                    lastKnownModelName = null
                     ServiceCompat.stopForeground(this@InferenceService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 } else {
-                    if (state is QueueState.ModelReady) lastKnownModelName = state.info.name
                     postNotification(buildNotification(state))
                 }
             }
@@ -173,9 +164,8 @@ class InferenceService : Service() {
             }
 
             is QueueState.Generating -> {
-                val name = lastKnownModelName ?: "Model"
                 builder
-                    .setContentTitle("$name is thinking…")
+                    .setContentTitle("${state.info.name} is thinking…")
                     .setProgress(0, 0, true)
                     .addAction(R.drawable.ic_launcher_monochrome, "Stop", actionPendingIntent(ACTION_STOP_GENERATION))
             }

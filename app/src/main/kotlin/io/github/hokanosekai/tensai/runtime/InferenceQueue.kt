@@ -45,8 +45,8 @@ sealed class QueueState {
     /** A model is loaded and idle, ready to [InferenceQueue.generate]. */
     data class ModelReady(val info: LoadedModelInfo) : QueueState()
 
-    /** A generation is in progress against the currently loaded model. */
-    data object Generating : QueueState()
+    /** A generation is in progress against the currently loaded model [info]. */
+    data class Generating(val info: LoadedModelInfo) : QueueState()
 }
 
 /**
@@ -235,8 +235,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
      */
     fun generate(request: DecodeRequest): Flow<DecodeEvent> = channelFlow {
         val model = mutex.withLock {
-            if (_state.value is QueueState.ModelReady) {
-                _state.value = QueueState.Generating
+            val current = _state.value
+            if (current is QueueState.ModelReady) {
+                _state.value = QueueState.Generating(current.info)
                 activeGenerationJob = coroutineContext[Job]
                 loadedModel
             } else {

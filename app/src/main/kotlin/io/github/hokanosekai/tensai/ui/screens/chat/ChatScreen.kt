@@ -61,7 +61,13 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState(initial = null)
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
-    val modelInfo = (queueState as? QueueState.ModelReady)?.info
+    // A model is resident in both ModelReady and Generating — the pill and the "no model" banner
+    // must treat generating as "a model is loaded", not fall back to the empty state.
+    val modelInfo = when (val s = queueState) {
+        is QueueState.ModelReady -> s.info
+        is QueueState.Generating -> s.info
+        else -> null
+    }
     val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = false)
     val enableThinking by viewModel.enableThinking.collectAsState(initial = true)
 
