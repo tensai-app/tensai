@@ -20,6 +20,10 @@ interface ChatDao {
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getConversation(id: String): ConversationEntity?
 
+    /** Reactive counterpart of [getConversation] — see [ChatRepository.observeConversation]. */
+    @Query("SELECT * FROM conversations WHERE id = :id")
+    fun observeConversation(id: String): Flow<ConversationEntity?>
+
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun messageCount(conversationId: String): Int
 

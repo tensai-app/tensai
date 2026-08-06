@@ -13,15 +13,16 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
  *
  * Version 2 added [ModelEntity.embeddingLength] and [ModelEntity.blockCount] (TEN-29, for
  * [io.github.hokanosekai.tensai.compat.CompatibilityChecker]'s KV-cache estimate). Version 3 added
- * the chat tables (TEN-31). No migration path is defined for either — the app has no released
- * users yet, so [androidx.room.RoomDatabase.Builder.fallbackToDestructiveMigration] (re-import is
- * cheap; models are just files the user already has, and there's no chat history worth preserving
- * pre-release) is preferable to writing migrations nobody depends on. Revisit once this schema
- * ships to real users.
+ * the chat tables (TEN-31). Version 4 added [ConversationEntity.enableThinking] (TEN-33). No
+ * migration path is defined for any of these — the app has no released users yet, so
+ * [androidx.room.RoomDatabase.Builder.fallbackToDestructiveMigration] (re-import is cheap; models
+ * are just files the user already has, and there's no chat history worth preserving pre-release)
+ * is preferable to writing migrations nobody depends on. Revisit once this schema ships to real
+ * users.
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class TensaiDb : RoomDatabase() {

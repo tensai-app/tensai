@@ -27,18 +27,23 @@ import java.util.Locale
 
 /**
  * A single turn in the chat. Per the design: a user message is a `surface-variant` bubble
- * right-aligned; an assistant reply is flat text, full width, no bubble — with a mono stats chip
- * (and, for the last one, a regenerate action) once it's finished.
+ * right-aligned; an assistant reply is a [ThinkingBlock] (if [ChatMessageUi.thinking] is present)
+ * followed by [ChatMessageUi.content] rendered as [MarkdownText], full width, no bubble — with a
+ * mono stats chip (and, for the last one, a regenerate action) once it's finished.
  *
- * Markdown rendering and thinking blocks are TEN-33's job — this draws [ChatMessageUi.content]
- * as-is.
+ * A user message is drawn as plain [Text], not [MarkdownText] — nothing the user typed should be
+ * reinterpreted as markdown.
  *
+ * @param isThinkingActive whether this message's [ChatMessageUi.thinking] is still being streamed
+ *   — see `ChatScreen`, which derives that (last assistant message, generating, no content yet).
+ *   Ignored (and unused) when [ChatMessageUi.thinking] is `null`.
  * @param onRegenerate non-null only for the conversation's last assistant message once it's
  *   finished streaming — see `ChatScreen`, which decides that.
  */
 @Composable
 fun MessageBubble(
     message: ChatMessageUi,
+    isThinkingActive: Boolean,
     onRegenerate: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -59,11 +64,21 @@ fun MessageBubble(
         }
     } else {
         Column(modifier = modifier.fillMaxWidth()) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            message.thinking?.let { thinking ->
+                ThinkingBlock(
+                    thinking = thinking,
+                    isActive = isThinkingActive,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+
+            if (message.content.isNotEmpty()) {
+                MarkdownText(
+                    markdown = message.content,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
 
             if (message.stats != null || onRegenerate != null) {
                 Row(

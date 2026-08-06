@@ -18,6 +18,10 @@ import androidx.room.PrimaryKey
  *   this conversation, or `null` to use the app default — reserved for TEN-35, unset in V1.
  * @param systemPrompt system prompt prepended to every generation for this conversation (see
  *   [ChatRepository.toEngineMessages]), or `null` for none.
+ * @param enableThinking whether [io.github.hokanosekai.tensai.engine.SamplingConfig.enableThinking]
+ *   is passed as `true` for this conversation's generations (TEN-33) — toggled from `ChatScreen`,
+ *   gated on the loaded model's [io.github.hokanosekai.tensai.data.models.ModelEntity.supportsThinking].
+ *   Added in schema version 4, see [io.github.hokanosekai.tensai.data.models.TensaiDb]'s KDoc.
  * @param createdAt epoch millis when the conversation was created.
  * @param updatedAt epoch millis of the most recent message — drives [ChatDao.observeConversations]'s sort.
  */
@@ -28,6 +32,7 @@ data class ConversationEntity(
     val modelId: String?,
     val samplingJson: String?,
     val systemPrompt: String?,
+    val enableThinking: Boolean,
     val createdAt: Long,
     val updatedAt: Long,
 )

@@ -11,8 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +62,8 @@ fun ChatScreen(
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
     val modelInfo = (queueState as? QueueState.ModelReady)?.info
+    val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = false)
+    val enableThinking by viewModel.enableThinking.collectAsState(initial = true)
 
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -80,6 +86,13 @@ fun ChatScreen(
         if (modelInfo == null) {
             NoModelBanner(onNavigateToModels = onNavigateToModels, modifier = Modifier.fillMaxWidth())
         }
+        if (supportsThinking) {
+            ThinkingToggleRow(
+                enabled = enableThinking,
+                onToggle = viewModel::setEnableThinking,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         val currentMessages = messages
         Box(modifier = Modifier.weight(1f)) {
@@ -95,8 +108,11 @@ fun ChatScreen(
                     ) {
                         itemsIndexed(currentMessages, key = { _, message -> message.id }) { index, message ->
                             val isLastAssistantReply = index == currentMessages.lastIndex && !message.isUser
+                            val isThinkingActive = isLastAssistantReply && isGenerating &&
+                                message.content.isEmpty() && !message.thinking.isNullOrEmpty()
                             MessageBubble(
                                 message = message,
+                                isThinkingActive = isThinkingActive,
                                 onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
                             )
                         }
@@ -144,6 +160,38 @@ private fun NoModelBanner(onNavigateToModels: () -> Unit, modifier: Modifier = M
             )
             TextButton(onClick = onNavigateToModels) { Text("Load a model") }
         }
+    }
+}
+
+/**
+ * Enable/disable [io.github.hokanosekai.tensai.engine.SamplingConfig.enableThinking] for this
+ * conversation (TEN-33) — only shown when [ChatViewModel.currentModelSupportsThinking] is `true`.
+ * Kept as a plain inline row rather than a top-bar action: `TensaiTopBar` is shared chrome for both
+ * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Home] and
+ * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat], and Home has no conversation
+ * (nor a loaded-model-supports-thinking concept) to hang a toggle off — wiring one in there would
+ * mean threading `ChatViewModel` state up through `TensaiShell` for every route, not just this one.
+ */
+@Composable
+private fun ThinkingToggleRow(enabled: Boolean, onToggle: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.Psychology,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(end = 6.dp),
+        )
+        Text(
+            text = "Thinking",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(end = 8.dp),
+        )
+        Switch(checked = enabled, onCheckedChange = onToggle)
     }
 }
 

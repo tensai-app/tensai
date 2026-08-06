@@ -22,6 +22,9 @@ class ChatRepository(private val dao: ChatDao) {
     /** A single conversation's messages, oldest first. */
     fun observeMessages(conversationId: String): Flow<List<MessageEntity>> = dao.observeMessages(conversationId)
 
+    /** A single conversation, reactively — used by [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.enableThinking] to reflect [ConversationEntity.enableThinking] as it's toggled. */
+    fun observeConversation(conversationId: String): Flow<ConversationEntity?> = dao.observeConversation(conversationId)
+
     /**
      * Creates an empty conversation bound to [modelId] (nullable — see [ConversationEntity.modelId])
      * and returns its id.
@@ -36,6 +39,7 @@ class ChatRepository(private val dao: ChatDao) {
                 modelId = modelId,
                 samplingJson = null,
                 systemPrompt = null,
+                enableThinking = true,
                 createdAt = now,
                 updatedAt = now,
             ),
@@ -88,6 +92,12 @@ class ChatRepository(private val dao: ChatDao) {
 
     /** Deletes [conversationId] and every message under it. No-op if it doesn't exist. */
     suspend fun deleteConversation(conversationId: String) = dao.deleteConversation(conversationId)
+
+    /** Persists [enabled] as [conversationId]'s [ConversationEntity.enableThinking]. No-op if the conversation doesn't exist (e.g. deleted meanwhile). */
+    suspend fun setEnableThinking(conversationId: String, enabled: Boolean) {
+        val conversation = dao.getConversation(conversationId) ?: return
+        dao.updateConversation(conversation.copy(enableThinking = enabled))
+    }
 
     /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */
     suspend fun getConversation(conversationId: String): ConversationEntity? = dao.getConversation(conversationId)

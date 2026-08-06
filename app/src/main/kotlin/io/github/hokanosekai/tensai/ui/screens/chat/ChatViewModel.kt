@@ -1,10 +1,14 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
+import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
+import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
+import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -15,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -31,6 +36,7 @@ data class ChatMessageUi(
     val id: String,
     val isUser: Boolean,
     val content: String,
+    val thinking: String?,
     val stats: MessageStatsUi?,
 )
 
@@ -48,7 +54,7 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
     } else {
         null
     }
-    return ChatMessageUi(id = id, isUser = isUser, content = content, stats = stats)
+    return ChatMessageUi(id = id, isUser = isUser, content = content, thinking = thinking, stats = stats)
 }
 
 /** Surfaced by [ChatViewModel.send]/[ChatViewModel.regenerate] when they can't proceed. */
@@ -78,6 +84,7 @@ class ChatViewModel(
     private val conversationId: String,
     private val chatRepository: ChatRepository = RuntimeGraph.chatRepository,
     private val inferenceQueue: InferenceQueue = RuntimeGraph.inferenceQueue,
+    private val modelRepository: ModelRepository = RuntimeGraph.modelRepository,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
 ) {
     /** This conversation's messages, oldest first, mapped for display — see [toUi]. */
@@ -86,6 +93,33 @@ class ChatViewModel(
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
+
+    /**
+     * Whether the currently loaded model's chat template supports thinking — gates whether
+     * [ChatScreen] shows the enable/disable toggle at all. [QueueState.ModelReady.info] carries no
+     * `supportsThinking` flag of its own — that's a GGUF-header concept
+     * ([io.github.hokanosekai.tensai.engine.GgufInfo.supportsThinking]), not something the engine's
+     * load-time [io.github.hokanosekai.tensai.engine.LoadedModelInfo] repeats — so this matches the
+     * loaded model back to its persisted [io.github.hokanosekai.tensai.data.models.ModelEntity] by
+     * display name, the same by-name match
+     * [io.github.hokanosekai.tensai.data.models.ModelRepository.deleteModel]'s in-use guard already
+     * relies on, with the same caveat noted there (a false negative if two imported files happen to
+     * share a display name).
+     */
+    val currentModelSupportsThinking: Flow<Boolean> =
+        combine(inferenceQueue.state, modelRepository.models) { state, models ->
+            val loadedName = (state as? QueueState.ModelReady)?.info?.name ?: return@combine false
+            models.any { it.displayName == loadedName && it.supportsThinking }
+        }
+
+    /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
+    val enableThinking: Flow<Boolean> =
+        chatRepository.observeConversation(conversationId).map { it?.enableThinking ?: true }
+
+    /** Flips this conversation's [ConversationEntity.enableThinking] — takes effect on the next [send]/[regenerate], not the one already streaming. */
+    fun setEnableThinking(enabled: Boolean) {
+        scope.launch { chatRepository.setEnableThinking(conversationId, enabled) }
+    }
 
     /** Latest [send]/[regenerate] failure, consumed by [ChatScreen] via [clearError]. */
     private val _error = MutableStateFlow<ChatError?>(null)
@@ -164,12 +198,17 @@ class ChatViewModel(
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
         val assistantId = chatRepository.startAssistantMessage(conversationId)
-        val request = DecodeRequest(messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt))
+        val request = DecodeRequest(
+            messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
+            sampling = SamplingConfig(enableThinking = conversation?.enableThinking ?: true),
+        )
         streamInto(assistantId, request)
     }
 
     /**
-     * Collects [InferenceQueue.generate]'s events into [assistantId]'s content.
+     * Collects [InferenceQueue.generate]'s events into [assistantId]'s content/thinking, splitting
+     * the two apart with a [ThinkingStreamParser] — see its KDoc for how it copes with `<think>`
+     * tags arriving fragmented across tokens.
      *
      * Tokens accumulate in memory and are persisted to Room at most every
      * [StreamPersistIntervalMs] — hammering Room on every token (often several per second) would
@@ -182,29 +221,38 @@ class ChatViewModel(
      * [NonCancellable] so a [stop] mid-flush can't also race that final write.
      */
     private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
-        val content = StringBuilder()
+        val parser = ThinkingStreamParser()
         var stats: DecodeStats? = null
+        var errorFallback: String? = null
         var lastPersistAt = 0L
         try {
             inferenceQueue.generate(request).collect { event ->
                 when (event) {
                     is DecodeEvent.Token -> {
-                        content.append(event.text)
+                        parser.accept(event.text)
                         val now = System.currentTimeMillis()
                         if (now - lastPersistAt >= StreamPersistIntervalMs) {
-                            chatRepository.updateAssistantMessage(assistantId, content.toString())
+                            chatRepository.updateAssistantMessage(assistantId, parser.content, parser.thinking)
                             lastPersistAt = now
                         }
                     }
                     is DecodeEvent.Done -> stats = event.stats
                     is DecodeEvent.Error -> {
-                        if (content.isEmpty()) content.append("Error: ${event.cause.message ?: "generation failed"}")
+                        if (parser.content.isEmpty() && parser.thinking == null) {
+                            errorFallback = "Error: ${event.cause.message ?: "generation failed"}"
+                        }
                     }
                 }
             }
         } finally {
+            parser.finish()
             withContext(NonCancellable) {
-                chatRepository.updateAssistantMessage(assistantId, content.toString(), stats = stats)
+                chatRepository.updateAssistantMessage(
+                    assistantId,
+                    content = errorFallback ?: parser.content,
+                    thinking = parser.thinking,
+                    stats = stats,
+                )
             }
         }
     }
