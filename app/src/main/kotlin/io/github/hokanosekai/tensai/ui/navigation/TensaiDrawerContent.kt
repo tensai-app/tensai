@@ -23,38 +23,57 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.data.chat.ChatRepository
+import io.github.hokanosekai.tensai.data.models.ModelRepository
+import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /**
- * STUB conversation preview for the drawer's "Recents" section.
- * TODO(TEN-31): replace with the real conversation repository.
+ * Drawer content: brand header, new chat, recents, destinations, device footer.
+ *
+ * @param onOpenConversation navigates to `chat/{id}` — called both for an existing conversation
+ *   tapped from "Recents" and for the id created by "New chat".
  */
-private data class RecentConversationStub(val id: String, val title: String)
-
-private val recentConversationsStub = listOf(
-    RecentConversationStub("stub-1", "Refactor the parser"),
-    RecentConversationStub("stub-2", "Explain this stack trace"),
-    RecentConversationStub("stub-3", "Draft a README"),
-)
-
-/** Drawer content: brand header, new chat, recents (stub), destinations, device footer. */
 @Composable
 fun TensaiDrawerContent(
-    onNewChat: () -> Unit,
     onOpenConversation: (String) -> Unit,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier,
+    chatRepository: ChatRepository = RuntimeGraph.chatRepository,
+    modelRepository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
+    val conversations by chatRepository.observeConversations().collectAsState(initial = null)
+    val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
+    val models by modelRepository.models.collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+
+    // Same by-displayName caveat as ModelsScreen's `loadedModelName` — see ModelRepository's KDoc.
+    val loadedModelId = (queueState as? QueueState.ModelReady)?.info?.name
+        ?.let { name -> models.find { it.displayName == name }?.id }
+
+    fun startNewChat() {
+        scope.launch {
+            val id = chatRepository.createConversation(loadedModelId)
+            onOpenConversation(id)
+        }
+    }
+
     ModalDrawerSheet(modifier = modifier) {
         Column(
             modifier = Modifier
@@ -80,7 +99,7 @@ fun TensaiDrawerContent(
                 colors = NavigationDrawerItemDefaults.colors(
                     unselectedContainerColor = MaterialTheme.tensaiTints.primary12,
                 ),
-                onClick = onNewChat,
+                onClick = ::startNewChat,
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
 
@@ -93,20 +112,25 @@ fun TensaiDrawerContent(
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
 
-            recentConversationsStub.forEach { conversation ->
-                NavigationDrawerItem(
-                    label = {
-                        Text(
-                            text = conversation.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    selected = false,
-                    shape = RectangleShape,
-                    onClick = { onOpenConversation(conversation.id) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+            val currentConversations = conversations
+            when {
+                currentConversations == null -> Unit // initial Room query hasn't emitted yet.
+                currentConversations.isEmpty() -> EmptyRecentsState()
+                else -> currentConversations.forEach { conversation ->
+                    NavigationDrawerItem(
+                        label = {
+                            Text(
+                                text = conversation.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        selected = false,
+                        shape = RectangleShape,
+                        onClick = { onOpenConversation(conversation.id) },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
             }
 
             HorizontalDivider(
@@ -162,6 +186,25 @@ fun TensaiDrawerContent(
 
             DeviceFooter(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
         }
+    }
+}
+
+/** "Recents" empty state — no conversation created yet. */
+@Composable
+private fun EmptyRecentsState(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        KanjiGlyph(size = 40.dp, modifier = Modifier.alpha(0.3f))
+        Text(
+            text = "No chats yet",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

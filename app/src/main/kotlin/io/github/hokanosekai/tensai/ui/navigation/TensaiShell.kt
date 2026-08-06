@@ -64,10 +64,6 @@ fun TensaiShell(hasModels: Boolean) {
         scrimColor = MaterialTheme.tensaiTints.scrim,
         drawerContent = {
             TensaiDrawerContent(
-                onNewChat = {
-                    scope.launch { drawerState.close() }
-                    navController.navigate(TensaiDestination.Home.route) { launchSingleTop = true }
-                },
                 onOpenConversation = { conversationId ->
                     scope.launch { drawerState.close() }
                     navController.navigate(TensaiDestination.Chat.route(conversationId))

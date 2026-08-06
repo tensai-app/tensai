@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.runtime
 
 import android.content.Context
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
+import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
@@ -63,4 +64,7 @@ object RuntimeGraph {
             },
         )
     }
+
+    /** Chat history — Room-backed, see [ChatRepository]. */
+    val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
 }
