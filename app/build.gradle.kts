@@ -35,10 +35,23 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets {
+        // Room's MigrationTestHelper reads the exported schema JSONs (see the `ksp { arg(...) }`
+        // block below) as test assets to build a real historical database to migrate from.
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
 }
 
 kotlin {
     jvmToolchain(21)
+}
+
+ksp {
+    // Committed under app/schemas/ (see TensaiDb's KDoc) so MigrationTestHelper can replay every
+    // past version and TEN-48's migration tests have something to diff future schema changes
+    // against.
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -69,4 +82,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.room.testing)
 }

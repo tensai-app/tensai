@@ -51,13 +51,18 @@ class ModelRepository(
     private val modelDao: ModelDao,
     private val readMetadata: suspend (path: String) -> GgufInfo,
     private val currentLoadedModelName: () -> String?,
+    // Root under which imported GGUFs are stored. Defaults to the app's real filesDir; tests MUST
+    // pass a temp dir — this class deletes/overwrites files under `models/`, and pointing it at the
+    // real filesDir (as an instrumented test's targetContext does) makes those deletes destroy the
+    // user's actually-imported models. See TEN-48 (a test tearDown wiped real models this way).
+    storageRoot: File = context.filesDir,
 ) {
 
     /** All imported models, most recently imported first. */
     val models: Flow<List<ModelEntity>> = modelDao.observeAll()
 
-    private val modelsDir: File
-        get() = File(context.filesDir, "models").apply { mkdirs() }
+    private val modelsDir: File = File(storageRoot, "models")
+        get() = field.apply { mkdirs() }
 
     fun storageUsage(): Flow<StorageUsage> = models.map { list ->
         val stat = StatFs(modelsDir.absolutePath)

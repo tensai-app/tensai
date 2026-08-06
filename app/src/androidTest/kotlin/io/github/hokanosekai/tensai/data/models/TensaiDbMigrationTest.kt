@@ -1,0 +1,94 @@
+package io.github.hokanosekai.tensai.data.models
+
+import androidx.room.testing.MigrationTestHelper
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Validates every [TensaiDbMigrations] entry against the real schema JSONs under `app/schemas/`
+ * (see [TensaiDb]'s KDoc) — the reason TEN-48 could drop `fallbackToDestructiveMigration` at all.
+ * [helper] builds a database at an old version straight from the exported schema, then
+ * [MigrationTestHelper.runMigrationsAndValidate] both runs the migration and diffs the result
+ * against the target version's exported schema — a silent column/index mismatch fails the test,
+ * not just a missing exception.
+ */
+@RunWith(AndroidJUnit4::class)
+class TensaiDbMigrationTest {
+
+    private val testDbName = "migration-test"
+
+    @get:Rule
+    val helper = MigrationTestHelper(
+        InstrumentationRegistry.getInstrumentation(),
+        TensaiDb::class.java,
+    )
+
+    /**
+     * The migration this issue exists for: a model imported before any of [TensaiDbMigrations]
+     * existed must survive all the way to the current version, not get wiped by a destructive
+     * fallback.
+     */
+    @Test
+    fun modelRowSurvivesV1ToV4() {
+        helper.createDatabase(testDbName, 1).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, " +
+                    "quantLabel, paramCount, contextLength, supportsThinking, importedAt) VALUES " +
+                    "('m1', 'Model One', 'm1.gguf', '/data/data/io.github.hokanosekai.tensai/files/models/m1.gguf', " +
+                    "123456, 'llama', 'Q4_K_M', 7000000000, 4096, 1, 1000)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 4, true, *TensaiDbMigrations.ALL)
+
+        val cursor = migrated.query("SELECT * FROM models WHERE id = 'm1'")
+        assertTrue("expected the pre-migration row to still be there", cursor.moveToFirst())
+        assertEquals("Model One", cursor.getString(cursor.getColumnIndexOrThrow("displayName")))
+        assertEquals(4096L, cursor.getLong(cursor.getColumnIndexOrThrow("contextLength")))
+        // Backfilled by MIGRATION_1_2 — see its KDoc for why 0 is the best a migration can do here.
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("embeddingLength")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("blockCount")))
+        cursor.close()
+    }
+
+    @Test
+    fun migrate1To2AddsModelColumns() {
+        helper.createDatabase(testDbName, 1).close()
+
+        helper.runMigrationsAndValidate(testDbName, 2, true, TensaiDbMigrations.MIGRATION_1_2)
+    }
+
+    @Test
+    fun migrate2To3AddsChatTables() {
+        helper.createDatabase(testDbName, 2).close()
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 3, true, TensaiDbMigrations.MIGRATION_2_3)
+
+        migrated.query("SELECT * FROM conversations").use { assertEquals(0, it.count) }
+        migrated.query("SELECT * FROM messages").use { assertEquals(0, it.count) }
+    }
+
+    @Test
+    fun migrate3To4AddsEnableThinkingColumn() {
+        helper.createDatabase(testDbName, 3).apply {
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, updatedAt) " +
+                    "VALUES ('c1', 'New chat', null, null, null, 1000, 1000)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 4, true, TensaiDbMigrations.MIGRATION_3_4)
+
+        val cursor = migrated.query("SELECT * FROM conversations WHERE id = 'c1'")
+        assertTrue(cursor.moveToFirst())
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("enableThinking")))
+        cursor.close()
+    }
+}

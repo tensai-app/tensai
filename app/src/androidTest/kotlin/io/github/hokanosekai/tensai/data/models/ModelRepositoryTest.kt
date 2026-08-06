@@ -44,6 +44,12 @@ class ModelRepositoryTest {
     private lateinit var db: TensaiDb
     private lateinit var repository: ModelRepository
 
+    // Isolated storage root for this test — NEVER context.filesDir. The repository deletes/
+    // overwrites files under `<root>/models/`; pointing that at the real filesDir wiped the user's
+    // imported models when this suite ran (TEN-48 incident). A fresh temp dir keeps the test's
+    // file I/O entirely inside its own sandbox.
+    private lateinit var storageRoot: File
+
     @Before
     fun setUp() {
         assumeTrue(
@@ -51,6 +57,7 @@ class ModelRepositoryTest {
                 "(adb push a GGUF there to run this test)",
             sourceModelFile.exists(),
         )
+        storageRoot = File(context.cacheDir, "model-repo-test-${System.nanoTime()}").apply { mkdirs() }
         db = Room.inMemoryDatabaseBuilder(context, TensaiDb::class.java).build()
         val engine = LlamaKtEngineImpl()
         repository = ModelRepository(
@@ -58,6 +65,7 @@ class ModelRepositoryTest {
             modelDao = db.modelDao(),
             readMetadata = engine::readMetadata,
             currentLoadedModelName = { null },
+            storageRoot = storageRoot,
         )
     }
 
@@ -67,9 +75,8 @@ class ModelRepositoryTest {
         // tearDown must not turn that skip into a failure.
         if (!::db.isInitialized) return
         db.close()
-        // The repository copies into the real app's filesDir — clean up so repeated runs don't
-        // accumulate files or trip the duplicate check against a previous run's copy.
-        File(context.filesDir, "models").deleteRecursively()
+        // Only ever deletes this test's own temp sandbox — never the app's real storage.
+        storageRoot.deleteRecursively()
     }
 
     @Test

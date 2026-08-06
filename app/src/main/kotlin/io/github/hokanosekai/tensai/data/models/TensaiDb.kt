@@ -13,17 +13,23 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
  *
  * Version 2 added [ModelEntity.embeddingLength] and [ModelEntity.blockCount] (TEN-29, for
  * [io.github.hokanosekai.tensai.compat.CompatibilityChecker]'s KV-cache estimate). Version 3 added
- * the chat tables (TEN-31). Version 4 added [ConversationEntity.enableThinking] (TEN-33). No
- * migration path is defined for any of these — the app has no released users yet, so
- * [androidx.room.RoomDatabase.Builder.fallbackToDestructiveMigration] (re-import is cheap; models
- * are just files the user already has, and there's no chat history worth preserving pre-release)
- * is preferable to writing migrations nobody depends on. Revisit once this schema ships to real
- * users.
+ * the chat tables (TEN-31). Version 4 added [ConversationEntity.enableThinking] (TEN-33). All three
+ * bumps happened pre-release without a migration path — [androidx.room.RoomDatabase.Builder]'s
+ * `fallbackToDestructiveMigration` covered the gap while there was nobody's data to lose. TEN-48
+ * reconstructed the real [TensaiDbMigrations] for all of them and dropped the fallback: the app is
+ * still pre-release, but the user's imported models are real data worth keeping now, so every
+ * future version bump needs its own [androidx.room.migration.Migration] added to
+ * [TensaiDbMigrations.ALL] — no more destructive fallback.
+ *
+ * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
+ * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
+ * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
+ * against what Room actually generated at each version.
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class],
     version = 4,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
 
@@ -36,7 +42,11 @@ abstract class TensaiDb : RoomDatabase() {
 
         fun build(context: Context): TensaiDb =
             Room.databaseBuilder(context.applicationContext, TensaiDb::class.java, DB_NAME)
-                .fallbackToDestructiveMigration()
+                .addMigrations(*TensaiDbMigrations.ALL)
+                // Guards against a downgrade (e.g. a debug build reinstalled over a newer one)
+                // hitting a version it has no migration path for — destructive only in that
+                // narrow, self-inflicted case, never on a normal forward upgrade.
+                .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
     }
 }
