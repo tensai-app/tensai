@@ -7,7 +7,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,11 +25,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -105,7 +113,15 @@ fun InputPill(
     }
 }
 
-/** The animated (or, under reduced motion, static) ring drawn behind the pill while generating. */
+/**
+ * The animated (or, under reduced motion, static) ring drawn behind the pill while generating.
+ *
+ * The bright arc travels *around* the pill's fixed perimeter — the geometry never moves. We clip
+ * to the border band (outer rounded-rect minus inner) and rotate only the sweep-gradient fill
+ * inside that clip. Rotating the whole bordered box instead (an earlier approach) spun the
+ * rounded-rect corners as a rigid body, which reads as the ring turning on itself rather than
+ * light running along the edge.
+ */
 @Composable
 private fun GenerationRing(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -113,24 +129,49 @@ private fun GenerationRing(modifier: Modifier = Modifier) {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     }
     val infiniteTransition = rememberInfiniteTransition(label = "inputPillRing")
-    val rotation by infiniteTransition.animateFloat(
+    val angle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = if (animatorDurationScale == 0f) snap() else tween(durationMillis = 1600, easing = LinearEasing),
+            animation = if (animatorDurationScale == 0f) snap() else tween(durationMillis = 2400, easing = LinearEasing),
         ),
-        label = "inputPillRingRotation",
+        label = "inputPillRingAngle",
     )
 
     val primary = MaterialTheme.colorScheme.primary
-    val ringBrush = remember(primary) {
-        Brush.sweepGradient(listOf(Color.Transparent, primary, Color.Transparent))
-    }
+    val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
+    val radiusPx = with(LocalDensity.current) { 28.dp.toPx() }
 
     Box(
-        modifier = modifier
-            .rotate(rotation)
-            .border(width = 2.dp, brush = ringBrush, shape = TensaiShapes.extraLarge),
+        modifier = modifier.drawWithCache {
+            // The bright arc is a narrow wedge that trails off into transparency both ways —
+            // matches the DS conic-gradient (opaque at the seam, transparent across the middle).
+            val brush = Brush.sweepGradient(
+                0.0f to primary,
+                0.15f to Color.Transparent,
+                0.85f to Color.Transparent,
+                1.0f to primary,
+                center = Offset(size.width / 2f, size.height / 2f),
+            )
+            val outer = Path().apply {
+                addRoundRect(RoundRect(Rect(0f, 0f, size.width, size.height), CornerRadius(radiusPx, radiusPx)))
+            }
+            val inner = Path().apply {
+                addRoundRect(
+                    RoundRect(
+                        Rect(strokePx, strokePx, size.width - strokePx, size.height - strokePx),
+                        CornerRadius(radiusPx - strokePx, radiusPx - strokePx),
+                    ),
+                )
+            }
+            // The band = outer minus inner: this is the fixed pill border the arc runs along.
+            val band = Path.combine(PathOperation.Difference, outer, inner)
+            onDrawBehind {
+                clipPath(band) {
+                    rotate(angle) { drawRect(brush) }
+                }
+            }
+        },
     )
 }
 
