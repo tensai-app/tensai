@@ -1,5 +1,13 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,10 +16,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -76,18 +87,30 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Auto-scroll to the newest message as it streams in, unless the user has scrolled up to
-    // read earlier history — re-checked on every message list update, not just once.
-    val isNearBottom by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= layoutInfo.totalItemsCount - 2
-        }
+    // "At the bottom" is a position, not an index: a streaming bubble taller than the viewport
+    // keeps the last item visible long after its tail has scrolled out of sight, so an index-based
+    // test reads as "at the bottom" while the tokens land off-screen (TEN-57).
+    val isAtBottom by remember { derivedStateOf { !listState.canScrollForward } }
+
+    // Following the stream is armed while the reader stays at the bottom, and only a drag can
+    // disarm it. Disarming on position alone would let the growing bubble push the viewport away
+    // from the bottom and switch itself off.
+    var followStream by remember { mutableStateOf(true) }
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(isDragged, isAtBottom) {
+        if (isDragged || isAtBottom) followStream = isAtBottom
     }
-    LaunchedEffect(messages) {
+
+    LaunchedEffect(messages, followStream) {
+        if (!followStream) return@LaunchedEffect
         val count = messages?.size ?: return@LaunchedEffect
-        if (count > 0 && isNearBottom) listState.animateScrollToItem(count - 1)
+        if (count == 0) return@LaunchedEffect
+        // Snap rather than animate: at streaming speed the next token arrives long before an
+        // animation settles, and a perpetually restarting animation is what used to fight the
+        // reader's own drag. scrollToItem alone aligns the item's *top* with the viewport, so
+        // scrollBy pushes through the rest of a tall bubble — it clamps at the end of the list.
+        listState.scrollToItem(count - 1)
+        listState.scrollBy(Float.MAX_VALUE)
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -127,6 +150,16 @@ fun ChatScreen(
                     }
                 }
             }
+
+            JumpToBottomButton(
+                visible = !isAtBottom && !currentMessages.isNullOrEmpty(),
+                // Re-arming the follow is the whole action: the effect above owns the scrolling,
+                // so the button never races it with a second one of its own.
+                onClick = { followStream = true },
+                // Bottom-end rather than centred: the button floats over the conversation, and a
+                // centred one lands in the middle of the text column it covers.
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
+            )
         }
 
         InputPill(
@@ -147,6 +180,42 @@ fun ChatScreen(
             onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),
         )
+    }
+}
+
+/**
+ * Floating "back to the newest message" affordance, shown only while the conversation is scrolled
+ * away from its bottom (TEN-57). Deliberately just an arrow: it sits over the conversation, so
+ * anything wordier would compete with the text it covers.
+ */
+@Composable
+private fun JumpToBottomButton(
+    visible: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + scaleIn(initialScale = 0.85f),
+        exit = fadeOut() + scaleOut(targetScale = 0.85f),
+        modifier = modifier,
+    ) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            // It sits on top of body text, so it needs an edge of its own to read as a control
+            // rather than as a smudge over the paragraph behind it.
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shadowElevation = 8.dp,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Jump to the latest message",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(8.dp).size(24.dp),
+            )
+        }
     }
 }
 
