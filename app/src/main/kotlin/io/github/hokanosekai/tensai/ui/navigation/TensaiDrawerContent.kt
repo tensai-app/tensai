@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
@@ -112,24 +114,30 @@ fun TensaiDrawerContent(
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
 
+            // Recents is the only part that grows without bound, so it is the only part that
+            // scrolls: the destinations below stay pinned and reachable however many
+            // conversations pile up (TEN-59). weight(1f) also keeps that bottom block against the
+            // bottom edge when there are only a handful, which is what the old trailing Spacer did.
             val currentConversations = conversations
-            when {
-                currentConversations == null -> Unit // initial Room query hasn't emitted yet.
-                currentConversations.isEmpty() -> EmptyRecentsState()
-                else -> currentConversations.forEach { conversation ->
-                    NavigationDrawerItem(
-                        label = {
-                            Text(
-                                text = conversation.title,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        selected = false,
-                        shape = RectangleShape,
-                        onClick = { onOpenConversation(conversation.id) },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                when {
+                    currentConversations == null -> Unit // initial Room query hasn't emitted yet.
+                    currentConversations.isEmpty() -> item { EmptyRecentsState() }
+                    else -> items(currentConversations, key = { it.id }) { conversation ->
+                        NavigationDrawerItem(
+                            label = {
+                                Text(
+                                    text = conversation.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            selected = false,
+                            shape = RectangleShape,
+                            onClick = { onOpenConversation(conversation.id) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
                 }
             }
 
@@ -176,8 +184,6 @@ fun TensaiDrawerContent(
                 onClick = { onNavigate(TensaiDestination.Settings.route) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-
-            Spacer(modifier = Modifier.weight(1f))
 
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 24.dp),
