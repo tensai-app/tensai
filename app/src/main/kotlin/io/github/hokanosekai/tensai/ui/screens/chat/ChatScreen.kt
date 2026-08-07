@@ -5,7 +5,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -18,9 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
@@ -156,9 +155,7 @@ fun ChatScreen(
                 // Re-arming the follow is the whole action: the effect above owns the scrolling,
                 // so the button never races it with a second one of its own.
                 onClick = { followStream = true },
-                // Bottom-end rather than centred: the button floats over the conversation, and a
-                // centred one lands in the middle of the text column it covers.
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
             )
         }
 
@@ -204,9 +201,6 @@ private fun JumpToBottomButton(
             onClick = onClick,
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceVariant,
-            // It sits on top of body text, so it needs an edge of its own to read as a control
-            // rather than as a smudge over the paragraph behind it.
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             shadowElevation = 8.dp,
         ) {
             Icon(
