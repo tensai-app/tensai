@@ -15,7 +15,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|layoutDirection|locale">
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|layoutDirection|locale"
+            android:windowSoftInputMode="adjustResize">
             <!-- TEN-50: LoadModelViewModel/ChatViewModel are `remember`-ed state holders, not
                  androidx ViewModels, so an Activity recreation loses their in-flight guards and
                  the screen re-triggers a multi-GB load. Handling these configs in place avoids the

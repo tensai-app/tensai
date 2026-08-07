@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.ui.components.InputPill
@@ -73,6 +74,7 @@ fun ChatScreen(
 
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // Auto-scroll to the newest message as it streams in, unless the user has scrolled up to
     // read earlier history — re-checked on every message list update, not just once.
@@ -134,6 +136,9 @@ fun ChatScreen(
                 if (input.isNotBlank()) {
                     viewModel.send(input)
                     input = ""
+                    // The reply starts streaming right away — leaving the keyboard up would cover
+                    // most of it (TEN-56).
+                    keyboardController?.hide()
                 }
             },
             onStop = viewModel::stop,

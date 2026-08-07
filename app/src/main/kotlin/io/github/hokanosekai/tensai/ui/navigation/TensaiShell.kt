@@ -1,6 +1,8 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
@@ -84,6 +86,12 @@ fun TensaiShell(hasModels: Boolean) {
         },
     ) {
         Scaffold(
+            // Default is systemBars, which leaves the IME out: opening the keyboard then pans the
+            // whole window up instead of resizing it, hiding half the chat input pill and pushing
+            // the top of the conversation under the status bar. safeDrawing folds the IME in, so
+            // every screen with a text field resizes above the keyboard. Pairs with
+            // windowSoftInputMode=adjustResize in the manifest (TEN-56).
+            contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
                 when (chrome) {
                     TensaiChrome.Main -> TensaiTopBar(
