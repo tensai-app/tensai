@@ -5,6 +5,7 @@ import com.tensai.llamakt.LoadProgressCallback
 import com.tensai.llamakt.TokenCallback
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
@@ -37,6 +38,25 @@ class LlamaKtEngineImpl : LlamaKtEngine {
     private val dispatcher = Executors
         .newSingleThreadExecutor { runnable -> Thread(runnable, "llama-kt-engine") }
         .asCoroutineDispatcher()
+
+    /**
+     * Last KV-cache fill read from the native context, published for [kvCacheUsedCells].
+     *
+     * Written only from [dispatcher] — after a load, after each token, and once a completion
+     * ends — so the native handle is never touched off that thread (TEN-51). Callers poll this
+     * instead of reaching into llama.cpp themselves.
+     *
+     * Refreshing it per token rather than on demand is what keeps it readable *during* a
+     * generation: `completion()` is a single blocking call that owns [dispatcher] from prefill to
+     * last token, so an on-demand read routed through the dispatcher could only ever answer once
+     * the generation it was meant to observe had already finished.
+     */
+    private val kvUsedCells = AtomicInteger(0)
+
+    /** Must only be called from [dispatcher]. */
+    private fun refreshKvUsedCells() {
+        kvUsedCells.set(runCatching { llamaEngine.kvUsed() }.getOrDefault(0))
+    }
 
     override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = withContext(dispatcher) {
         val nGpuLayers = resolveNGpuLayers(config.backend)
@@ -78,10 +98,11 @@ class LlamaKtEngineImpl : LlamaKtEngine {
             backend = backend,
         )
 
+        refreshKvUsedCells()
         LoadedModelImpl(info)
     }
 
-    override fun kvCacheUsedCells(): Int = llamaEngine.kvUsed()
+    override fun kvCacheUsedCells(): Int = kvUsedCells.get()
 
     override suspend fun saveSession(path: String) = withContext(dispatcher) {
         val savedTokens = try {
@@ -182,6 +203,9 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                     val callback = TokenCallback { token ->
                         if (firstTokenAtMs == 0L) firstTokenAtMs = System.currentTimeMillis()
                         tokenCount++
+                        // Runs on `dispatcher`, inside the blocking completion — the one place the
+                        // KV fill can be sampled while a generation is under way (TEN-51).
+                        refreshKvUsedCells()
                         trySend(DecodeEvent.Token(token))
                     }
                     llamaEngine.completion(prompt, libParams, callback)
@@ -198,6 +222,9 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                     trySend(DecodeEvent.Error(InferenceException("Decode failed: ${e.message}", e)))
                 }
 
+                // The interrupt path skips the callback for the token it cut short, so settle on
+                // the real figure before anyone reads it.
+                refreshKvUsedCells()
                 close()
             }
 
@@ -214,6 +241,9 @@ class LlamaKtEngineImpl : LlamaKtEngine {
 
         override suspend fun free() = withContext(dispatcher) {
             llamaEngine.free()
+            // Nothing is resident any more; leaving the last fill behind would have the next
+            // reader attribute it to whatever gets loaded next.
+            kvUsedCells.set(0)
         }
     }
 
