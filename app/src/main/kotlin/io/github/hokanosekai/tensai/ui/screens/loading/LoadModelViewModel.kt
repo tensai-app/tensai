@@ -11,6 +11,7 @@ import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.OutOfMemoryException
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
+import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -124,10 +126,19 @@ class LoadModelViewModel(
                 nCtx = plan.nCtx,
                 backend = backendOverride ?: compatibility.recommendedBackend,
                 kvCacheType = plan.kvCacheType,
-                onProgress = { progress -> _state.value = LoadUiState.InProgress(model, progress) },
             )
             _state.value = LoadUiState.InProgress(model, 0f)
 
+            // Progress comes from queue.state, not config.onProgress: when this call is the dedup
+            // no-op for a load another (now-gone) instance started, our own onProgress never fires
+            // but the queue's progress still does. See InferenceQueue.loadModel (TEN-50).
+            val progressJob = launch {
+                queue.state.collect { queueState ->
+                    if (queueState is QueueState.Loading) {
+                        _state.value = LoadUiState.InProgress(model, queueState.progress)
+                    }
+                }
+            }
             try {
                 queue.loadModel(config)
                 _state.value = LoadUiState.Success
@@ -135,6 +146,8 @@ class LoadModelViewModel(
                 _state.value = LoadUiState.OomFailed(model)
             } catch (e: Exception) {
                 _state.value = LoadUiState.GenericFailed(model, e.message ?: "Load failed")
+            } finally {
+                progressJob.cancel()
             }
         }
     }

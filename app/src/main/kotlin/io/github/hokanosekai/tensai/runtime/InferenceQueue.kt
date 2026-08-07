@@ -57,6 +57,14 @@ sealed class QueueState {
 class QueueBusyException(message: String) : Exception(message)
 
 /**
+ * The load-relevant part of a [ModelLoadConfig] — everything except
+ * [ModelLoadConfig.onProgress], which is per-call and never identifies a model.
+ * Two configs with equal dedup keys produce an identical loaded model, which is what lets
+ * [InferenceQueue.loadModel] short-circuit a repeat call (see TEN-50).
+ */
+private fun ModelLoadConfig.dedupKey(): ModelLoadConfig = copy(onProgress = null)
+
+/**
  * Single, app-wide entry point for every inference in Tensai.
  *
  * Contracts (see spec V1 "Contrats transverses"):
@@ -93,6 +101,20 @@ class InferenceQueue(private val engine: InferenceEngine) {
     private var loadedInfo: LoadedModelInfo? = null
 
     /**
+     * The [ModelLoadConfig] that produced [loadedModel]/[loadedInfo], stripped of its
+     * [ModelLoadConfig.onProgress] callback, or `null` if nothing is loaded. Guarded by [mutex].
+     * Lets [loadModel] recognize a repeat call for the model it just finished loading (two
+     * `LoadModelViewModel` instances across a config change both requesting the same model — see
+     * TEN-50) and return the cached result instead of loading it all over again.
+     *
+     * Keyed on the whole config, not just the path: reloading the same file with a different
+     * [ModelLoadConfig.backend], [ModelLoadConfig.nCtx] or [ModelLoadConfig.kvCacheType] (a CPU
+     * retry after a Vulkan failure, a new [LoadPolicy] plan on a device now under memory pressure)
+     * is a genuine reload, not a repeat call.
+     */
+    private var loadedConfig: ModelLoadConfig? = null
+
+    /**
      * Called just before a currently-loaded model is released — either
      * because [loadModel] is swapping it for a new one, or because
      * [unloadModel] is releasing it outright. `null` (the default) means no
@@ -124,6 +146,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * releasing whatever model is currently loaded first (there is never
      * more than one model resident at a time).
      *
+     * If [config] matches [loadedConfig] and [state] is
+     * [QueueState.ModelReady], this is a no-op returning the already-loaded
+     * [LoadedModelInfo] — no second [engine] load is issued. That covers a
+     * model already loaded *and* one still loading, since the check runs
+     * after acquiring [mutex] and [performLoadLocked] holds it for the whole
+     * load. Without it, a second caller racing the first (see TEN-50) tears
+     * the model down and reloads several GB from scratch.
+     *
      * If a generation is active, it is cancelled first (per spec: stopping
      * generation takes priority over starting a load) and awaited before the
      * load proceeds, so the previous model is never released while a decode
@@ -138,13 +168,16 @@ class InferenceQueue(private val engine: InferenceEngine) {
         while (true) {
             var pendingJob: Job? = null
             val info = mutex.withLock {
-                if (_state.value is QueueState.Generating) {
-                    // Someone is generating right now — stop them first (see class KDoc),
-                    // then retry once they've fully wound down.
-                    pendingJob = activeGenerationJob
-                    null
-                } else {
-                    performLoadLocked(config)
+                val current = _state.value
+                when {
+                    loadedConfig == config.dedupKey() && current is QueueState.ModelReady -> current.info
+                    current is QueueState.Generating -> {
+                        // Someone is generating right now — stop them first (see class KDoc),
+                        // then retry once they've fully wound down.
+                        pendingJob = activeGenerationJob
+                        null
+                    }
+                    else -> performLoadLocked(config)
                 }
             }
             if (info != null) return info
@@ -164,6 +197,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         val previous = loadedModel
         loadedModel = null
         loadedInfo = null
+        loadedConfig = null
         if (previous != null) onBeforeModelSwap?.invoke()
         previous?.let { runCatching { it.free() } }
 
@@ -178,6 +212,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
             val info = model.metadata
             loadedModel = model
             loadedInfo = info
+            loadedConfig = config.dedupKey()
             _state.value = QueueState.ModelReady(info)
             info
         } catch (e: Exception) {
@@ -204,6 +239,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                     val previous = loadedModel
                     loadedModel = null
                     loadedInfo = null
+                    loadedConfig = null
                     if (previous != null) onBeforeModelSwap?.invoke()
                     previous?.let { runCatching { it.free() } }
                     _state.value = QueueState.Idle

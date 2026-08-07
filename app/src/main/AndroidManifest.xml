@@ -14,7 +14,12 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|layoutDirection|locale">
+            <!-- TEN-50: LoadModelViewModel/ChatViewModel are `remember`-ed state holders, not
+                 androidx ViewModels, so an Activity recreation loses their in-flight guards and
+                 the screen re-triggers a multi-GB load. Handling these configs in place avoids the
+                 recreation; InferenceQueue's own dedup covers what this doesn't (process death). -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
