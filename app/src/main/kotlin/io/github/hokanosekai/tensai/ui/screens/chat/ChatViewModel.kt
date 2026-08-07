@@ -9,6 +9,7 @@ import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.SamplingConfig
+import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -40,8 +41,20 @@ data class ChatMessageUi(
     val stats: MessageStatsUi?,
 )
 
-/** Formatted decode stats for a finished assistant reply — `null` while streaming, or if generation was stopped early. */
-data class MessageStatsUi(val tokPerSec: Float, val tokensGenerated: Int, val ttftMs: Long)
+/**
+ * Formatted decode stats for a finished assistant reply — `null` while streaming, or if generation
+ * was stopped early.
+ *
+ * @param truncated the reply ran into [io.github.hokanosekai.tensai.engine.SamplingConfig.maxTokens]
+ *   rather than ending on its own. `false` for replies stored before v5 of the schema, where the
+ *   reason wasn't recorded and guessing would be worse than staying quiet (TEN-60).
+ */
+data class MessageStatsUi(
+    val tokPerSec: Float,
+    val tokensGenerated: Int,
+    val ttftMs: Long,
+    val truncated: Boolean,
+)
 
 private fun MessageEntity.toUi(): ChatMessageUi? {
     val isUser = when (role) {
@@ -50,7 +63,12 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
         else -> return null // system/tool: nothing to render in V1.
     }
     val stats = if (tokensGenerated != null && tokPerSec != null && ttftMs != null) {
-        MessageStatsUi(tokPerSec = tokPerSec, tokensGenerated = tokensGenerated, ttftMs = ttftMs)
+        MessageStatsUi(
+            tokPerSec = tokPerSec,
+            tokensGenerated = tokensGenerated,
+            ttftMs = ttftMs,
+            truncated = stopReason == StopReason.TokenBudget.name,
+        )
     } else {
         null
     }

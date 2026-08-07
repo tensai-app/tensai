@@ -61,6 +61,18 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v4 → v5 (TEN-60): adds [MessageEntity.stopReason]. Nullable with no default, so every
+     * message generated before this point keeps `null` — we genuinely don't know whether those
+     * replies ended on their own or were cut off at the old 512-token cap, and writing a guess
+     * into them would be worse than admitting it.
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `stopReason` TEXT")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
-    val ALL = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    val ALL = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

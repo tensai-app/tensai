@@ -91,4 +91,35 @@ class TensaiDbMigrationTest {
         assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("enableThinking")))
         cursor.close()
     }
+
+    @Test
+    fun migrate4To5AddsStopReasonAndLeavesOldRepliesUnknown() {
+        helper.createDatabase(testDbName, 4).apply {
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('c1', 'New chat', null, null, null, 1000, 1000, 0)",
+            )
+            execSQL(
+                "INSERT INTO messages (id, conversationId, role, content, thinking, toolCallsJson, " +
+                    "tokensGenerated, tokPerSec, ttftMs, createdAt) VALUES " +
+                    "('m1', 'c1', 'assistant', 'a reply from before v5', null, null, 512, 5.9, 2729, 1000)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 5, true, TensaiDbMigrations.MIGRATION_4_5)
+
+        val cursor = migrated.query("SELECT * FROM messages WHERE id = 'm1'")
+        assertTrue("expected the pre-migration reply to still be there", cursor.moveToFirst())
+        assertEquals("a reply from before v5", cursor.getString(cursor.getColumnIndexOrThrow("content")))
+        assertEquals(512L, cursor.getLong(cursor.getColumnIndexOrThrow("tokensGenerated")))
+        // Left null on purpose: this reply may well have been cut off at the old 512 cap, but
+        // nothing recorded that at the time, and inventing a reason would be worse than admitting
+        // we don't know. See MIGRATION_4_5's KDoc.
+        assertTrue(
+            "expected stopReason to stay unknown for a pre-v5 reply",
+            cursor.isNull(cursor.getColumnIndexOrThrow("stopReason")),
+        )
+        cursor.close()
+    }
 }

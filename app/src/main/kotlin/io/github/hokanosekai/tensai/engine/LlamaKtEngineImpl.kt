@@ -213,7 +213,14 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                     val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                     val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
                     val tokPerSec = tokenCount * 1000f / elapsedMs
-                    trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs)))
+                    // completion() returns Unit, so the reason has to be inferred: reaching the
+                    // cap is the one ending we can recognise from out here (TEN-60).
+                    val stopReason = if (tokenCount >= request.sampling.maxTokens) {
+                        StopReason.TokenBudget
+                    } else {
+                        StopReason.Complete
+                    }
+                    trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs, stopReason)))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: OutOfMemoryError) {

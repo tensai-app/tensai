@@ -28,7 +28,7 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

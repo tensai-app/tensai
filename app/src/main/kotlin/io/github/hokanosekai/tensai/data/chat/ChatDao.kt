@@ -43,7 +43,7 @@ interface ChatDao {
      */
     @Query(
         "UPDATE messages SET content = :content, thinking = :thinking, tokensGenerated = :tokensGenerated, " +
-            "tokPerSec = :tokPerSec, ttftMs = :ttftMs WHERE id = :id",
+            "tokPerSec = :tokPerSec, ttftMs = :ttftMs, stopReason = :stopReason WHERE id = :id",
     )
     suspend fun updateMessage(
         id: String,
@@ -52,6 +52,7 @@ interface ChatDao {
         tokensGenerated: Int?,
         tokPerSec: Float?,
         ttftMs: Long?,
+        stopReason: String?,
     )
 
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")

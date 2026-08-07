@@ -106,16 +106,23 @@ fun MessageBubble(
 @Composable
 private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
     Surface(shape = TensaiShapes.small, color = MaterialTheme.colorScheme.surface, modifier = modifier) {
+        val figures = "%.1f tok/s · %d tok · TTFT %dms".format(
+            Locale.US,
+            stats.tokPerSec,
+            stats.tokensGenerated,
+            stats.ttftMs,
+        )
         Text(
-            text = "%.1f tok/s · %d tok · TTFT %dms".format(
-                Locale.US,
-                stats.tokPerSec,
-                stats.tokensGenerated,
-                stats.ttftMs,
-            ),
+            // A reply cut off at the budget used to be indistinguishable from a finished one —
+            // same chip, same figures, the text just stopped (TEN-60).
+            text = if (stats.truncated) "$figures · cut off at limit" else figures,
             fontFamily = TensaiMono,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (stats.truncated) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }

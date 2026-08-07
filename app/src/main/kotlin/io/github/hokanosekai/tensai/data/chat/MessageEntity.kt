@@ -28,6 +28,10 @@ import androidx.room.PrimaryKey
  *   `null` until the assistant message finishes generating (or for non-assistant messages).
  * @param tokPerSec see [io.github.hokanosekai.tensai.engine.DecodeStats.tokPerSec].
  * @param ttftMs see [io.github.hokanosekai.tensai.engine.DecodeStats.ttftMs].
+ * @param stopReason name of the [io.github.hokanosekai.tensai.engine.StopReason] the decode ended
+ *   on, or `null` for messages generated before this was recorded (schema v4 and earlier) and for
+ *   non-assistant messages. Stored as the enum name rather than its ordinal so that reordering the
+ *   enum can't silently rewrite history.
  * @param createdAt epoch millis when the message row was created — drives
  *   [ChatDao.observeMessages]'s sort.
  */
@@ -45,5 +49,6 @@ data class MessageEntity(
     val tokensGenerated: Int?,
     val tokPerSec: Float?,
     val ttftMs: Long?,
+    val stopReason: String?,
     val createdAt: Long,
 )

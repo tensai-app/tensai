@@ -106,7 +106,10 @@ data class ChatMessage(
  *   top token's probability. 0 disables the filter.
  * @param stopSequences strings that end generation when they appear in
  *   the output. Implementations must not emit the matched sequence itself.
- * @param maxTokens hard cap on the number of generated tokens.
+ * @param maxTokens hard cap on the number of generated tokens. Counts *every* sampled token,
+ *   reasoning included: a thinking model spends this budget on its `<think>` block before it
+ *   writes a word of the answer, and llama.cpp has no notion of that boundary (TEN-60). Splitting
+ *   the budget in two is TEN-61's job.
  * @param enableThinking for thinking-capable models: whether to allow the
  *   model to reason before answering. Implementations that don't support
  *   this concept may ignore it.
@@ -117,9 +120,25 @@ data class SamplingConfig(
     val topK: Int = 40,
     val minP: Float = 0.05f,
     val stopSequences: List<String> = emptyList(),
-    val maxTokens: Int = 512,
+    val maxTokens: Int = 2048,
     val enableThinking: Boolean = true,
 )
+
+/**
+ * Why a decode stopped, reported in [DecodeStats.stopReason].
+ *
+ * Only two cases, because only two are knowable: llama.kt's `completion` returns `Unit` and tells
+ * us nothing, so the reason is inferred from whether the token count reached
+ * [SamplingConfig.maxTokens]. EOS and a matched stop sequence are indistinguishable from here, and
+ * are deliberately not split apart rather than guessed at.
+ */
+enum class StopReason {
+    /** The model ended the turn itself — end-of-sequence, or a stop sequence matched. */
+    Complete,
+
+    /** [SamplingConfig.maxTokens] was reached. Whatever was being written is cut off mid-thought. */
+    TokenBudget,
+}
 
 /**
  * A decode (completion) request against a [LoadedModel].
@@ -139,11 +158,14 @@ data class DecodeRequest(
  * @param tokensGenerated number of tokens streamed to the caller.
  * @param tokPerSec average generation throughput over the whole decode.
  * @param ttftMs time to first token, in milliseconds.
+ * @param stopReason why generation ended — see [StopReason]. Lets the UI tell a finished reply
+ *   apart from one cut off at the budget, which otherwise look identical (TEN-60).
  */
 data class DecodeStats(
     val tokensGenerated: Int,
     val tokPerSec: Float,
     val ttftMs: Long,
+    val stopReason: StopReason = StopReason.Complete,
 )
 
 /** An event emitted while streaming a [DecodeRequest]. */

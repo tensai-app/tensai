@@ -87,6 +87,7 @@ class ChatRepository(private val dao: ChatDao) {
             tokensGenerated = stats?.tokensGenerated,
             tokPerSec = stats?.tokPerSec,
             ttftMs = stats?.ttftMs,
+            stopReason = stats?.stopReason?.name,
         )
     }
 
@@ -134,6 +135,7 @@ class ChatRepository(private val dao: ChatDao) {
                 tokensGenerated = null,
                 tokPerSec = null,
                 ttftMs = null,
+                stopReason = null,
                 createdAt = System.currentTimeMillis(),
             ),
         )
