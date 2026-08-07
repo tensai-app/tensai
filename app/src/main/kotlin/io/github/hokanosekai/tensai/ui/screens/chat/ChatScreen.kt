@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
@@ -72,13 +73,9 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState(initial = null)
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
-    // A model is resident in both ModelReady and Generating — the pill and the "no model" banner
-    // must treat generating as "a model is loaded", not fall back to the empty state.
-    val modelInfo = when (val s = queueState) {
-        is QueueState.ModelReady -> s.info
-        is QueueState.Generating -> s.info
-        else -> null
-    }
+    // Generating still has a model resident, so the pill and the "no model" banner must not fall
+    // back to the empty state mid-reply — see residentModel's KDoc (TEN-46, TEN-58).
+    val modelInfo = queueState.residentModel
     val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = false)
     val enableThinking by viewModel.enableThinking.collectAsState(initial = true)
 

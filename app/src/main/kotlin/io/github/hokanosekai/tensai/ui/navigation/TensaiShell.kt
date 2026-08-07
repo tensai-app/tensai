@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.launch
@@ -62,7 +63,7 @@ fun TensaiShell(hasModels: Boolean) {
     val chrome = chromeForRoute(currentRoute)
 
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val modelPillLabel = (queueState as? QueueState.ModelReady)?.info
+    val modelPillLabel = queueState.residentModel
         ?.let { "${it.name} · ${it.nCtxEffective}" }
         ?: "no model"
 

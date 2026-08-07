@@ -50,6 +50,20 @@ sealed class QueueState {
 }
 
 /**
+ * The model currently resident in memory, or `null` if none is. A model stays loaded across a
+ * generation, so both [QueueState.ModelReady] and [QueueState.Generating] carry one — matching only
+ * `ModelReady` reads as "no model" for the whole duration of a reply, which is the bug behind both
+ * TEN-46 and TEN-58. Anything showing which model is loaded should go through this rather than
+ * write the `when` out again.
+ */
+val QueueState.residentModel: LoadedModelInfo?
+    get() = when (this) {
+        is QueueState.ModelReady -> info
+        is QueueState.Generating -> info
+        QueueState.Idle, is QueueState.Loading -> null
+    }
+
+/**
  * Thrown (as [DecodeEvent.Error]) when [InferenceQueue.generate] is called
  * while the queue cannot start a new generation — either another
  * generation is already active, or no model is currently loaded.
@@ -328,7 +342,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * [cancelActive]: a plain [StateFlow] read is safe from any thread without taking [mutex].
      */
     fun kvUsedPercent(): Float? {
-        val info = (_state.value as? QueueState.ModelReady)?.info ?: return null
+        // residentModel, not ModelReady alone: matching only the idle state would return null for
+        // the whole of a generation, which is exactly when the KDoc above promises a live figure.
+        val info = _state.value.residentModel ?: return null
         val llamaEngine = engine as? LlamaKtEngine ?: return null
         if (info.nCtxEffective <= 0) return null
         return llamaEngine.kvCacheUsedCells().toFloat() / info.nCtxEffective
