@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatMessageUi
 import io.github.hokanosekai.tensai.ui.screens.chat.MessageStatsUi
+import io.github.hokanosekai.tensai.ui.screens.chat.TruncationReason
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import java.util.Locale
@@ -112,13 +113,20 @@ private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
             stats.tokensGenerated,
             stats.ttftMs,
         )
+        // A reply cut off at the budget used to be indistinguishable from a finished one — same
+        // chip, same figures, the text just stopped (TEN-60). Reasoning cut short and answer cut
+        // short call for different reactions from the user (wait longer vs. it's just short), so
+        // TEN-61 tells them apart too — both stay a short suffix, not a sentence.
+        val suffix = when (stats.truncation) {
+            TruncationReason.None -> null
+            TruncationReason.Reasoning -> "cut off while reasoning"
+            TruncationReason.Response -> "cut off at limit"
+        }
         Text(
-            // A reply cut off at the budget used to be indistinguishable from a finished one —
-            // same chip, same figures, the text just stopped (TEN-60).
-            text = if (stats.truncated) "$figures · cut off at limit" else figures,
+            text = if (suffix != null) "$figures · $suffix" else figures,
             fontFamily = TensaiMono,
             style = MaterialTheme.typography.labelSmall,
-            color = if (stats.truncated) {
+            color = if (stats.truncation != TruncationReason.None) {
                 MaterialTheme.colorScheme.error
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant

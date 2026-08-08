@@ -106,13 +106,17 @@ data class ChatMessage(
  *   top token's probability. 0 disables the filter.
  * @param stopSequences strings that end generation when they appear in
  *   the output. Implementations must not emit the matched sequence itself.
- * @param maxTokens hard cap on the number of generated tokens. Counts *every* sampled token,
- *   reasoning included: a thinking model spends this budget on its `<think>` block before it
- *   writes a word of the answer, and llama.cpp has no notion of that boundary (TEN-60). Splitting
- *   the budget in two is TEN-61's job.
+ * @param maxTokens hard cap on the number of generated tokens when [reasoningBudget] is `null`.
+ *   Counts *every* sampled token, reasoning included: a thinking model spends this budget on its
+ *   `<think>` block before it writes a word of the answer, and llama.cpp has no notion of that
+ *   boundary (TEN-60). Ignored — superseded by [reasoningBudget]'s two caps — when it is non-null
+ *   (TEN-61).
  * @param enableThinking for thinking-capable models: whether to allow the
  *   model to reason before answering. Implementations that don't support
  *   this concept may ignore it.
+ * @param reasoningBudget splits [maxTokens] into a reasoning cap and a response cap, so a verbose
+ *   `<think>` block can no longer eat into the answer's share — see [ReasoningBudget]. `null` (the
+ *   default) keeps the single, undivided [maxTokens] behaviour.
  */
 data class SamplingConfig(
     val temperature: Float = 0.8f,
@@ -122,22 +126,68 @@ data class SamplingConfig(
     val stopSequences: List<String> = emptyList(),
     val maxTokens: Int = 2048,
     val enableThinking: Boolean = true,
+    val reasoningBudget: ReasoningBudget? = null,
+)
+
+/**
+ * Splits a decode's token budget into a reasoning cap and a response cap (TEN-61), so that a
+ * thinking model spending [SamplingConfig.maxTokens] entirely on its `<think>` block — TEN-60's
+ * problem — can no longer starve the actual answer.
+ *
+ * The engine treats [endMarker] as an opaque string, not a parsed tag: it has no notion that
+ * `<think>` exists (that's [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser]'s job, on
+ * the app side) — only that seeing [endMarker] in the stream means "reasoning is over, count
+ * against [responseMaxTokens] from here on". Carrying the marker as data rather than baking the
+ * format into the engine is what lets a model whose chat template marks reasoning differently
+ * (e.g. Gemma's `<|channel|>`, TEN-47) reuse this same mechanism with no engine change.
+ *
+ * Known limitation, left as-is rather than worked around: if the model never emits [endMarker],
+ * generation is cut when [reasoningMaxTokens] runs out and [StopReason.ReasoningBudgetExhausted]
+ * is reported — there is no way to *force* an answer out of a model stuck reasoning. Doing that for
+ * real would mean re-injecting a synthetic [endMarker] and re-running the completion from there
+ * (a full re-prefill of the reasoning so far), which is out of scope here.
+ *
+ * @param reasoningMaxTokens cap on tokens sampled before [endMarker] is seen in the stream.
+ * @param responseMaxTokens cap on tokens sampled from [endMarker] onward.
+ * @param endMarker string that ends the reasoning phase. Matched across token boundaries — a model
+ *   rarely emits it as a single token — by whoever tracks it (see
+ *   `io.github.hokanosekai.tensai.engine.ReasoningBudgetTracker`).
+ */
+data class ReasoningBudget(
+    val reasoningMaxTokens: Int,
+    val responseMaxTokens: Int,
+    val endMarker: String,
 )
 
 /**
  * Why a decode stopped, reported in [DecodeStats.stopReason].
  *
- * Only two cases, because only two are knowable: llama.kt's `completion` returns `Unit` and tells
- * us nothing, so the reason is inferred from whether the token count reached
- * [SamplingConfig.maxTokens]. EOS and a matched stop sequence are indistinguishable from here, and
- * are deliberately not split apart rather than guessed at.
+ * EOS and a matched stop sequence are indistinguishable from here (llama.kt's `completion` returns
+ * `Unit` and tells us nothing beyond the token count), and are deliberately merged into [Complete]
+ * rather than guessed at. The budget cases are told apart from each other because, unlike
+ * EOS/stop-sequence, they're each driven by a distinct counter this layer already keeps (see
+ * `io.github.hokanosekai.tensai.engine.ReasoningBudgetTracker`).
  */
 enum class StopReason {
     /** The model ended the turn itself — end-of-sequence, or a stop sequence matched. */
     Complete,
 
-    /** [SamplingConfig.maxTokens] was reached. Whatever was being written is cut off mid-thought. */
+    /**
+     * [SamplingConfig.maxTokens] was reached with [SamplingConfig.reasoningBudget] `null` — the
+     * single, undivided budget from before TEN-61. Whatever was being written is cut off
+     * mid-thought.
+     */
     TokenBudget,
+
+    /**
+     * [ReasoningBudget.reasoningMaxTokens] was reached before the model's `<think>` block closed
+     * (TEN-61). There may be no answer at all yet — see [ReasoningBudget]'s KDoc for why this
+     * can't be forced past.
+     */
+    ReasoningBudgetExhausted,
+
+    /** [ReasoningBudget.responseMaxTokens] was reached after reasoning ended (TEN-61). The answer is cut off mid-thought, same as [TokenBudget] but counted from the reasoning/response split. */
+    ResponseBudgetExhausted,
 }
 
 /**

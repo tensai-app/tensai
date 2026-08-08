@@ -104,8 +104,16 @@ class ThinkingStreamParser {
         return 0
     }
 
-    private companion object {
-        const val OpenTag = "<think>"
+    companion object {
+        private const val OpenTag = "<think>"
+
+        /**
+         * The closing tag itself, exposed (unlike [OpenTag]) so
+         * [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel] can pass it straight
+         * through as [io.github.hokanosekai.tensai.engine.ReasoningBudget.endMarker] (TEN-61) —
+         * the one place outside this parser that needs to know `<think>`'s format at all, since the
+         * engine itself is kept opaque to it (see [io.github.hokanosekai.tensai.engine.ReasoningBudget]'s KDoc).
+         */
         const val CloseTag = "</think>"
     }
 }

@@ -8,6 +8,7 @@ import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
+import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
@@ -30,6 +31,16 @@ import kotlinx.coroutines.withContext
 private const val StreamPersistIntervalMs = 100L
 
 /**
+ * [ReasoningBudget]'s two halves, applied when thinking is actually active for a generation — see
+ * [ChatViewModel.generateReply]. They sum to [SamplingConfig]'s existing `maxTokens` default of
+ * 2048 (TEN-60): TEN-61 redistributes that budget, it does not raise it — the model still has to
+ * fit inside the 4096-token [io.github.hokanosekai.tensai.runtime.LoadPolicy] context alongside the
+ * prompt.
+ */
+private const val ReasoningMaxTokens = 1024
+private const val ResponseMaxTokens = 1024
+
+/**
  * UI-facing view of a persisted [MessageEntity] — `null` for system/tool messages, which have
  * nothing to render in V1 (see [toUi]).
  */
@@ -42,18 +53,38 @@ data class ChatMessageUi(
 )
 
 /**
+ * How (if at all) an assistant reply's generation was cut short — see [MessageStatsUi.truncation].
+ */
+enum class TruncationReason {
+    /** Not truncated — the model ended its turn on its own. */
+    None,
+
+    /**
+     * [StopReason.ReasoningBudgetExhausted]: the reasoning budget ran out before the model's
+     * `<think>` block ever closed — there may be no answer at all yet.
+     */
+    Reasoning,
+
+    /**
+     * [StopReason.ResponseBudgetExhausted], or [StopReason.TokenBudget] for a reply generated
+     * with no reasoning/response split (thinking off, or from before TEN-61): the answer itself
+     * is cut off mid-thought.
+     */
+    Response,
+}
+
+/**
  * Formatted decode stats for a finished assistant reply — `null` while streaming, or if generation
  * was stopped early.
  *
- * @param truncated the reply ran into [io.github.hokanosekai.tensai.engine.SamplingConfig.maxTokens]
- *   rather than ending on its own. `false` for replies stored before v5 of the schema, where the
- *   reason wasn't recorded and guessing would be worse than staying quiet (TEN-60).
+ * @param truncation `None` for replies stored before v5 of the schema too — the reason wasn't
+ *   recorded there and guessing would be worse than staying quiet (TEN-60).
  */
 data class MessageStatsUi(
     val tokPerSec: Float,
     val tokensGenerated: Int,
     val ttftMs: Long,
-    val truncated: Boolean,
+    val truncation: TruncationReason,
 )
 
 private fun MessageEntity.toUi(): ChatMessageUi? {
@@ -63,11 +94,16 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
         else -> return null // system/tool: nothing to render in V1.
     }
     val stats = if (tokensGenerated != null && tokPerSec != null && ttftMs != null) {
+        val truncation = when (stopReason) {
+            StopReason.ReasoningBudgetExhausted.name -> TruncationReason.Reasoning
+            StopReason.ResponseBudgetExhausted.name, StopReason.TokenBudget.name -> TruncationReason.Response
+            else -> TruncationReason.None
+        }
         MessageStatsUi(
             tokPerSec = tokPerSec,
             tokensGenerated = tokensGenerated,
             ttftMs = ttftMs,
-            truncated = stopReason == StopReason.TokenBudget.name,
+            truncation = truncation,
         )
     } else {
         null
@@ -211,14 +247,35 @@ class ChatViewModel(
      */
     fun kvUsedPercent(): Float? = inferenceQueue.kvUsedPercent()
 
-    /** Starts a fresh assistant message and streams into it — the shared tail of [send] and [regenerate]. */
+    /**
+     * Starts a fresh assistant message and streams into it — the shared tail of [send] and
+     * [regenerate].
+     *
+     * The reasoning/response split only applies when thinking is actually going to happen:
+     * [ConversationEntity.enableThinking] defaults to `true` even for a conversation started
+     * against a model with no thinking template at all (see its KDoc), so gating on that flag
+     * alone would split — and needlessly shrink — the budget for a plain model that will never
+     * emit [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser.CloseTag] in the first
+     * place. [currentModelSupportsThinking] is what actually knows that.
+     */
     private suspend fun generateReply() {
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
         val assistantId = chatRepository.startAssistantMessage(conversationId)
+        val enableThinking = conversation?.enableThinking ?: true
+        val thinkingActive = enableThinking && currentModelSupportsThinking.first()
+        val reasoningBudget = if (thinkingActive) {
+            ReasoningBudget(
+                reasoningMaxTokens = ReasoningMaxTokens,
+                responseMaxTokens = ResponseMaxTokens,
+                endMarker = ThinkingStreamParser.CloseTag,
+            )
+        } else {
+            null
+        }
         val request = DecodeRequest(
             messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
-            sampling = SamplingConfig(enableThinking = conversation?.enableThinking ?: true),
+            sampling = SamplingConfig(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
         streamInto(assistantId, request)
     }
