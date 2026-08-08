@@ -73,6 +73,22 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v5 → v6 (TEN-34): adds the `sessions` table backing
+     * [io.github.hokanosekai.tensai.data.session.SessionRepository] — a brand new table, so
+     * nothing to backfill for existing rows in other tables.
+     */
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `sessions` (`conversationId` TEXT NOT NULL, `modelId` TEXT NOT NULL, " +
+                    "`filePath` TEXT NOT NULL, `nCtx` INTEGER NOT NULL, `kvCacheType` TEXT NOT NULL, " +
+                    "`backend` TEXT NOT NULL, `tokenCount` INTEGER NOT NULL, `sizeBytes` INTEGER NOT NULL, " +
+                    "`createdAt` INTEGER NOT NULL, `lastAccessedAt` INTEGER NOT NULL, PRIMARY KEY(`conversationId`))",
+            )
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
-    val ALL = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+    val ALL = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 }

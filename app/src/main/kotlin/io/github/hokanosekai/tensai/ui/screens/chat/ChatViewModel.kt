@@ -5,15 +5,19 @@ import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelRepository
+import io.github.hokanosekai.tensai.data.session.SessionModelKey
+import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
+import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import io.github.hokanosekai.tensai.runtime.residentModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -139,6 +143,7 @@ class ChatViewModel(
     private val chatRepository: ChatRepository = RuntimeGraph.chatRepository,
     private val inferenceQueue: InferenceQueue = RuntimeGraph.inferenceQueue,
     private val modelRepository: ModelRepository = RuntimeGraph.modelRepository,
+    private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
 ) {
     /** This conversation's messages, oldest first, mapped for display — see [toUi]. */
@@ -259,6 +264,9 @@ class ChatViewModel(
      * place. [currentModelSupportsThinking] is what actually knows that.
      */
     private suspend fun generateReply() {
+        restoreSessionIfColdStart()
+        reportActiveSession()
+
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
         val assistantId = chatRepository.startAssistantMessage(conversationId)
@@ -278,6 +286,47 @@ class ChatViewModel(
             sampling = SamplingConfig(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
         streamInto(assistantId, request)
+    }
+
+    /**
+     * Resolves the [SessionModelKey] for whatever model is currently loaded, or `null` if none is
+     * loaded or it can't be matched back to a persisted [io.github.hokanosekai.tensai.data.models.ModelEntity]
+     * (by display name — see [currentModelSupportsThinking]'s KDoc for the same by-name-match
+     * caveat this shares).
+     */
+    private suspend fun resolveSessionKey(): SessionModelKey? {
+        val info = inferenceQueue.state.value.residentModel ?: return null
+        val model = modelRepository.models.first().find { it.displayName == info.name } ?: return null
+        return SessionModelKey(modelId = model.id, nCtx = info.nCtxEffective, kvCacheType = info.kvCacheType, backend = info.backend)
+    }
+
+    /**
+     * Restores this conversation's persisted session (TEN-34) before the upcoming generation, but
+     * only if the engine's KV cache is currently empty — i.e. this model was *just* loaded (a cold
+     * start, or right after [io.github.hokanosekai.tensai.runtime.InferenceQueue.onBeforeModelSwap]
+     * swapped in a new one). A non-empty cache means some conversation's live state is already
+     * resident; restoring an on-disk snapshot over that would roll it back to whatever was last
+     * saved, discarding anything generated since — so this only ever restores into an otherwise
+     * blank cache, never over one already in use.
+     *
+     * Known gap, out of TEN-34's scope: switching to a *different* conversation without the model
+     * itself being swapped is not covered here — the KV cache would already be non-empty (holding
+     * the previous conversation's state), so this correctly skips restoring, but that also means
+     * such a switch still falls back to a full re-prefill exactly as it does today. Fixing that
+     * would mean tracking which conversation currently owns the live KV cache and evicting/restoring
+     * on every switch, not just on a swap or a background transition — a larger change than this
+     * ticket's two save triggers call for.
+     */
+    private suspend fun restoreSessionIfColdStart() {
+        if ((inferenceQueue.kvUsedPercent() ?: 0f) > 0f) return
+        val key = resolveSessionKey() ?: return
+        sessionRepository.restore(conversationId, key)
+    }
+
+    /** Reports this conversation as the one currently bound to the loaded model — see [ActiveSessionTracker]. */
+    private suspend fun reportActiveSession() {
+        val key = resolveSessionKey() ?: return
+        ActiveSessionTracker.report(conversationId, key)
     }
 
     /**

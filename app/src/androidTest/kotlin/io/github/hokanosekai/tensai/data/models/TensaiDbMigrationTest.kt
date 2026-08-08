@@ -122,4 +122,13 @@ class TensaiDbMigrationTest {
         )
         cursor.close()
     }
+
+    @Test
+    fun migrate5To6AddsSessionsTable() {
+        helper.createDatabase(testDbName, 5).close()
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 6, true, TensaiDbMigrations.MIGRATION_5_6)
+
+        migrated.query("SELECT * FROM sessions").use { assertEquals(0, it.count) }
+    }
 }

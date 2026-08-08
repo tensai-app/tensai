@@ -96,6 +96,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
             name = meta?.name?.takeIf { it.isNotBlank() } ?: File(config.path).name,
             nCtxEffective = config.nCtx,
             backend = backend,
+            kvCacheType = config.kvCacheType,
         )
 
         refreshKvUsedCells()
@@ -104,7 +105,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
 
     override fun kvCacheUsedCells(): Int = kvUsedCells.get()
 
-    override suspend fun saveSession(path: String) = withContext(dispatcher) {
+    override suspend fun saveSession(path: String): Int = withContext(dispatcher) {
         val savedTokens = try {
             llamaEngine.saveSession(path)
         } catch (e: Exception) {
@@ -113,14 +114,22 @@ class LlamaKtEngineImpl : LlamaKtEngine {
         if (savedTokens < 0) {
             throw InferenceException("Failed to save session to $path")
         }
+        savedTokens
     }
 
     override suspend fun loadSession(path: String): Boolean = withContext(dispatcher) {
-        try {
+        val restored = try {
             llamaEngine.loadSession(path) >= 0
         } catch (e: Exception) {
             throw InferenceException("Failed to load session from $path: ${e.message}", e)
         }
+        // A restore repopulates the cache without generating a token, so nothing else would ever
+        // refresh the published figure: it would keep reading as empty until the next decode's
+        // first token. That is not just a stale indicator — TEN-34's restore gate is "is the cache
+        // empty", so leaving it at zero here would let a second attempt restore straight over a
+        // cache this one just filled.
+        if (restored) refreshKvUsedCells()
+        restored
     }
 
     override suspend fun readMetadata(path: String): GgufInfo = withContext(dispatcher) {

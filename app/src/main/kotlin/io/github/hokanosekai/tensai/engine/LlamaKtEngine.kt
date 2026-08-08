@@ -44,8 +44,11 @@ interface LlamaKtEngine : InferenceEngine {
     /** Number of KV-cache cells currently in use (sequence 0). Compare against `nCtx` for a fill ratio. */
     fun kvCacheUsedCells(): Int
 
-    /** Persist the current KV-cache + prompt state to [path]. Throws [InferenceException] on failure. */
-    suspend fun saveSession(path: String)
+    /**
+     * Persist the current KV-cache + prompt state to [path]. Returns the number of tokens
+     * included in the saved state (always `>= 0`). Throws [InferenceException] on failure.
+     */
+    suspend fun saveSession(path: String): Int
 
     /**
      * Restore a previously saved session from [path]. Requires the same

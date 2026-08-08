@@ -7,6 +7,8 @@ import androidx.room.RoomDatabase
 import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.session.SessionDao
+import io.github.hokanosekai.tensai.data.session.SessionEntity
 
 /**
  * App-wide Room database — [ModelEntity] plus the chat tables ([ConversationEntity], [MessageEntity]).
@@ -21,14 +23,18 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
  * future version bump needs its own [androidx.room.migration.Migration] added to
  * [TensaiDbMigrations.ALL] — no more destructive fallback.
  *
+ * Version 6 added [SessionEntity] (TEN-34): persisted KV-cache/prompt state per conversation, so
+ * resuming one doesn't need a full re-prefill — see
+ * [io.github.hokanosekai.tensai.data.session.SessionRepository].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
  * against what Room actually generated at each version.
  */
 @Database(
-    entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class],
-    version = 5,
+    entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class, SessionEntity::class],
+    version = 6,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
@@ -36,6 +42,8 @@ abstract class TensaiDb : RoomDatabase() {
     abstract fun modelDao(): ModelDao
 
     abstract fun chatDao(): ChatDao
+
+    abstract fun sessionDao(): SessionDao
 
     companion object {
         private const val DB_NAME = "tensai.db"

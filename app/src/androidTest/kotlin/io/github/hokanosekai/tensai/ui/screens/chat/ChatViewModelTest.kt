@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
+import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
@@ -58,6 +59,7 @@ class ChatViewModelTest {
 
     private lateinit var db: TensaiDb
     private lateinit var chatRepository: ChatRepository
+    private lateinit var sessionRepository: SessionRepository
     private lateinit var queue: InferenceQueue
     private lateinit var scope: CoroutineScope
 
@@ -66,6 +68,13 @@ class ChatViewModelTest {
         db = Room.inMemoryDatabaseBuilder(context, TensaiDb::class.java).build()
         chatRepository = ChatRepository(db.chatDao())
         queue = InferenceQueue(LlamaKtEngineImpl())
+        // cacheDir, never filesDir: this must never touch the real device's imported models (see
+        // ModelRepository's storageRoot KDoc) — same reasoning applies to any real Room db.
+        sessionRepository = SessionRepository(
+            dao = db.sessionDao(),
+            storageRoot = context.cacheDir,
+            restoreOnEngine = { path -> queue.restoreSession(path) },
+        )
         // A dedicated scope per test rather than RuntimeGraph.applicationScope — same idea as
         // InferenceQueueTest's own fresh InferenceQueue per test: no shared state across tests.
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -85,6 +94,7 @@ class ChatViewModelTest {
         conversationId = conversationId,
         chatRepository = chatRepository,
         inferenceQueue = queue,
+        sessionRepository = sessionRepository,
         scope = scope,
     )
 

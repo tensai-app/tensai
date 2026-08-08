@@ -349,4 +349,52 @@ class InferenceQueue(private val engine: InferenceEngine) {
         if (info.nCtxEffective <= 0) return null
         return llamaEngine.kvCacheUsedCells().toFloat() / info.nCtxEffective
     }
+
+    /**
+     * Persists the currently loaded model's KV-cache/prompt state to [path] — TEN-34's
+     * app-triggered save (e.g. the app going to background), as opposed to [onBeforeModelSwap]'s
+     * save-before-swap. Returns the number of tokens saved (`>= 0`) on success, `-1` (never an
+     * exception) if no model is loaded, [state] is not [QueueState.ModelReady] (in particular:
+     * mid-generation, so a save can't stall behind an in-flight decode holding
+     * [engine]'s own dispatcher — see `LlamaKtEngineImpl`'s KDoc), [engine] isn't a
+     * [LlamaKtEngine], or the underlying save itself failed.
+     *
+     * Serialized on [mutex] like every other queue operation, so it can never race a concurrent
+     * [loadModel]/[unloadModel]/[generate] — unlike [onBeforeModelSwap], which runs already inside
+     * [mutex], this is meant for callers *outside* the queue and must take the lock itself.
+     */
+    suspend fun saveSession(path: String): Int = mutex.withLock {
+        if (_state.value !is QueueState.ModelReady) return@withLock -1
+        val llama = engine as? LlamaKtEngine ?: return@withLock -1
+        try {
+            llama.saveSession(path)
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    /**
+     * Restores a previously-saved KV-cache/prompt state from [path] onto whatever model is
+     * currently loaded — the app-side counterpart of prefill, letting a resumed conversation skip
+     * re-feeding a prompt prefix already present in [path]. Callers are responsible for validating
+     * that [path] actually matches the currently loaded model/context/KV-cache-type *before*
+     * calling this (see `io.github.hokanosekai.tensai.data.session.SessionRepository`) — this only
+     * forwards to [LlamaKtEngine.loadSession] and does not itself re-check compatibility.
+     *
+     * Returns `false` (never throws) if no model is loaded, [state] is not
+     * [QueueState.ModelReady], [engine] isn't a [LlamaKtEngine], or the underlying restore failed —
+     * every case is a clean signal to fall back to a normal prefill.
+     *
+     * Serialized on [mutex] like every other queue operation, so it can't race a concurrent
+     * [loadModel]/[unloadModel]/[generate] — must be called before [generate].
+     */
+    suspend fun restoreSession(path: String): Boolean = mutex.withLock {
+        if (_state.value !is QueueState.ModelReady) return@withLock false
+        val llama = engine as? LlamaKtEngine ?: return@withLock false
+        try {
+            llama.loadSession(path)
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

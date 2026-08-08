@@ -6,10 +6,13 @@ import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.InferenceEngine
+import io.github.hokanosekai.tensai.engine.KvCacheType
+import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.MessageRole
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
+import io.github.hokanosekai.tensai.engine.GgufInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -151,6 +154,76 @@ class InferenceQueueTest {
         assertTrue(queue.state.value is QueueState.ModelReady)
     }
 
+    @Test
+    fun saveSessionReturnsNegativeOneWhenNoModelIsLoaded() = runBlocking {
+        val queue = InferenceQueue(FakeEngine())
+
+        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun saveSessionReturnsNegativeOneWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun saveSessionDelegatesToTheLlamaKtEngineWhenReady() = runBlocking {
+        val engine = FakeLlamaKtEngine(saveTokens = 42)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(42, queue.saveSession("/sessions/a.state"))
+        assertEquals(listOf("/sessions/a.state"), engine.savedPaths)
+    }
+
+    @Test
+    fun saveSessionReturnsNegativeOneRatherThanThrowingWhenTheEngineFails() = runBlocking {
+        val engine = FakeLlamaKtEngine(saveThrows = true)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun restoreSessionReturnsFalseWhenNoModelIsLoaded() = runBlocking {
+        val queue = InferenceQueue(FakeEngine())
+
+        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun restoreSessionReturnsFalseWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun restoreSessionDelegatesToTheLlamaKtEngineWhenReady() = runBlocking {
+        val engine = FakeLlamaKtEngine(loadResult = true)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(true, queue.restoreSession("/sessions/a.state"))
+        assertEquals(listOf("/sessions/a.state"), engine.loadedPaths)
+    }
+
+    @Test
+    fun restoreSessionReturnsFalseRatherThanThrowingWhenTheEngineFails() = runBlocking {
+        val engine = FakeLlamaKtEngine(loadThrows = true)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+    }
+
     /** Tracks how many times [loadModel] actually reached the engine — the thing TEN-50's fix avoids doubling. */
     private class FakeEngine(
         private val loadDelayMs: Long = 0L,
@@ -163,7 +236,12 @@ class InferenceQueueTest {
             loadCallCount++
             if (loadDelayMs > 0) delay(loadDelayMs)
             return FakeLoadedModel(
-                LoadedModelInfo(name = config.path, nCtxEffective = config.nCtx, backend = "CPU"),
+                LoadedModelInfo(
+                    name = config.path,
+                    nCtxEffective = config.nCtx,
+                    backend = "CPU",
+                    kvCacheType = config.kvCacheType,
+                ),
                 decodeGate,
             )
         }
@@ -181,5 +259,43 @@ class InferenceQueueTest {
         override suspend fun tokenize(text: String): Int = 0
 
         override suspend fun free() = Unit
+    }
+
+    /** A [LlamaKtEngine] fake — covers [InferenceQueue.saveSession]/[InferenceQueue.restoreSession], which need the sub-interface [FakeEngine] deliberately doesn't implement. */
+    private class FakeLlamaKtEngine(
+        private val saveTokens: Int = 0,
+        private val saveThrows: Boolean = false,
+        private val loadResult: Boolean = false,
+        private val loadThrows: Boolean = false,
+    ) : LlamaKtEngine {
+        val savedPaths = mutableListOf<String>()
+        val loadedPaths = mutableListOf<String>()
+
+        override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = FakeLoadedModel(
+            LoadedModelInfo(
+                name = config.path,
+                nCtxEffective = config.nCtx,
+                backend = "CPU",
+                kvCacheType = config.kvCacheType,
+            ),
+            decodeGate = null,
+        )
+
+        override fun kvCacheUsedCells(): Int = 0
+
+        override suspend fun saveSession(path: String): Int {
+            savedPaths += path
+            if (saveThrows) throw RuntimeException("save failed")
+            return saveTokens
+        }
+
+        override suspend fun loadSession(path: String): Boolean {
+            loadedPaths += path
+            if (loadThrows) throw RuntimeException("load failed")
+            return loadResult
+        }
+
+        override suspend fun readMetadata(path: String): GgufInfo =
+            throw UnsupportedOperationException("not needed by these tests")
     }
 }

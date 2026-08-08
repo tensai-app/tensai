@@ -5,6 +5,7 @@ import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
+import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,30 @@ object RuntimeGraph {
     /** Must be called once, before any other member is touched — see `TensaiApp.onCreate`. */
     fun init(context: Context) {
         appContext = context.applicationContext
+
+        // TEN-34's save-before-swap: [ActiveSessionTracker.current] is whatever conversation last
+        // reported itself active against the model about to be replaced/unloaded. Cleared *before*
+        // saving, not after: this hook runs once per swap, so clearing first means a load that
+        // then completes without any `ChatViewModel` reporting against the *new* model (nobody
+        // opened a conversation yet) leaves the tracker empty rather than still pointing at the
+        // just-freed model's key — see `ActiveSessionTracker`'s KDoc for why that matters (a stale
+        // key would otherwise mislabel whatever's actually in the new model's KV cache).
+        //
+        // Calls `llamaEngine.saveSession` directly rather than going through
+        // `InferenceQueue.saveSession` — this hook already runs *inside* the queue's own mutex (see
+        // `InferenceQueue.onBeforeModelSwap`'s KDoc), so routing through the queue's own
+        // mutex-protected entry point would deadlock. Any failure is swallowed: this hook's
+        // exceptions propagate up through `loadModel`/`unloadModel` and would abort the swap
+        // (leaving the *old* model still resident) — a session save failing must never block
+        // loading the next model.
+        inferenceQueue.onBeforeModelSwap = {
+            val snapshot = ActiveSessionTracker.current.value
+            ActiveSessionTracker.clear()
+            if (snapshot != null) {
+                val (conversationId, key) = snapshot
+                runCatching { sessionRepository.save(conversationId, key, saveOnEngine = llamaEngine::saveSession) }
+            }
+        }
     }
 
     /**
@@ -67,4 +92,18 @@ object RuntimeGraph {
 
     /** Chat history — Room-backed, see [ChatRepository]. */
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
+
+    /**
+     * Persisted KV-cache/prompt state per conversation (TEN-34) — see [SessionRepository]. Its
+     * [SessionRepository.restore] is wired to [InferenceQueue.restoreSession] rather than the raw
+     * engine, since restoring always happens from outside any lock this queue holds (unlike the
+     * save-before-swap path wired in [init], which runs already inside the queue's mutex).
+     */
+    val sessionRepository: SessionRepository by lazy {
+        SessionRepository(
+            dao = database.sessionDao(),
+            storageRoot = appContext.filesDir,
+            restoreOnEngine = { path -> inferenceQueue.restoreSession(path) },
+        )
+    }
 }
