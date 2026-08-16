@@ -52,11 +52,12 @@ object RuntimeGraph {
             }
         }
 
-        // TEN-63: this app now keeps at most one persisted session, table-wide — one-time cleanup
-        // for whatever a device already had on disk under TEN-34's old per-conversation caps.
-        // Fire-and-forget on [applicationScope] rather than awaited here: nothing in `init` depends
-        // on it finishing, and `TensaiApp.onCreate` must not block on file I/O.
-        applicationScope.launch { runCatching { sessionRepository.pruneToSingleSession() } }
+        // This app keeps at most two persisted sessions, table-wide (LRU-2 as of TEN-62; TEN-63
+        // had it at one) — one-time cleanup for whatever a device already had on disk under an
+        // older policy's caps. Fire-and-forget on [applicationScope] rather than awaited here:
+        // nothing in `init` depends on it finishing, and `TensaiApp.onCreate` must not block on
+        // file I/O.
+        applicationScope.launch { runCatching { sessionRepository.pruneToStoragePolicy() } }
     }
 
     /**

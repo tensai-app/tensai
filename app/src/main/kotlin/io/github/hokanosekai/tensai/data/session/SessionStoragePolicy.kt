@@ -1,7 +1,7 @@
 package io.github.hokanosekai.tensai.data.session
 
 /**
- * Which persisted [SessionEntity] rows to keep (TEN-63) — same "pure policy object" shape as
+ * Which persisted [SessionEntity] rows to keep — same "pure policy object" shape as
  * [io.github.hokanosekai.tensai.runtime.LoadPolicy], deliberately free of Room, Android `Context`,
  * or file I/O so it's unit-testable with plain [SessionEntity] instances and no device.
  *
@@ -24,16 +24,36 @@ package io.github.hokanosekai.tensai.data.session
  *
  * Restoring a session instead of re-prefilling separately measured a 23.5x TTFT win (107 645 ms
  * cold vs. 4 582 ms restored), and that win is entirely about the one conversation actually being
- * reopened — nothing measured motivates keeping more than that on disk at a time. So TEN-63 drops
- * both caps for a single rule: keep only the session that was just written, evict every other one.
+ * reopened — nothing measured motivated keeping more than that on disk at a time. So TEN-63
+ * dropped both caps for a single rule: keep only the session that was just written, evict every
+ * other one.
+ *
+ * TEN-62 reintroduces exactly one more slot — LRU-2, keep [justWritten] plus whichever *other*
+ * session was most recently accessed, evict the rest — because switching conversations without
+ * swapping models needs to save the outgoing conversation's session and restore the incoming
+ * one's in the same breath (see `ChatViewModel`'s conversation-switch handling); TEN-63's
+ * single-session rule made that impossible, since saving the outgoing session would immediately
+ * evict the incoming one's file before it could ever be restored. Two is the minimum that makes
+ * that sequence possible at all, and, per the measurements above, the worst case is bounded and
+ * known: two full Qwen3-1.7B sessions at a full 4096-token context, ~448 MiB apiece, is ~900 MiB
+ * on disk — the actual, typical case (a real conversation's token count, not a maxed-out context)
+ * runs ~160–420 MiB for the pair. Nothing here motivates a third slot, a byte budget, or a
+ * caller-configurable cap: exactly two, hard-coded, matches exactly the one transition TEN-62
+ * needs and no more.
  */
 object SessionStoragePolicy {
 
     /**
-     * Every [SessionEntity.conversationId] other than [justWritten] — [justWritten] (the session
-     * [SessionRepository.save] just persisted) is the only one this app keeps a session for; every
-     * other row, regardless of size or recency, is stale by definition and gets evicted.
+     * Every [SessionEntity.conversationId] to evict, keeping at most two rows: [justWritten] (the
+     * session [SessionRepository.save] just persisted) and, among every other row, whichever has
+     * the greatest [SessionEntity.lastAccessedAt] — everything else is stale by definition,
+     * regardless of size, and gets evicted. Ties on [SessionEntity.lastAccessedAt] keep whichever
+     * tied row appears first in [sessions] — deterministic, but not meaningful beyond that; two
+     * rows are never expected to share an access timestamp in practice.
      */
-    fun evictionPlan(sessions: List<SessionEntity>, justWritten: String): List<String> =
-        sessions.mapNotNull { it.conversationId.takeIf { id -> id != justWritten } }
+    fun evictionPlan(sessions: List<SessionEntity>, justWritten: String): List<String> {
+        val others = sessions.filter { it.conversationId != justWritten }
+        val keptOther = others.maxByOrNull { it.lastAccessedAt }?.conversationId
+        return others.mapNotNull { it.conversationId.takeIf { id -> id != keptOther } }
+    }
 }

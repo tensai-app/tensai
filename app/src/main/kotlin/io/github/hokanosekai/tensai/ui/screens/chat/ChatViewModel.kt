@@ -5,6 +5,7 @@ import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelRepository
+import io.github.hokanosekai.tensai.data.session.SaveResult
 import io.github.hokanosekai.tensai.data.session.SessionModelKey
 import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.engine.DecodeEvent
@@ -288,7 +289,7 @@ class ChatViewModel(
      * place. [currentModelSupportsThinking] is what actually knows that.
      */
     private suspend fun generateReply() {
-        restoreSessionIfColdStart()
+        syncSessionForConversationSwitch()
         reportActiveSession()
 
         val conversation = chatRepository.getConversation(conversationId)
@@ -325,26 +326,64 @@ class ChatViewModel(
     }
 
     /**
-     * Restores this conversation's persisted session (TEN-34) before the upcoming generation, but
-     * only if the engine's KV cache is currently empty — i.e. this model was *just* loaded (a cold
-     * start, or right after [io.github.hokanosekai.tensai.runtime.InferenceQueue.onBeforeModelSwap]
-     * swapped in a new one). A non-empty cache means some conversation's live state is already
-     * resident; restoring an on-disk snapshot over that would roll it back to whatever was last
-     * saved, discarding anything generated since — so this only ever restores into an otherwise
-     * blank cache, never over one already in use.
+     * Keeps this conversation's session in sync with whatever the engine's KV cache currently
+     * holds, before the upcoming generation — TEN-34's cold-start restore, plus TEN-62's third save
+     * trigger for switching conversations without a model swap. Three cases:
      *
-     * Known gap, out of TEN-34's scope: switching to a *different* conversation without the model
-     * itself being swapped is not covered here — the KV cache would already be non-empty (holding
-     * the previous conversation's state), so this correctly skips restoring, but that also means
-     * such a switch still falls back to a full re-prefill exactly as it does today. Fixing that
-     * would mean tracking which conversation currently owns the live KV cache and evicting/restoring
-     * on every switch, not just on a swap or a background transition — a larger change than this
-     * ticket's two save triggers call for.
+     * - **Empty cache** (a cold start, or right after
+     *   [io.github.hokanosekai.tensai.runtime.InferenceQueue.onBeforeModelSwap] swapped in a new
+     *   model and froze the previous one's session to disk): nothing live to lose, so this
+     *   conversation's persisted session is restored if one exists (TEN-34, unchanged).
+     * - **Non-empty cache already bound to this conversation** ([ActiveSessionTracker.current]
+     *   points at [conversationId]): the normal case of a conversation's second-and-later turn —
+     *   the cache is this conversation's own live state, so nothing to do.
+     * - **Non-empty cache bound to a *different* conversation** (TEN-62): the user switched
+     *   conversations without the model changing. The outgoing conversation's live state is saved
+     *   first via [SessionRepository.save] (`inferenceQueue::saveSession` as `saveOnEngine` — this
+     *   runs outside [io.github.hokanosekai.tensai.runtime.InferenceQueue]'s mutex, unlike
+     *   `onBeforeModelSwap`, see [SessionRepository]'s KDoc), and only restored into if that save
+     *   didn't just lose data: [io.github.hokanosekai.tensai.data.session.SaveResult.Saved],
+     *   [io.github.hokanosekai.tensai.data.session.SaveResult.Unchanged] (the fast A→B→A path with
+     *   nothing generated in between — same token count already on disk, so the outgoing state
+     *   *is* already saved) and
+     *   [io.github.hokanosekai.tensai.data.session.SaveResult.NothingToSave] (an empty cache
+     *   reported at save time — nothing to lose) all permit the restore.
+     *   [io.github.hokanosekai.tensai.data.session.SaveResult.Failed] does not: TEN-34's guarantee
+     *   is that a session is never restored over live state that wasn't first written to disk, so a
+     *   failed save aborts the switch and this conversation falls back to a normal re-prefill
+     *   instead, keeping the outgoing conversation's in-memory state exactly as it was (never
+     *   restoring over it, never silently discarding anything the user generated).
+     *
+     * Guarded to only run this last case when [ActiveSessionTracker.current]'s recorded
+     * [SessionModelKey] matches this conversation's own (via [resolveSessionKey]): a different key
+     * means a model swap already happened and `onBeforeModelSwap` already saved the outgoing
+     * session (TEN-34) — this must not save it a second time. [ActiveSessionTracker] is best-effort
+     * (see its KDoc): if it's `null` (nobody reported since the tracker was last cleared), there is
+     * no known outgoing conversation to save, so the switch case is skipped entirely — the same
+     * "leave the live cache alone" behavior this method always had for a non-empty cache before
+     * TEN-62.
      */
-    private suspend fun restoreSessionIfColdStart() {
-        if ((inferenceQueue.kvUsedPercent() ?: 0f) > 0f) return
-        val key = resolveSessionKey() ?: return
-        sessionRepository.restore(conversationId, key)
+    private suspend fun syncSessionForConversationSwitch() {
+        if ((inferenceQueue.kvUsedPercent() ?: 0f) == 0f) {
+            val key = resolveSessionKey() ?: return
+            sessionRepository.restore(conversationId, key)
+            return
+        }
+
+        val (outgoingConversationId, outgoingKey) = ActiveSessionTracker.current.value ?: return
+        if (outgoingConversationId == conversationId) return
+
+        val incomingKey = resolveSessionKey() ?: return
+        if (outgoingKey != incomingKey) return
+
+        val saveResult = sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)
+        val outgoingStateIsSafe = when (saveResult) {
+            is SaveResult.Saved, is SaveResult.Unchanged, SaveResult.NothingToSave -> true
+            is SaveResult.Failed -> false
+        }
+        if (!outgoingStateIsSafe) return
+
+        sessionRepository.restore(conversationId, incomingKey)
     }
 
     /** Reports this conversation as the one currently bound to the loaded model — see [ActiveSessionTracker]. */

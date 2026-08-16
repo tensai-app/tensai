@@ -194,20 +194,31 @@ class SessionRepositoryTest {
         assertTrue(dao.getByConversation("c1")!!.lastAccessedAt > before)
     }
 
-    // ---- storage policy integration (TEN-63: single-session) ----
+    // ---- storage policy integration (TEN-62: LRU-2) ----
 
     @Test
-    fun savingASecondConversationEvictsEveryOtherOne() = runBlocking {
+    fun savingASecondConversationKeepsBothSessions() = runBlocking {
+        repository.save("c1", key) { path -> File(path).writeText("a"); 1 }
+        Thread.sleep(5)
+        repository.save("c2", key) { path -> File(path).writeText("b"); 1 }
+
+        assertTrue("two sessions total must both survive under LRU-2", dao.getByConversation("c1") != null)
+        assertTrue(dao.getByConversation("c2") != null)
+        assertEquals(2, File(storageRoot, "sessions").listFiles()?.size)
+    }
+
+    @Test
+    fun savingAThirdConversationEvictsOnlyTheLeastRecentlyAccessedOne() = runBlocking {
         repository.save("c1", key) { path -> File(path).writeText("a"); 1 }
         Thread.sleep(5)
         repository.save("c2", key) { path -> File(path).writeText("b"); 1 }
         Thread.sleep(5)
         repository.save("c3", key) { path -> File(path).writeText("c"); 1 }
 
-        assertNull(dao.getByConversation("c1"))
-        assertNull("only the single most recent session should remain", dao.getByConversation("c2"))
+        assertNull("c1 is neither just-written nor the most recently accessed other row", dao.getByConversation("c1"))
+        assertTrue("c2 is the most recently accessed of the two non-just-written rows", dao.getByConversation("c2") != null)
         assertTrue(dao.getByConversation("c3") != null)
-        assertEquals(1, File(storageRoot, "sessions").listFiles()?.size)
+        assertEquals(2, File(storageRoot, "sessions").listFiles()?.size)
     }
 
     @Test
@@ -216,8 +227,29 @@ class SessionRepositoryTest {
         val evictedPath = dao.getByConversation("c1")!!.filePath
         Thread.sleep(5)
         repository.save("c2", key) { path -> File(path).writeText("b"); 1 }
+        Thread.sleep(5)
+        repository.save("c3", key) { path -> File(path).writeText("c"); 1 }
 
         assertFalse(File(evictedPath).exists())
+    }
+
+    @Test
+    fun aSaveThenRestoreRoundTripSurvivesTheNewEvictionEvenWithAThirdSessionInPlay() = runBlocking {
+        // TEN-62's whole point: saving conversation A must not evict conversation B before B gets a
+        // chance to restore. Reproduces the switch sequence ChatViewModel drives (save outgoing,
+        // then restore incoming) against a repository that already has a third, older session.
+        repository.save("stale", key) { path -> File(path).writeText("old"); 1 }
+        Thread.sleep(5)
+        repository.save("b", key) { path -> File(path).writeText("b-state"); 5 }
+        Thread.sleep(5)
+
+        // "a" is saved (as would happen for the outgoing conversation on a switch)...
+        repository.save("a", key) { path -> File(path).writeText("a-state"); 3 }
+        // ...and "b" must still be restorable afterwards, i.e. its file must not have been evicted.
+        val result = repository.restore("b", key)
+
+        assertEquals(RestoreResult.Restored(5), result)
+        assertNull("the third, stale session must be the one evicted, not b", dao.getByConversation("stale"))
     }
 
     // ---- nothing-to-save (TEN-63: empty KV cache) ----
@@ -292,34 +324,44 @@ class SessionRepositoryTest {
         assertTrue("a different key means a different save even at the same token count", result is SaveResult.Saved)
     }
 
-    // ---- prune to single session (TEN-63) ----
+    // ---- prune to storage policy (TEN-62: LRU-2) ----
 
     @Test
-    fun pruneToSingleSessionIsANoOpWithZeroOrOneSessions() = runBlocking {
-        repository.pruneToSingleSession() // must not throw with nothing persisted
+    fun pruneToStoragePolicyIsANoOpWithZeroOneOrTwoSessions() = runBlocking {
+        repository.pruneToStoragePolicy() // must not throw with nothing persisted
 
         repository.save("c1", key) { path -> File(path).writeText("a"); 1 }
-        repository.pruneToSingleSession()
+        repository.pruneToStoragePolicy()
+        assertTrue(dao.getByConversation("c1") != null)
+
+        repository.save("c2", key) { path -> File(path).writeText("b"); 1 }
+        repository.pruneToStoragePolicy()
 
         assertTrue(dao.getByConversation("c1") != null)
+        assertTrue(dao.getByConversation("c2") != null)
     }
 
     @Test
-    fun pruneToSingleSessionKeepsOnlyTheMostRecentlyAccessedRowAndDeletesTheRest() = runBlocking {
-        dao.upsert(sessionRow("old", lastAccessedAt = 1))
+    fun pruneToStoragePolicyKeepsTheTwoMostRecentlyAccessedRowsAndDeletesTheRest() = runBlocking {
+        dao.upsert(sessionRow("oldest", lastAccessedAt = 1))
         dao.upsert(sessionRow("newer", lastAccessedAt = 2))
+        dao.upsert(sessionRow("newest", lastAccessedAt = 3))
+        val newestPath = dao.getByConversation("newest")!!.filePath
+        File(newestPath).parentFile?.mkdirs()
+        File(newestPath).writeText("kept-newest")
         val newerPath = dao.getByConversation("newer")!!.filePath
-        File(newerPath).parentFile?.mkdirs()
-        File(newerPath).writeText("kept")
-        val oldPath = dao.getByConversation("old")!!.filePath
-        File(oldPath).writeText("dropped")
+        File(newerPath).writeText("kept-newer")
+        val oldestPath = dao.getByConversation("oldest")!!.filePath
+        File(oldestPath).writeText("dropped")
 
-        repository.pruneToSingleSession()
+        repository.pruneToStoragePolicy()
 
-        assertNull(dao.getByConversation("old"))
-        assertFalse(File(oldPath).exists())
+        assertNull(dao.getByConversation("oldest"))
+        assertFalse(File(oldestPath).exists())
         assertTrue(dao.getByConversation("newer") != null)
         assertTrue(File(newerPath).exists())
+        assertTrue(dao.getByConversation("newest") != null)
+        assertTrue(File(newestPath).exists())
     }
 
     private fun sessionRow(conversationId: String, lastAccessedAt: Long) = SessionEntity(
@@ -355,8 +397,8 @@ class SessionRepositoryTest {
 
     @Test
     fun purgeAllRemovesEveryFileAndRow() = runBlocking {
-        // Bypasses save()'s single-session eviction (not what this test is about) — writes two rows
-        // directly via the fake dao, same trick as pruneToSingleSession's tests above.
+        // Bypasses save()'s LRU-2 eviction (not what this test is about) — writes two rows
+        // directly via the fake dao, same trick as pruneToStoragePolicy's tests above.
         dao.upsert(sessionRow("c1", lastAccessedAt = 1))
         dao.upsert(sessionRow("c2", lastAccessedAt = 2))
         val paths = dao.rows.values.map { it.filePath }

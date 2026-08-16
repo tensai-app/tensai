@@ -65,10 +65,12 @@ sealed class RestoreResult {
  * - `inferenceQueue::restoreSession` for [restoreOnEngine] — restore always happens from outside
  *   any [io.github.hokanosekai.tensai.runtime.InferenceQueue]-held lock, so it must go through that
  *   mutex-protected entry point.
- * - Either `inferenceQueue::saveSession` (a caller outside the queue, e.g. the app backgrounding)
- *   or the raw `LlamaKtEngine::saveSession` (a caller *inside* `onBeforeModelSwap`, which already
- *   runs under the queue's own mutex and would deadlock calling back into it — see that hook's
- *   KDoc) for [save]'s `saveOnEngine` parameter, depending on which situation triggered the save.
+ * - Either `inferenceQueue::saveSession` (a caller outside the queue — the app backgrounding, or
+ *   `ChatViewModel` saving the outgoing conversation before a same-model conversation switch,
+ *   TEN-62) or the raw `LlamaKtEngine::saveSession` (a caller *inside* `onBeforeModelSwap`, which
+ *   already runs under the queue's own mutex and would deadlock calling back into it — see that
+ *   hook's KDoc) for [save]'s `saveOnEngine` parameter, depending on which situation triggered the
+ *   save.
  *
  * @param storageRoot root directory state files live under (`storageRoot/sessions/`) — the app
  *   passes `context.filesDir`; tests MUST pass a temp directory (see
@@ -94,9 +96,10 @@ class SessionRepository(
 
     /**
      * Saves the current engine state (via [saveOnEngine]) as [conversationId]'s session, tagged
-     * with [key]. Overwrites whatever was previously saved for this conversation, and, per TEN-63's
-     * single-session policy, evicts every *other* conversation's session (see
-     * [SessionStoragePolicy]) — this app persists exactly one conversation's session at a time.
+     * with [key]. Overwrites whatever was previously saved for this conversation, and evicts every
+     * session this app's [SessionStoragePolicy] doesn't keep — TEN-63 kept exactly one, TEN-62
+     * widened that to two (LRU-2) so a conversation switch can save the outgoing session without
+     * evicting the incoming one before it can be restored (see [SessionStoragePolicy]'s KDoc).
      *
      * Two ways this can end up writing nothing, both TEN-63 (see the QA numbers cited in
      * [SessionStoragePolicy]'s KDoc — `MainActivity.onStop` fires on every backgrounding, and
@@ -232,13 +235,17 @@ class SessionRepository(
     }
 
     /**
-     * One-time cleanup (TEN-63) for whatever this table held under TEN-34's old multi-session
-     * caps: keeps only the most-recently-accessed row (there is no "just written" session at app
-     * start to defer to, so recency is the next best signal of "the conversation actually being
-     * used"), evicting the rest via the same [SessionStoragePolicy] path [save] uses. A no-op once
-     * at most one session remains — safe to call unconditionally on every app start.
+     * One-time cleanup for whatever this table held under an older, looser storage policy (TEN-34's
+     * original multi-session caps, or TEN-63's single-session rule on a device that already
+     * upgraded once): applies [SessionStoragePolicy]'s current rule (LRU-2 as of TEN-62) to rows
+     * already on disk at app start, since there's no "just written" session yet to hand
+     * [SessionStoragePolicy.evictionPlan] — the most-recently-accessed row stands in for it instead
+     * (the next best signal of "a conversation actually in use"), so the same call keeps that row
+     * plus whichever *other* row is next most recent, exactly like a normal [save] would. A no-op
+     * once at most [SessionStoragePolicy]'s cap remains — safe to call unconditionally on every app
+     * start.
      */
-    suspend fun pruneToSingleSession() {
+    suspend fun pruneToStoragePolicy() {
         val all = dao.allSessions()
         val mostRecent = all.maxByOrNull { it.lastAccessedAt } ?: return
         evict(SessionStoragePolicy.evictionPlan(all, justWritten = mostRecent.conversationId))
