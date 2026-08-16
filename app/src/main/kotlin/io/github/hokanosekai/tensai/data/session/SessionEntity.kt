@@ -9,8 +9,11 @@ import androidx.room.PrimaryKey
  *
  * There is at most one row per [conversationId] ([conversationId] is the primary key, not a
  * separate UUID): a conversation only ever has one "current" session on disk, and
- * [SessionRepository.save] overwrites it wholesale rather than accumulating history. Not a hard
- * foreign key to [io.github.hokanosekai.tensai.data.chat.ConversationEntity] or
+ * [SessionRepository.save] overwrites it wholesale rather than accumulating history. Since TEN-63,
+ * that ceiling is also a table-wide one: [SessionStoragePolicy] keeps at most one row in the whole
+ * `sessions` table, period — the app persists a session for whichever single conversation was most
+ * recently saved, not one per conversation. Not a hard foreign key to
+ * [io.github.hokanosekai.tensai.data.chat.ConversationEntity] or
  * [io.github.hokanosekai.tensai.data.models.ModelEntity] — same rationale as
  * [io.github.hokanosekai.tensai.data.chat.ConversationEntity.modelId]: either could be deleted
  * while this row remains, and that's fine, it just becomes unrestorable and eventually gets

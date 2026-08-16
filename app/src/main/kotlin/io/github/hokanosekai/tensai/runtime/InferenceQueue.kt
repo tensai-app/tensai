@@ -351,6 +351,21 @@ class InferenceQueue(private val engine: InferenceEngine) {
     }
 
     /**
+     * Number of tokens currently resident in whatever is loaded's KV cache, or `null` under the
+     * same conditions as [kvUsedPercent] (no model loaded, [engine] isn't a [LlamaKtEngine]).
+     *
+     * Exists so [io.github.hokanosekai.tensai.data.session.SessionRepository.save] can cheaply
+     * check "would this save write anything new" *before* paying for an actual
+     * [LlamaKtEngine.saveSession] call (TEN-63) — this is a plain atomic read, unlike
+     * [saveSession], which serializes a multi-hundred-KB-per-token file write behind [mutex].
+     */
+    fun currentKvTokenCount(): Int? {
+        _state.value.residentModel ?: return null
+        val llamaEngine = engine as? LlamaKtEngine ?: return null
+        return llamaEngine.kvCacheUsedCells()
+    }
+
+    /**
      * Persists the currently loaded model's KV-cache/prompt state to [path] — TEN-34's
      * app-triggered save (e.g. the app going to background), as opposed to [onBeforeModelSwap]'s
      * save-before-swap. Returns the number of tokens saved (`>= 0`) on success, `-1` (never an

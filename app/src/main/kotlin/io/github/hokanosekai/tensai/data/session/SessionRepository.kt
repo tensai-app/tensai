@@ -9,6 +9,20 @@ sealed class SaveResult {
     /** The session was persisted; [tokenCount]/[sizeBytes] mirror what was written to [SessionEntity]. */
     data class Saved(val tokenCount: Int, val sizeBytes: Long) : SaveResult()
 
+    /**
+     * Nothing was written because [SessionRepository.save]'s `currentTokenCount` reported the same
+     * token count already on record for this conversation — see that parameter's KDoc for why that
+     * check is enough to know the save would write identical bytes.
+     */
+    data class Unchanged(val tokenCount: Int, val sizeBytes: Long) : SaveResult()
+
+    /**
+     * Nothing was persisted because `saveOnEngine` reported an empty KV cache (0 tokens) — there is
+     * nothing to resume from anyway, so this conversation's *previous* session (if any) is left
+     * untouched rather than replaced with an empty one.
+     */
+    data object NothingToSave : SaveResult()
+
     /** Nothing was persisted — any previous session for this conversation is untouched. */
     data class Failed(val cause: Throwable) : SaveResult()
 }
@@ -60,13 +74,17 @@ sealed class RestoreResult {
  *   passes `context.filesDir`; tests MUST pass a temp directory (see
  *   `io.github.hokanosekai.tensai.data.models.ModelRepository`'s `storageRoot` for the same
  *   convention and why it matters).
+ * @param currentTokenCount cheap, non-suspending read of how many tokens are *currently* resident
+ *   in whatever the engine has loaded right now (the app wires
+ *   `io.github.hokanosekai.tensai.runtime.InferenceQueue.currentKvTokenCount`), or `null` if that
+ *   can't be answered right now. Lets [save] skip the expensive `saveOnEngine` call entirely (see
+ *   its KDoc) rather than merely skip the DB write after already paying for it.
  */
 class SessionRepository(
     private val dao: SessionDao,
     storageRoot: File,
     private val restoreOnEngine: suspend (path: String) -> Boolean,
-    private val maxTotalBytes: Long = SessionStoragePolicy.DEFAULT_MAX_TOTAL_BYTES,
-    private val maxSessionCount: Int = SessionStoragePolicy.DEFAULT_MAX_SESSION_COUNT,
+    private val currentTokenCount: () -> Int? = { null },
 ) {
 
     private val sessionsDir: File = File(storageRoot, "sessions")
@@ -76,20 +94,48 @@ class SessionRepository(
 
     /**
      * Saves the current engine state (via [saveOnEngine]) as [conversationId]'s session, tagged
-     * with [key]. Overwrites whatever was previously saved for this conversation.
+     * with [key]. Overwrites whatever was previously saved for this conversation, and, per TEN-63's
+     * single-session policy, evicts every *other* conversation's session (see
+     * [SessionStoragePolicy]) — this app persists exactly one conversation's session at a time.
      *
-     * Write-then-rename: [saveOnEngine] is asked to write to a temp path first, and the DB row is
-     * only written (and the temp file only renamed into place) once that call has actually
+     * Two ways this can end up writing nothing, both TEN-63 (see the QA numbers cited in
+     * [SessionStoragePolicy]'s KDoc — `MainActivity.onStop` fires on every backgrounding, and
+     * without either of these it rewrote the full multi-hundred-MB state each time):
+     * - **Unchanged**: if a session already exists for [conversationId] under the same [key] and
+     *   [currentTokenCount] reports the same token count already on record for it, [saveOnEngine]
+     *   is never even called — same [key] means [saveOnEngine] would deterministically re-serialize
+     *   the same KV cache into the same bytes, so the token count alone (an atomic read, no I/O) is
+     *   enough to know the write would be a no-op. Checked *before* [saveOnEngine] specifically so
+     *   the expensive part (the actual state dump) is the part that gets skipped, not just the
+     *   rename/DB-write after paying for it.
+     * - **NothingToSave**: if [saveOnEngine] itself reports `0` tokens (an empty KV cache — e.g.
+     *   nothing has been prefilled/generated against this conversation yet), there is nothing worth
+     *   resuming from; any previous session for this conversation is left as-is rather than
+     *   replaced with a useless empty one.
+     *
+     * Write-then-rename otherwise: [saveOnEngine] is asked to write to a temp path first, and the DB
+     * row is only written (and the temp file only renamed into place) once that call has actually
      * succeeded — a failure at any point (the engine call itself, or the rename) leaves any
-     * previous session for this conversation exactly as it was, never a half-written file
-     * mistaken for a valid one. On success, also runs [SessionStoragePolicy] to evict older
-     * sessions if the caps are now exceeded.
+     * previous session for this conversation exactly as it was, never a half-written file mistaken
+     * for a valid one.
      */
     suspend fun save(
         conversationId: String,
         key: SessionModelKey,
         saveOnEngine: suspend (path: String) -> Int,
     ): SaveResult {
+        val existingBeforeSave = dao.getByConversation(conversationId)
+        if (existingBeforeSave != null &&
+            existingBeforeSave.modelId == key.modelId &&
+            existingBeforeSave.nCtx == key.nCtx &&
+            existingBeforeSave.kvCacheType == key.kvCacheType.name
+        ) {
+            val liveTokenCount = currentTokenCount()
+            if (liveTokenCount != null && liveTokenCount == existingBeforeSave.tokenCount) {
+                return SaveResult.Unchanged(existingBeforeSave.tokenCount, existingBeforeSave.sizeBytes)
+            }
+        }
+
         sessionsDir.mkdirs()
         val finalFile = finalPathFor(conversationId)
         val tempFile = tempPathFor(conversationId)
@@ -104,6 +150,10 @@ class SessionRepository(
             tempFile.delete()
             return SaveResult.Failed(IllegalStateException("Session save reported failure (returned $tokenCount)"))
         }
+        if (tokenCount == 0) {
+            tempFile.delete()
+            return SaveResult.NothingToSave
+        }
         if (!tempFile.exists()) {
             return SaveResult.Failed(IllegalStateException("Session save reported success but wrote no file"))
         }
@@ -113,7 +163,6 @@ class SessionRepository(
             return SaveResult.Failed(IOException("Could not move saved session into place at $finalFile"))
         }
 
-        val existing = dao.getByConversation(conversationId)
         val now = System.currentTimeMillis()
         val sizeBytes = finalFile.length()
         dao.upsert(
@@ -126,7 +175,7 @@ class SessionRepository(
                 backend = key.backend,
                 tokenCount = tokenCount,
                 sizeBytes = sizeBytes,
-                createdAt = existing?.createdAt ?: now,
+                createdAt = existingBeforeSave?.createdAt ?: now,
                 lastAccessedAt = now,
             ),
         )
@@ -182,10 +231,25 @@ class SessionRepository(
         dao.deleteAll()
     }
 
-    private suspend fun enforceStoragePolicy(justWritten: String) {
+    /**
+     * One-time cleanup (TEN-63) for whatever this table held under TEN-34's old multi-session
+     * caps: keeps only the most-recently-accessed row (there is no "just written" session at app
+     * start to defer to, so recency is the next best signal of "the conversation actually being
+     * used"), evicting the rest via the same [SessionStoragePolicy] path [save] uses. A no-op once
+     * at most one session remains — safe to call unconditionally on every app start.
+     */
+    suspend fun pruneToSingleSession() {
         val all = dao.allSessions()
-        val toEvict = SessionStoragePolicy.evictionPlan(all, justWritten, maxTotalBytes, maxSessionCount)
-        for (conversationId in toEvict) {
+        val mostRecent = all.maxByOrNull { it.lastAccessedAt } ?: return
+        evict(SessionStoragePolicy.evictionPlan(all, justWritten = mostRecent.conversationId))
+    }
+
+    private suspend fun enforceStoragePolicy(justWritten: String) {
+        evict(SessionStoragePolicy.evictionPlan(dao.allSessions(), justWritten))
+    }
+
+    private suspend fun evict(conversationIds: List<String>) {
+        for (conversationId in conversationIds) {
             dao.getByConversation(conversationId)?.let { File(it.filePath).delete() }
             dao.delete(conversationId)
         }

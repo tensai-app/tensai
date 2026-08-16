@@ -10,6 +10,7 @@ import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Pragmatic, framework-free composition root for V1.
@@ -50,6 +51,12 @@ object RuntimeGraph {
                 runCatching { sessionRepository.save(conversationId, key, saveOnEngine = llamaEngine::saveSession) }
             }
         }
+
+        // TEN-63: this app now keeps at most one persisted session, table-wide — one-time cleanup
+        // for whatever a device already had on disk under TEN-34's old per-conversation caps.
+        // Fire-and-forget on [applicationScope] rather than awaited here: nothing in `init` depends
+        // on it finishing, and `TensaiApp.onCreate` must not block on file I/O.
+        applicationScope.launch { runCatching { sessionRepository.pruneToSingleSession() } }
     }
 
     /**
@@ -104,6 +111,7 @@ object RuntimeGraph {
             dao = database.sessionDao(),
             storageRoot = appContext.filesDir,
             restoreOnEngine = { path -> inferenceQueue.restoreSession(path) },
+            currentTokenCount = { inferenceQueue.currentKvTokenCount() },
         )
     }
 }

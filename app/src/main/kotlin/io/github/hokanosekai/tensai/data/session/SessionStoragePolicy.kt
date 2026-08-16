@@ -1,72 +1,39 @@
 package io.github.hokanosekai.tensai.data.session
 
 /**
- * Storage caps + LRU eviction for persisted [SessionEntity] rows (TEN-34) — same "pure policy
- * object" shape as [io.github.hokanosekai.tensai.runtime.LoadPolicy], deliberately free of Room,
- * Android `Context`, or file I/O so it's unit-testable with plain [SessionEntity] instances and no
- * device.
+ * Which persisted [SessionEntity] rows to keep (TEN-63) — same "pure policy object" shape as
+ * [io.github.hokanosekai.tensai.runtime.LoadPolicy], deliberately free of Room, Android `Context`,
+ * or file I/O so it's unit-testable with plain [SessionEntity] instances and no device.
+ *
+ * TEN-34 shipped this with two PROVISIONAL caps guessed from the ticket's own back-of-envelope
+ * figure ("a saved state at 8192 tokens, q8_0, is roughly 200 MB"): a 300 MiB total-bytes ceiling
+ * and a 3-session count ceiling. TEN-63's on-device measurement (Qwen3-1.7B and Phi 4 Mini,
+ * CPH2251, `nCtx` 4096, F16 KV cache) replaced the guess and found both caps wrong in ways no
+ * single pair of constants can fix:
+ *
+ * - Session size grows **linearly with tokens actually saved**, not with `nCtx`: Qwen3-1.7B
+ *   measured a flat ~114.7 KiB/token across three very different sample sizes (708 tokens →
+ *   81 211 141 B, 1846 tokens → 211 744 293 B, 3236 tokens → 371 182 853 B).
+ * - The cost per token is **model-dependent**: Phi 4 Mini measured ~68 KiB/token (722 tokens →
+ *   50 286 660 B), a 1.7x spread from Qwen3-1.7B's ~114.7 KiB/token — a single byte threshold is
+ *   structurally wrong once more than one model is in play.
+ * - A single Qwen3-1.7B session at a full 4096-token context alone would weigh ~448 MiB, already
+ *   50% over the old 300 MiB total cap on its own — the count cap of 3 was never reachable in
+ *   practice, the byte cap always bit first, and it bit on the *first* session kept, not the
+ *   third.
+ *
+ * Restoring a session instead of re-prefilling separately measured a 23.5x TTFT win (107 645 ms
+ * cold vs. 4 582 ms restored), and that win is entirely about the one conversation actually being
+ * reopened — nothing measured motivates keeping more than that on disk at a time. So TEN-63 drops
+ * both caps for a single rule: keep only the session that was just written, evict every other one.
  */
 object SessionStoragePolicy {
 
     /**
-     * Ceiling on the combined [SessionEntity.sizeBytes] of every persisted session.
-     *
-     * PROVISIONAL — not measured on any real device. The ticket's own back-of-envelope figure ("a
-     * saved state at 8192 tokens, q8_0, is roughly 200 MB") is the only basis for this number; it
-     * has to be confirmed against real session files once a device is available (see TEN-34's QA
-     * checklist) before this constant should be trusted for anything user-facing.
+     * Every [SessionEntity.conversationId] other than [justWritten] — [justWritten] (the session
+     * [SessionRepository.save] just persisted) is the only one this app keeps a session for; every
+     * other row, regardless of size or recency, is stale by definition and gets evicted.
      */
-    const val DEFAULT_MAX_TOTAL_BYTES: Long = 300L * 1024 * 1024
-
-    /**
-     * Ceiling on how many conversations may have a persisted session at once.
-     *
-     * PROVISIONAL, same caveat as [DEFAULT_MAX_TOTAL_BYTES] — three sessions at the estimated
-     * ~200 MB each is what motivates [DEFAULT_MAX_TOTAL_BYTES]'s figure, but neither number is
-     * measured.
-     */
-    const val DEFAULT_MAX_SESSION_COUNT: Int = 3
-
-    /**
-     * Which [SessionEntity.conversationId]s to evict so [sessions] fits within [maxTotalBytes] and
-     * [maxSessionCount], oldest [SessionEntity.lastAccessedAt] first.
-     *
-     * [justWritten] (the session [SessionRepository.save] just persisted, and so always the most
-     * recently accessed one *logically*, even if a clock quirk made two [SessionEntity.lastAccessedAt]
-     * values tie) is never evicted, regardless of caps — persisting a session only to immediately
-     * evict it again would defeat the point of saving it. If [justWritten] alone exceeds
-     * [maxTotalBytes], it is still kept; the caps are a target for the *rest* of the collection, not
-     * a hard ceiling enforced against the newest entry.
-     *
-     * Sessions not present in [sessions] at all (i.e. never evicted by a previous pass, never
-     * written) are obviously never returned — this only ever names ids that are already in
-     * [sessions].
-     */
-    fun evictionPlan(
-        sessions: List<SessionEntity>,
-        justWritten: String,
-        maxTotalBytes: Long = DEFAULT_MAX_TOTAL_BYTES,
-        maxSessionCount: Int = DEFAULT_MAX_SESSION_COUNT,
-    ): List<String> {
-        val byRecency = sessions.sortedByDescending { it.lastAccessedAt }
-        val ordered = byRecency.firstOrNull { it.conversationId == justWritten }
-            ?.let { listOf(it) + byRecency.filter { s -> s.conversationId != justWritten } }
-            ?: byRecency
-
-        var runningBytes = 0L
-        var runningCount = 0
-        val evict = mutableListOf<String>()
-        for (session in ordered) {
-            val isJustWritten = session.conversationId == justWritten
-            val nextBytes = runningBytes + session.sizeBytes
-            val nextCount = runningCount + 1
-            if (!isJustWritten && (nextBytes > maxTotalBytes || nextCount > maxSessionCount)) {
-                evict += session.conversationId
-            } else {
-                runningBytes = nextBytes
-                runningCount = nextCount
-            }
-        }
-        return evict
-    }
+    fun evictionPlan(sessions: List<SessionEntity>, justWritten: String): List<String> =
+        sessions.mapNotNull { it.conversationId.takeIf { id -> id != justWritten } }
 }
