@@ -193,17 +193,9 @@ class LlamaKtEngineImpl : LlamaKtEngine {
             // With a split budget, llama.kt still needs a single nPredict — the two per-phase
             // caps below are what actually stop generation early; this total is just the outer
             // safety net (TEN-61).
-            val nPredict = reasoningBudget
+            val requestedNPredict = reasoningBudget
                 ?.let { it.reasoningMaxTokens + it.responseMaxTokens }
                 ?: request.sampling.maxTokens
-            val libParams = LlamaSamplingParams(
-                nPredict = nPredict,
-                temperature = request.sampling.temperature,
-                topK = request.sampling.topK,
-                topP = request.sampling.topP,
-                minP = request.sampling.minP,
-                stopSequences = request.sampling.stopSequences,
-            )
 
             // The blocking completion runs in its own coroutine so this body reaches
             // awaitClose immediately — that's what makes cancellation work: cancelling
@@ -218,39 +210,66 @@ class LlamaKtEngineImpl : LlamaKtEngine {
 
                 try {
                     val prompt = llamaEngine.formatChat(libMessages, request.sampling.enableThinking)
-                    val callback = TokenCallback { token ->
-                        if (firstTokenAtMs == 0L) firstTokenAtMs = System.currentTimeMillis()
-                        tokenCount++
-                        // Runs on `dispatcher`, inside the blocking completion — the one place the
-                        // KV fill can be sampled while a generation is under way (TEN-51).
-                        refreshKvUsedCells()
-                        trySend(DecodeEvent.Token(token))
-                        // interrupt() is a plain flag write llama.cpp checks between tokens, safe
-                        // to call from this same dispatcher thread mid-callback — it unblocks
-                        // completion() below rather than tearing down the flow, so Done still
-                        // fires with real stats (TEN-61, same mechanism TEN-60's `stop` relies on).
-                        if (budgetTracker != null && budgetStopReason == null) {
-                            budgetTracker.onToken(token)?.let { reason ->
-                                budgetStopReason = reason
-                                llamaEngine.interrupt()
+                    // TEN-65: the prompt itself already spends part of nCtxEffective — bound
+                    // nPredict by whatever's actually left rather than handing requestedNPredict to
+                    // llama.cpp blind. A long-enough conversation used to leave zero room to answer
+                    // into, and llama.cpp would just return having generated nothing — reported,
+                    // misleadingly, as a normal complete reply.
+                    val promptTokens = llamaEngine.tokenize(prompt).size
+                    val available = ContextBudget.available(metadata.nCtxEffective, promptTokens)
+
+                    if (!ContextBudget.hasRoom(available)) {
+                        trySend(DecodeEvent.Done(DecodeStats(0, 0f, 0L, StopReason.ContextBudgetExhausted)))
+                    } else {
+                        val nPredict = requestedNPredict.coerceAtMost(available)
+                        val libParams = LlamaSamplingParams(
+                            nPredict = nPredict,
+                            temperature = request.sampling.temperature,
+                            topK = request.sampling.topK,
+                            topP = request.sampling.topP,
+                            minP = request.sampling.minP,
+                            stopSequences = request.sampling.stopSequences,
+                        )
+                        val callback = TokenCallback { token ->
+                            if (firstTokenAtMs == 0L) firstTokenAtMs = System.currentTimeMillis()
+                            tokenCount++
+                            // Runs on `dispatcher`, inside the blocking completion — the one place the
+                            // KV fill can be sampled while a generation is under way (TEN-51).
+                            refreshKvUsedCells()
+                            trySend(DecodeEvent.Token(token))
+                            // interrupt() is a plain flag write llama.cpp checks between tokens, safe
+                            // to call from this same dispatcher thread mid-callback — it unblocks
+                            // completion() below rather than tearing down the flow, so Done still
+                            // fires with real stats (TEN-61, same mechanism TEN-60's `stop` relies on).
+                            if (budgetTracker != null && budgetStopReason == null) {
+                                budgetTracker.onToken(token)?.let { reason ->
+                                    budgetStopReason = reason
+                                    llamaEngine.interrupt()
+                                }
                             }
                         }
-                    }
-                    llamaEngine.completion(prompt, libParams, callback)
+                        llamaEngine.completion(prompt, libParams, callback)
 
-                    val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
-                    val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
-                    val tokPerSec = tokenCount * 1000f / elapsedMs
-                    // completion() returns Unit, so the reason has to be inferred: a budget
-                    // tracked above wins if it fired; otherwise reaching the single, undivided cap
-                    // is the one other ending we can recognise from out here (TEN-60/TEN-61).
-                    val stopReason = budgetStopReason
-                        ?: if (reasoningBudget == null && tokenCount >= request.sampling.maxTokens) {
-                            StopReason.TokenBudget
-                        } else {
-                            StopReason.Complete
-                        }
-                    trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs, stopReason)))
+                        val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
+                        val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
+                        val tokPerSec = tokenCount * 1000f / elapsedMs
+                        // completion() returns Unit, so the reason has to be inferred: a budget
+                        // tracked above wins if it fired; otherwise reaching nPredict (TEN-65: the
+                        // smaller of requestedNPredict and what the context actually left available)
+                        // is the one other ending we can recognise from out here (TEN-60/TEN-61).
+                        // Compared against nPredict rather than request.sampling.maxTokens because
+                        // TEN-65 may have clipped the cap below what the caller asked for, and that's
+                        // still a real cutoff, not a Complete.
+                        val stopReason = budgetStopReason
+                            ?: if (tokenCount < nPredict) {
+                                StopReason.Complete
+                            } else if (reasoningBudget == null) {
+                                StopReason.TokenBudget
+                            } else {
+                                budgetTracker!!.currentPhaseStopReason()
+                            }
+                        trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs, stopReason)))
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: OutOfMemoryError) {

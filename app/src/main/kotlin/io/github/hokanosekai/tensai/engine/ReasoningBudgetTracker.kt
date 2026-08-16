@@ -50,6 +50,19 @@ internal class ReasoningBudgetTracker(private val budget: ReasoningBudget) {
         return if (responseTokens >= budget.responseMaxTokens) StopReason.ResponseBudgetExhausted else null
     }
 
+    /**
+     * Which [StopReason] this decode would be blamed on if generation stopped right now — [phase]'s
+     * own cap, not the caller's outer `nPredict`. Normally unreachable: [onToken] fires before or
+     * exactly when the running total reaches `reasoningMaxTokens + responseMaxTokens`, so
+     * [LlamaKtEngineImpl] never has to fall back to this (TEN-61's "outer safety net" KDoc). TEN-65
+     * can clip the outer `nPredict` below that sum when the context window is tight, though, in
+     * which case llama.cpp's own cap wins the race before either phase counter above gets there —
+     * this is what [LlamaKtEngineImpl] asks instead of guessing, so the reported reason still names
+     * the right phase rather than defaulting to a misleading [StopReason.Complete].
+     */
+    fun currentPhaseStopReason(): StopReason =
+        if (phase == Phase.Reasoning) StopReason.ReasoningBudgetExhausted else StopReason.ResponseBudgetExhausted
+
     private fun longestSuffixThatIsMarkerPrefix(): Int {
         val marker = budget.endMarker
         val maxLen = minOf(window.length, marker.length - 1)

@@ -119,7 +119,31 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
 sealed class ChatError {
     /** No model is loaded — the UI's CTA routes to Models. */
     data object NoModelLoaded : ChatError()
+
+    /**
+     * The last generation attempted produced zero tokens because the conversation's prompt alone
+     * already filled the model's context window (TEN-65, see
+     * [io.github.hokanosekai.tensai.engine.StopReason.ContextBudgetExhausted]). No assistant message
+     * was kept for that attempt (see [ChatViewModel.streamInto]'s [hasPersistableContent] check), so
+     * this is the only trace of it the user sees.
+     */
+    data object ContextWindowFull : ChatError()
 }
+
+/**
+ * Whether a decode's resolved `content`/`thinking` are worth persisting at all (TEN-64) — `false`
+ * when both came out empty, whether because generation was cancelled before a first token, or
+ * because it never started at all (TEN-65's [io.github.hokanosekai.tensai.engine.StopReason.ContextBudgetExhausted]).
+ * An empty-everything assistant turn is not a reply: keeping it would only get replayed into every
+ * later prompt via [ChatRepository.toEngineMessages] for nothing, and would show as a blank bubble
+ * with no explanation.
+ *
+ * Does not special-case [ChatError] — an empty reply that came from a genuine engine error still
+ * carries `errorFallback` as its content (see [ChatViewModel.streamInto]), so it never reaches here
+ * with both fields empty in the first place.
+ */
+internal fun hasPersistableContent(content: String, thinking: String?): Boolean =
+    content.isNotEmpty() || !thinking.isNullOrEmpty()
 
 /**
  * Drives a single conversation's chat screen (TEN-32): streams [ChatRepository]'s persisted
@@ -337,12 +361,14 @@ class ChatViewModel(
      * Tokens accumulate in memory and are persisted to Room at most every
      * [StreamPersistIntervalMs] — hammering Room on every token (often several per second) would
      * be pure write amplification for a value nothing reads until the next recomposition tick
-     * anyway. The `finally` block does exactly one more write, unconditionally, with whatever
-     * ended up in the buffer: this is what makes the persisted content always exactly match what
-     * was generated regardless of whether the last throttle tick happened to land on the true last
-     * token — and it's what runs on [DecodeEvent.Done], on [DecodeEvent.Error], and on cancellation
-     * ([stop]) alike, so "keep the partial reply" needs no separate code path. It's wrapped in
-     * [NonCancellable] so a [stop] mid-flush can't also race that final write.
+     * anyway. The `finally` block does exactly one more write, with whatever ended up in the
+     * buffer: this is what makes the persisted content always exactly match what was generated
+     * regardless of whether the last throttle tick happened to land on the true last token — and
+     * it's what runs on [DecodeEvent.Done], on [DecodeEvent.Error], and on cancellation ([stop])
+     * alike, so "keep the partial reply" needs no separate code path. It's wrapped in
+     * [NonCancellable] so a [stop] mid-flush can't also race that final write. That write is an
+     * update only when there is [hasPersistableContent] to keep (TEN-64) — an assistant turn that
+     * ends with nothing at all, reasoning included, is deleted instead of persisted empty.
      */
     private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
         val parser = ThinkingStreamParser()
@@ -370,13 +396,21 @@ class ChatViewModel(
             }
         } finally {
             parser.finish()
+            val content = errorFallback ?: parser.content
             withContext(NonCancellable) {
-                chatRepository.updateAssistantMessage(
-                    assistantId,
-                    content = errorFallback ?: parser.content,
-                    thinking = parser.thinking,
-                    stats = stats,
-                )
+                if (hasPersistableContent(content, parser.thinking)) {
+                    chatRepository.updateAssistantMessage(assistantId, content = content, thinking = parser.thinking, stats = stats)
+                } else {
+                    // TEN-64: nothing worth keeping — see hasPersistableContent's KDoc.
+                    chatRepository.deleteMessage(assistantId)
+                }
+            }
+
+            // TEN-65: llama.cpp produced literally nothing because the prompt alone left no room to
+            // generate into — that's not a message to leave silently absent, it's a state the user
+            // needs to act on (see ChatError.ContextWindowFull's KDoc).
+            if (stats?.stopReason == StopReason.ContextBudgetExhausted) {
+                _error.value = ChatError.ContextWindowFull
             }
         }
     }

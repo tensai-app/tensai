@@ -188,6 +188,15 @@ enum class StopReason {
 
     /** [ReasoningBudget.responseMaxTokens] was reached after reasoning ended (TEN-61). The answer is cut off mid-thought, same as [TokenBudget] but counted from the reasoning/response split. */
     ResponseBudgetExhausted,
+
+    /**
+     * The prompt alone already left no meaningful room in [LoadedModelInfo.nCtxEffective] to
+     * generate a reply into (TEN-65, see [io.github.hokanosekai.tensai.engine.ContextBudget]) — no
+     * completion was even attempted, so [DecodeStats.tokensGenerated] is `0` and
+     * [DecodeStats.ttftMs] is `0`. Reported instead of [Complete] on purpose: [Complete] reads as
+     * "the model chose to say nothing", when in fact it was never given a chance to say anything.
+     */
+    ContextBudgetExhausted,
 }
 
 /**

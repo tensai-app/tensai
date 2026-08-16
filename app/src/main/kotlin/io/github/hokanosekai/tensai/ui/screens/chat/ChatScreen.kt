@@ -71,6 +71,7 @@ fun ChatScreen(
     viewModel: ChatViewModel = remember(conversationId) { ChatViewModel(conversationId) },
 ) {
     val messages by viewModel.messages.collectAsState(initial = null)
+    val error by viewModel.error.collectAsState()
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
     // Generating still has a model resident, so the pill and the "no model" banner must not fall
@@ -112,6 +113,9 @@ fun ChatScreen(
     Column(modifier = modifier.fillMaxSize()) {
         if (modelInfo == null) {
             NoModelBanner(onNavigateToModels = onNavigateToModels, modifier = Modifier.fillMaxWidth())
+        }
+        if (error is ChatError.ContextWindowFull) {
+            ContextWindowFullBanner(onDismiss = viewModel::clearError, modifier = Modifier.fillMaxWidth())
         }
         if (supportsThinking) {
             ThinkingToggleRow(
@@ -230,6 +234,31 @@ private fun NoModelBanner(onNavigateToModels: () -> Unit, modifier: Modifier = M
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onNavigateToModels) { Text("Load a model") }
+        }
+    }
+}
+
+/**
+ * Shown when [ChatViewModel.error] holds [ChatError.ContextWindowFull] (TEN-65) — the prompt alone
+ * already filled the model's context window, so the last "reply" wasn't a reply at all: nothing was
+ * generated, and no empty bubble was kept for it (see [ChatViewModel.streamInto]). Same sobre
+ * treatment as [NoModelBanner]. Dismissing just clears the flag — the conversation itself is still
+ * full, no context trimming happens here (TEN-65 deliberately leaves that out of scope), so starting
+ * a new chat is the actual way forward.
+ */
+@Composable
+private fun ContextWindowFullBanner(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(color = MaterialTheme.tensaiTints.warning12, modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = "This conversation is full — start a new chat to keep going",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) { Text("Dismiss") }
         }
     }
 }
