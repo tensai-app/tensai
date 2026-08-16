@@ -17,7 +17,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 
 /**
@@ -35,6 +37,28 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class InferenceQueueTest {
 
+    /**
+     * Backstop for exactly the TEN-55 failure mode the `withTimeout`s below can't catch: a
+     * coroutine stuck inside a non-cancellable blocking native call (llama.cpp's `load`/
+     * `completion`, both routed through `LlamaKtEngineImpl`'s single-thread dispatcher) never
+     * reaches a suspension point for `withTimeout` to fire on — same mechanism as TEN-17's
+     * `interrupt()` not being honored during prefill. Confirmed on device: a genuinely stuck
+     * `loadThenGenerate` ran past every internal `withTimeout` with zero of them firing, `utime`/
+     * `stime` flat, only killed by the host after 240s+.
+     *
+     * [Timeout] runs each test method on a separate thread and reports a failure from *outside*
+     * it once the deadline passes, so a verdict comes back even if the test's own thread is still
+     * blocked (and now leaked) afterward. It does not, and structurally cannot, unstick the native
+     * call itself — only [withTimeout] failing at a real suspension point does that.
+     *
+     * 90s: comfortably above this class's nominal runtime — a healthy `loadThenGenerate` takes a
+     * few seconds, and the full 29-test suite finishes in ~40s — with margin for a slow or
+     * thermally throttled device, while still failing in well under a minute and a half rather
+     * than the 200+s hang observed on device.
+     */
+    @get:Rule
+    val globalTimeout: Timeout = Timeout.seconds(90)
+
     private val modelPath: String by lazy {
         val dir = androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation().targetContext.getExternalFilesDir(null)
@@ -50,9 +74,18 @@ class InferenceQueueTest {
 
     private fun newQueue() = InferenceQueue(LlamaKtEngineImpl())
 
-    private suspend fun InferenceQueue.loadTestModel() = loadModel(
-        ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu),
-    )
+    private suspend fun InferenceQueue.loadTestModel() = withTimeout(LOAD_TIMEOUT_MS) {
+        loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+    }
+
+    /**
+     * [InferenceQueue.unloadModel] bounded the same way as every join below — see
+     * [UNLOAD_OR_CANCEL_TIMEOUT_MS]. A silent freeze here is exactly the TEN-55 failure mode: a
+     * genuine hang must fail the test, not the whole runner.
+     */
+    private suspend fun InferenceQueue.unloadTestModel() = withTimeout(UNLOAD_OR_CANCEL_TIMEOUT_MS) {
+        unloadModel()
+    }
 
     @Test
     fun loadThenGenerate() = runBlocking {
@@ -66,7 +99,7 @@ class InferenceQueueTest {
             messages = listOf(ChatMessage(role = MessageRole.User, content = "Say hi")),
             sampling = SamplingConfig(maxTokens = 16),
         )
-        val events = queue.generate(request).toList()
+        val events = withTimeout(GENERATE_TIMEOUT_MS) { queue.generate(request).toList() }
 
         val errorEvents = events.filterIsInstance<DecodeEvent.Error>()
         val doneEvents = events.filterIsInstance<DecodeEvent.Done>()
@@ -77,7 +110,7 @@ class InferenceQueueTest {
             queue.state.value is QueueState.ModelReady,
         )
 
-        queue.unloadModel()
+        queue.unloadTestModel()
     }
 
     @Test
@@ -97,12 +130,14 @@ class InferenceQueueTest {
             while (queue.state.value !is QueueState.Generating) delay(10)
         }
 
-        val secondEvents = queue.generate(
-            DecodeRequest(
-                messages = listOf(ChatMessage(role = MessageRole.User, content = "hi")),
-                sampling = SamplingConfig(maxTokens = 4),
-            ),
-        ).toList()
+        val secondEvents = withTimeout(GENERATE_TIMEOUT_MS) {
+            queue.generate(
+                DecodeRequest(
+                    messages = listOf(ChatMessage(role = MessageRole.User, content = "hi")),
+                    sampling = SamplingConfig(maxTokens = 4),
+                ),
+            ).toList()
+        }
 
         val rejected = secondEvents.singleOrNull() as? DecodeEvent.Error
         assertTrue(
@@ -111,8 +146,8 @@ class InferenceQueueTest {
         )
 
         firstJob.cancel()
-        firstJob.join()
-        queue.unloadModel()
+        withTimeout(UNLOAD_OR_CANCEL_TIMEOUT_MS) { firstJob.join() }
+        queue.unloadTestModel()
     }
 
     @Test
@@ -137,14 +172,14 @@ class InferenceQueueTest {
             while (tokensCollected < 3) delay(10)
         }
         collectJob.cancel()
-        collectJob.join()
+        withTimeout(UNLOAD_OR_CANCEL_TIMEOUT_MS) { collectJob.join() }
 
         withTimeout(2_000) {
             while (queue.state.value !is QueueState.ModelReady) delay(10)
         }
         assertTrue(queue.state.value is QueueState.ModelReady)
 
-        queue.unloadModel()
+        queue.unloadTestModel()
     }
 
     @Test
@@ -165,13 +200,39 @@ class InferenceQueueTest {
         }
 
         queue.cancelActive()
-        collectJob.join()
+        withTimeout(UNLOAD_OR_CANCEL_TIMEOUT_MS) { collectJob.join() }
 
         withTimeout(2_000) {
             while (queue.state.value !is QueueState.ModelReady) delay(10)
         }
         assertTrue(queue.state.value is QueueState.ModelReady)
 
-        queue.unloadModel()
+        queue.unloadTestModel()
+    }
+
+    private companion object {
+        /**
+         * Bound on [InferenceQueue.loadModel]. Mmapping and initializing the ~379 MiB test GGUF
+         * normally takes low single-digit seconds on CPU; 60s leaves headroom for a slow or
+         * thermally throttled device while still failing loudly — rather than freezing the whole
+         * instrumented run — if the native load genuinely never returns (TEN-55).
+         */
+        const val LOAD_TIMEOUT_MS = 60_000L
+
+        /**
+         * Bound on [InferenceQueue.unloadModel] and on joining a job after `cancel()`/
+         * [InferenceQueue.cancelActive]. Every test here runs with `nCtx = 512`, so the prefill
+         * `interrupt()` can't preempt until it returns (see `LlamaKtEngineImpl`'s KDoc, confirmed on
+         * device for TEN-17) is short — cancellation should resolve in well under a second. 30s is
+         * generous slack for a slow device without letting a real hang run indefinitely.
+         */
+        const val UNLOAD_OR_CANCEL_TIMEOUT_MS = 30_000L
+
+        /**
+         * Bound on collecting a full generation to completion. Both uses here cap `maxTokens` low
+         * (4 or 16), so even a slow CPU decode finishes in seconds; 60s is a uniform "this is
+         * actually stuck" threshold, matching [LOAD_TIMEOUT_MS].
+         */
+        const val GENERATE_TIMEOUT_MS = 60_000L
     }
 }

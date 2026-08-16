@@ -27,7 +27,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 
 /**
@@ -42,6 +44,16 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class ChatViewModelTest {
+
+    /**
+     * Backstop for a coroutine stuck inside a non-cancellable native call ([withTimeout] can't
+     * catch that — see [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s
+     * `globalTimeout` for the full TEN-55/TEN-17 rationale and why 90s). Wraps `@Before`/`@Test`/
+     * `@After` together. Runs on a separate thread and fails from the outside on timeout; does
+     * not unstick the native call itself.
+     */
+    @get:Rule
+    val globalTimeout: Timeout = Timeout.seconds(90)
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -86,9 +98,12 @@ class ChatViewModelTest {
         db.close()
     }
 
-    private suspend fun loadTestModel() = queue.loadModel(
-        ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu),
-    )
+    private suspend fun loadTestModel() = withTimeout(LOAD_TIMEOUT_MS) {
+        queue.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+    }
+
+    /** Bounded like [loadTestModel] (TEN-55) — a stuck unload must fail the test, not the runner. */
+    private suspend fun unloadTestModel() = withTimeout(UNLOAD_TIMEOUT_MS) { queue.unloadModel() }
 
     private fun newViewModel(conversationId: String) = ChatViewModel(
         conversationId = conversationId,
@@ -125,7 +140,7 @@ class ChatViewModelTest {
         assertNotNull("expected stats once the reply finished", messages[1].tokensGenerated)
         assertTrue((messages[1].tokPerSec ?: 0f) > 0f)
 
-        queue.unloadModel()
+        unloadTestModel()
     }
 
     @Test
@@ -162,6 +177,14 @@ class ChatViewModelTest {
         assertTrue("expected some partial content to have been kept", messages[1].content.isNotEmpty())
         assertNull("a stopped reply never finished, so it has no stats", messages[1].tokensGenerated)
 
-        queue.unloadModel()
+        unloadTestModel()
+    }
+
+    private companion object {
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `LOAD_TIMEOUT_MS` for rationale. */
+        const val LOAD_TIMEOUT_MS = 60_000L
+
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `UNLOAD_OR_CANCEL_TIMEOUT_MS`. */
+        const val UNLOAD_TIMEOUT_MS = 30_000L
     }
 }

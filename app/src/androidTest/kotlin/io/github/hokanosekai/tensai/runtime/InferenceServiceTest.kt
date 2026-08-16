@@ -17,7 +17,9 @@ import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 
 /**
@@ -56,6 +58,16 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class InferenceServiceTest {
+
+    /**
+     * Backstop for a coroutine stuck inside a non-cancellable native call ([withTimeout] can't
+     * catch that — see [InferenceQueueTest]'s `globalTimeout` for the full TEN-55/TEN-17 rationale
+     * and why 90s). Wraps `@Before`/`@Test`/`@After` together, so a stuck [tearDown] also gets a
+     * verdict, not just the test body. Runs on a separate thread and fails from the outside on
+     * timeout; does not unstick the native call itself.
+     */
+    @get:Rule
+    val globalTimeout: Timeout = Timeout.seconds(90)
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -97,8 +109,11 @@ class InferenceServiceTest {
     @After
     fun tearDown() {
         // Best-effort cleanup so a failure mid-test doesn't leak a loaded model (and its
-        // service) into the next test.
-        runBlocking { runCatching { RuntimeGraph.inferenceQueue.unloadModel() } }
+        // service) into the next test. Bounded (TEN-55): a stuck unload must fail this cleanup
+        // rather than freeze teardown for every test after it.
+        runBlocking {
+            runCatching { withTimeout(UNLOAD_TIMEOUT_MS) { RuntimeGraph.inferenceQueue.unloadModel() } }
+        }
     }
 
     @Test
@@ -106,7 +121,9 @@ class InferenceServiceTest {
         assumeModelPresent()
         val queue = RuntimeGraph.inferenceQueue
 
-        queue.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+        withTimeout(LOAD_TIMEOUT_MS) {
+            queue.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+        }
 
         withTimeout(5_000) {
             while (!isServiceRunning()) delay(50)
@@ -126,12 +143,20 @@ class InferenceServiceTest {
         }
         assertTrue("expected an active notification after loadModel", hasActiveNotification())
 
-        queue.unloadModel()
+        withTimeout(UNLOAD_TIMEOUT_MS) { queue.unloadModel() }
 
         withTimeout(5_000) {
             while (isServiceRunning()) delay(50)
         }
         assertFalse("expected InferenceService to be stopped after unloadModel", isServiceRunning())
         assertFalse("expected the notification to be gone after unloadModel", hasActiveNotification())
+    }
+
+    private companion object {
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `LOAD_TIMEOUT_MS` for rationale. */
+        const val LOAD_TIMEOUT_MS = 60_000L
+
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `UNLOAD_OR_CANCEL_TIMEOUT_MS`. */
+        const val UNLOAD_TIMEOUT_MS = 30_000L
     }
 }

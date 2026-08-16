@@ -4,9 +4,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 
 /**
@@ -25,6 +28,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class EngineSmokeTest {
 
+    /**
+     * Backstop for a coroutine stuck inside a non-cancellable native call ([withTimeout] can't
+     * catch that — see [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `globalTimeout`
+     * for the full TEN-55/TEN-17 rationale and why 90s). Runs this test on a separate thread and
+     * fails it from the outside on timeout; does not unstick the native call itself.
+     */
+    @get:Rule
+    val globalTimeout: Timeout = Timeout.seconds(90)
+
     private val modelPath: String by lazy {
         val dir = androidx.test.platform.app.InstrumentationRegistry
             .getInstrumentation().targetContext.getExternalFilesDir(null)
@@ -39,9 +51,9 @@ class EngineSmokeTest {
         )
 
         val engine: LlamaKtEngine = LlamaKtEngineImpl()
-        val model = engine.loadModel(
-            ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu),
-        )
+        val model = withTimeout(LOAD_TIMEOUT_MS) {
+            engine.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+        }
 
         try {
             val request = DecodeRequest(
@@ -49,7 +61,7 @@ class EngineSmokeTest {
                 sampling = SamplingConfig(maxTokens = 16),
             )
 
-            val events = model.decode(request).toList()
+            val events = withTimeout(GENERATE_TIMEOUT_MS) { model.decode(request).toList() }
 
             val tokenEvents = events.filterIsInstance<DecodeEvent.Token>()
             val doneEvents = events.filterIsInstance<DecodeEvent.Done>()
@@ -63,7 +75,20 @@ class EngineSmokeTest {
             assertTrue("tokensGenerated should be > 0, was ${stats.tokensGenerated}", stats.tokensGenerated > 0)
             assertTrue("tokPerSec should be > 0, was ${stats.tokPerSec}", stats.tokPerSec > 0f)
         } finally {
-            model.free()
+            // Bounded like the load above (TEN-55) — a `free()` that never returns must fail this
+            // test rather than freeze the runner.
+            withTimeout(UNLOAD_TIMEOUT_MS) { model.free() }
         }
+    }
+
+    private companion object {
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `LOAD_TIMEOUT_MS` for rationale. */
+        const val LOAD_TIMEOUT_MS = 60_000L
+
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `UNLOAD_OR_CANCEL_TIMEOUT_MS`. */
+        const val UNLOAD_TIMEOUT_MS = 30_000L
+
+        /** See [io.github.hokanosekai.tensai.runtime.InferenceQueueTest]'s `GENERATE_TIMEOUT_MS`. */
+        const val GENERATE_TIMEOUT_MS = 60_000L
     }
 }
