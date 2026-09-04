@@ -232,6 +232,29 @@ sealed class DecodeEvent {
     /** A single piece of generated text. May be a partial token or a few characters. */
     data class Token(val text: String) : DecodeEvent()
 
+    /**
+     * The reply so far, as the *engine* splits it into answer and reasoning (TEN-47) — best-effort,
+     * and strictly extra: the [Token] stream is unaffected and still carries the raw text.
+     *
+     * Whether reasoning is marked `<think>…</think>`, with gpt-oss/harmony `<|channel|>` markers or
+     * however else, is a property of the model's chat template, and an engine that applies that
+     * template is the only layer that can know. Only
+     * [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser]'s hardcoded `<think>` guess was
+     * available before, which is why Gemma-4 and gpt-oss reasoning used to render raw in the chat.
+     *
+     * **Consumers must cope with this never arriving**: an engine with no chat parser, a template
+     * it could not render, or a reply that doesn't match the format its own template advertised all
+     * produce a decode with zero of these. That's what the `ThinkingStreamParser` fallback is for —
+     * see [io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter], which arbitrates between
+     * the two.
+     *
+     * @param content the whole answer resolved so far, markers stripped — *cumulative*, not a
+     *   delta, and not necessarily monotonic (a parse can retract text a later token disproves).
+     * @param reasoning the reasoning that preceded it, markers stripped, or `null` when the engine
+     *   found none.
+     */
+    data class Parsed(val content: String, val reasoning: String?) : DecodeEvent()
+
     /** Generation finished normally (EOS, stop sequence, or [SamplingConfig.maxTokens] reached). */
     data class Done(val stats: DecodeStats) : DecodeEvent()
 

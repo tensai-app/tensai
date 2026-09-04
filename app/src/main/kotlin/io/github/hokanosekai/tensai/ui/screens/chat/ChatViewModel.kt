@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.chat
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.session.SaveResult
@@ -394,8 +395,9 @@ class ChatViewModel(
 
     /**
      * Collects [InferenceQueue.generate]'s events into [assistantId]'s content/thinking, splitting
-     * the two apart with a [ThinkingStreamParser] — see its KDoc for how it copes with `<think>`
-     * tags arriving fragmented across tokens.
+     * the two apart with a [ReplyStreamSplitter] — which prefers the engine's own split
+     * ([DecodeEvent.Parsed], TEN-47, correct for whatever markers the model's chat template uses)
+     * and falls back to [ThinkingStreamParser]'s `<think>` handling when the engine offers none.
      *
      * Tokens accumulate in memory and are persisted to Room at most every
      * [StreamPersistIntervalMs] — hammering Room on every token (often several per second) would
@@ -410,7 +412,7 @@ class ChatViewModel(
      * ends with nothing at all, reasoning included, is deleted instead of persisted empty.
      */
     private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
-        val parser = ThinkingStreamParser()
+        val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
         var errorFallback: String? = null
         var lastPersistAt = 0L
@@ -419,6 +421,18 @@ class ChatViewModel(
                 when (event) {
                     is DecodeEvent.Token -> {
                         parser.accept(event.text)
+                        val now = System.currentTimeMillis()
+                        if (now - lastPersistAt >= StreamPersistIntervalMs) {
+                            chatRepository.updateAssistantMessage(assistantId, parser.content, parser.thinking)
+                            lastPersistAt = now
+                        }
+                    }
+                    // Shares the token path's throttle rather than adding one: the engine emits at
+                    // most one of these per sampled token, so the two together still can't outpace
+                    // [StreamPersistIntervalMs]. The `finally` below is what guarantees the last
+                    // split lands in Room regardless of where the throttle window happened to fall.
+                    is DecodeEvent.Parsed -> {
+                        parser.acceptParsed(event.content, event.reasoning)
                         val now = System.currentTimeMillis()
                         if (now - lastPersistAt >= StreamPersistIntervalMs) {
                             chatRepository.updateAssistantMessage(assistantId, parser.content, parser.thinking)

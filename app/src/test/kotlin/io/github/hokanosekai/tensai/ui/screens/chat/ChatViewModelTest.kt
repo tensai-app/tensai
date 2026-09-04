@@ -204,6 +204,53 @@ class ChatViewModelTest {
         )
     }
 
+    /**
+     * TEN-47. The raw stream carries `<|channel|>` markers the `<think>` tag parser cannot make
+     * sense of — every character of it would have landed in `content`, markers included, which is
+     * exactly what the bug looked like on device. The engine's own split must win instead.
+     */
+    @Test
+    fun engineParsedEventsFeedTheThinkingBlockRatherThanTheRawChannelMarkers() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("<|channel|>thought "),
+            DecodeEvent.Token("let me count"),
+            DecodeEvent.Parsed(content = "", reasoning = "let me count"),
+            DecodeEvent.Token("<|channel|>final "),
+            DecodeEvent.Token("four"),
+            DecodeEvent.Parsed(content = "four", reasoning = "let me count"),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+
+        newViewModel(conversation).send("2+2?")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+
+        assertEquals("four", reply.content)
+        assertEquals("let me count", reply.thinking)
+    }
+
+    /**
+     * TEN-47's other half: an engine that reports no split at all (no chat parser for this
+     * template, or a reply that didn't match it) must leave `ThinkingStreamParser`'s `<think>`
+     * handling in charge, exactly as before.
+     */
+    @Test
+    fun withoutAnyParsedEventTheThinkTagFallbackStillSplitsTheReply() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("<think>step "),
+            DecodeEvent.Token("one</think>"),
+            DecodeEvent.Token("the answer"),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+
+        newViewModel(conversation).send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+
+        assertEquals("the answer", reply.content)
+        assertEquals("step one", reply.thinking)
+    }
+
     /** In-memory [ChatDao] fake — no Room/Android needed, same convention as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeChatDao : ChatDao {
         private val conversations = mutableMapOf<String, ConversationEntity>()
@@ -336,11 +383,14 @@ class ChatViewModelTest {
      * tests drive [io.github.hokanosekai.tensai.runtime.InferenceQueue.kvUsedPercent] from empty to
      * non-empty exactly the way a real generation would, without any native code. [saveShouldFail]
      * lets a test force [SaveResult.Failed][io.github.hokanosekai.tensai.data.session.SaveResult.Failed]
-     * on demand.
+     * on demand, and [scriptedEvents] lets one dictate the exact [DecodeEvent] stream a decode
+     * produces (the `DecodeEvent.Done` is still appended automatically, so token accounting stays
+     * consistent with the default reply).
      */
     private class FakeLlamaKtEngine : LlamaKtEngine {
         private var usedCells = 0
         var saveShouldFail = false
+        var scriptedEvents: List<DecodeEvent>? = null
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             override val metadata = LoadedModelInfo(
@@ -351,7 +401,7 @@ class ChatViewModelTest {
             )
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
-                emit(DecodeEvent.Token("hi"))
+                (scriptedEvents ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
                 usedCells += TOKENS_PER_TURN
                 emit(DecodeEvent.Done(DecodeStats(tokensGenerated = TOKENS_PER_TURN, tokPerSec = 1f, ttftMs = 1L)))
             }

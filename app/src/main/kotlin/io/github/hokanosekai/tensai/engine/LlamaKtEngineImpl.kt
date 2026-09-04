@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.engine
 
+import com.tensai.llamakt.ChatParseCallback
 import com.tensai.llamakt.LlamaEngine
 import com.tensai.llamakt.LoadProgressCallback
 import com.tensai.llamakt.TokenCallback
@@ -248,7 +249,19 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                                 }
                             }
                         }
-                        llamaEngine.completion(prompt, libParams, callback)
+                        // TEN-47: llama.cpp parses the reply with the parser it generated from the
+                        // model's own chat template, so reasoning is recognised whatever the
+                        // template marks it with. Best-effort by contract (see [ChatParseCallback]):
+                        // a decode can legitimately produce none of these, hence
+                        // `DecodeEvent.Parsed`'s "consumers must cope with this never arriving".
+                        //
+                        // Deliberately kept out of the TokenCallback above: ReasoningBudgetTracker
+                        // counts one callback per sampled token and matches its end marker on raw
+                        // text (TEN-61), and the raw stream is exactly what it must keep seeing.
+                        val chatParseCallback = ChatParseCallback { content, reasoningContent ->
+                            trySend(DecodeEvent.Parsed(content, reasoningContent.ifEmpty { null }))
+                        }
+                        llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
 
                         val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                         val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
