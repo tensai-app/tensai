@@ -30,7 +30,8 @@ import java.util.Locale
  * A single turn in the chat. Per the design: a user message is a `surface-variant` bubble
  * right-aligned; an assistant reply is a [ThinkingBlock] (if [ChatMessageUi.thinking] is present)
  * followed by [ChatMessageUi.content] rendered as [MarkdownText], full width, no bubble — with a
- * mono stats chip (and, for the last one, a regenerate action) once it's finished.
+ * mono stats chip (or a [FailedChip], if generation broke) and, for the last one, a regenerate
+ * action, once it's finished.
  *
  * A user message is drawn as plain [Text], not [MarkdownText] — nothing the user typed should be
  * reinterpreted as markdown.
@@ -81,13 +82,14 @@ fun MessageBubble(
                 )
             }
 
-            if (message.stats != null || onRegenerate != null) {
+            if (message.stats != null || message.failed || onRegenerate != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 8.dp),
                 ) {
                     message.stats?.let { StatsChip(it) }
+                    if (message.failed) FailedChip()
                     onRegenerate?.let { regenerate ->
                         IconButton(onClick = regenerate, modifier = Modifier.size(28.dp)) {
                             Icon(
@@ -101,6 +103,29 @@ fun MessageBubble(
                 }
             }
         }
+    }
+}
+
+/**
+ * Marks a reply whose generation ended on an engine error (TEN-52). Sits in the same row, with the
+ * same mono chip shape and the same error colour as [StatsChip]'s "cut off" suffixes: a reply that
+ * broke and a reply that hit its budget are the same kind of news for the reader, and the
+ * regenerate action they both want is the very next thing in the row.
+ *
+ * Its own chip rather than a [MessageStatsUi.truncation] case because a failed decode reports no
+ * stats to hang a suffix on. When a reply failed before producing anything at all, the exception's
+ * own text is the message body (see `ChatViewModel.streamInto`) and this chip labels it.
+ */
+@Composable
+private fun FailedChip(modifier: Modifier = Modifier) {
+    Surface(shape = TensaiShapes.small, color = MaterialTheme.colorScheme.surface, modifier = modifier) {
+        Text(
+            text = "generation failed",
+            fontFamily = TensaiMono,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 

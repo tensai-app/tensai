@@ -29,9 +29,12 @@ import androidx.room.PrimaryKey
  * @param tokPerSec see [io.github.hokanosekai.tensai.engine.DecodeStats.tokPerSec].
  * @param ttftMs see [io.github.hokanosekai.tensai.engine.DecodeStats.ttftMs].
  * @param stopReason name of the [io.github.hokanosekai.tensai.engine.StopReason] the decode ended
- *   on, or `null` for messages generated before this was recorded (schema v4 and earlier) and for
- *   non-assistant messages. Stored as the enum name rather than its ordinal so that reordering the
- *   enum can't silently rewrite history.
+ *   on, or `null` for messages generated before this was recorded (schema v4 and earlier), for
+ *   non-assistant messages, and for a reply the user stopped (a cancelled generation has no stop
+ *   reason of its own, TEN-52). Stored as the enum name rather than its ordinal so that reordering
+ *   the enum can't silently rewrite history, which is also why
+ *   [io.github.hokanosekai.tensai.engine.StopReason.Failed] needed no migration to start being
+ *   written here: it is one more string in a column that already held strings.
  * @param createdAt epoch millis when the message row was created — drives
  *   [ChatDao.observeMessages]'s sort.
  */

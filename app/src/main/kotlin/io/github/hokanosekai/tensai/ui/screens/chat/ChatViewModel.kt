@@ -49,6 +49,11 @@ private const val ResponseMaxTokens = 1024
 /**
  * UI-facing view of a persisted [MessageEntity] — `null` for system/tool messages, which have
  * nothing to render in V1 (see [toUi]).
+ *
+ * @param failed whether generation ended on a [DecodeEvent.Error] ([StopReason.Failed], TEN-52).
+ *   Orthogonal to [stats], not part of it: a failed decode reports no stats at all, so this is the
+ *   only trace of it, and it is what lets the chat show a reply cut short by a failure differently
+ *   from one the user stopped (which also has no stats, and nothing wrong with it).
  */
 data class ChatMessageUi(
     val id: String,
@@ -56,6 +61,7 @@ data class ChatMessageUi(
     val content: String,
     val thinking: String?,
     val stats: MessageStatsUi?,
+    val failed: Boolean,
 )
 
 /**
@@ -114,7 +120,14 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
     } else {
         null
     }
-    return ChatMessageUi(id = id, isUser = isUser, content = content, thinking = thinking, stats = stats)
+    return ChatMessageUi(
+        id = id,
+        isUser = isUser,
+        content = content,
+        thinking = thinking,
+        stats = stats,
+        failed = stopReason == StopReason.Failed.name,
+    )
 }
 
 /** Surfaced by [ChatViewModel.send]/[ChatViewModel.regenerate] when they can't proceed. */
@@ -140,9 +153,10 @@ sealed class ChatError {
  * later prompt via [ChatRepository.toEngineMessages] for nothing, and would show as a blank bubble
  * with no explanation.
  *
- * Does not special-case [ChatError] — an empty reply that came from a genuine engine error still
- * carries `errorFallback` as its content (see [ChatViewModel.streamInto]), so it never reaches here
- * with both fields empty in the first place.
+ * Does not special-case [ChatError] — an empty reply that came from a genuine engine error is given
+ * the failure's own message as its content before it gets here (see [ChatViewModel.streamInto],
+ * which asks this same question to decide that), so it never reaches here with both fields empty in
+ * the first place.
  */
 internal fun hasPersistableContent(content: String, thinking: String?): Boolean =
     content.isNotEmpty() || !thinking.isNullOrEmpty()
@@ -240,8 +254,10 @@ class ChatViewModel(
     /**
      * Stops the active generation, if any. The partial reply streamed so far is left exactly as
      * is — see [streamInto]'s `finally`, which persists whatever was accumulated regardless of how
-     * generation ended. No explicit "stopped" flag: a finished reply is distinguished from a
-     * stopped one purely by whether stats ended up non-null (only [DecodeEvent.Done] sets them).
+     * generation ended. No explicit "stopped" flag: stopped is the *absence* of both of the other
+     * two outcomes, i.e. no stats (only [DecodeEvent.Done] sets them) and no stop reason (only
+     * [DecodeEvent.Error] sets one without stats, as [StopReason.Failed]). Deliberately silent in
+     * the UI: the user knows they tapped stop, so there is nothing to tell them.
      */
     fun stop() = inferenceQueue.cancelActive()
 
@@ -410,11 +426,21 @@ class ChatViewModel(
      * [NonCancellable] so a [stop] mid-flush can't also race that final write. That write is an
      * update only when there is [hasPersistableContent] to keep (TEN-64) — an assistant turn that
      * ends with nothing at all, reasoning included, is deleted instead of persisted empty.
+     *
+     * A generation has exactly three ways to end, and the persisted row has to tell them apart
+     * (TEN-52): it finished (the engine's own [StopReason], carried by [DecodeEvent.Done]'s stats),
+     * the user stopped it (no stats, no stop reason), or it failed ([StopReason.Failed], and no
+     * stats, since [DecodeEvent.Error] carries none). Only [failed] tells the last two apart: a
+     * [DecodeEvent.Error] arriving after the first token used to leave the row indistinguishable
+     * from a stopped one, so a real engine failure was persisted as if the model had simply been
+     * interrupted on purpose, and the user was shown a truncated answer with no hint anything had
+     * gone wrong.
      */
     private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
         val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
-        var errorFallback: String? = null
+        var failureMessage: String? = null
+        var failed = false
         var lastPersistAt = 0L
         try {
             inferenceQueue.generate(request).collect { event ->
@@ -441,18 +467,39 @@ class ChatViewModel(
                     }
                     is DecodeEvent.Done -> stats = event.stats
                     is DecodeEvent.Error -> {
-                        if (parser.content.isEmpty() && parser.thinking == null) {
-                            errorFallback = "Error: ${event.cause.message ?: "generation failed"}"
-                        }
+                        failed = true
+                        failureMessage = event.cause.message ?: "generation failed"
                     }
                 }
             }
         } finally {
             parser.finish()
-            val content = errorFallback ?: parser.content
+            // A failure that produced nothing at all would be dropped by the [hasPersistableContent]
+            // check below (TEN-64), leaving the user with no turn and no explanation, so the
+            // exception's own message becomes the reply instead. Only then: mid-stream, the partial
+            // reply *is* the message and [StopReason.Failed] carries the failure, so overwriting
+            // what the model did manage to write with an exception string would say less, not more.
+            // Decided here rather than when the event arrived because the splitter can still be
+            // holding text back at that point, and this asks it the same question the check below
+            // will.
+            val content = if (failed && !hasPersistableContent(parser.content, parser.thinking)) {
+                "Error: $failureMessage"
+            } else {
+                parser.content
+            }
+            // See the KDoc's three outcomes. `failed` wins over the stats' own reason rather than
+            // the other way round, for the case a misbehaving engine emits both terminal events:
+            // "it broke" is the more actionable of the two, and the more surprising.
+            val stopReason = if (failed) StopReason.Failed else stats?.stopReason
             withContext(NonCancellable) {
                 if (hasPersistableContent(content, parser.thinking)) {
-                    chatRepository.updateAssistantMessage(assistantId, content = content, thinking = parser.thinking, stats = stats)
+                    chatRepository.updateAssistantMessage(
+                        assistantId,
+                        content = content,
+                        thinking = parser.thinking,
+                        stats = stats,
+                        stopReason = stopReason,
+                    )
                 } else {
                     // TEN-64: nothing worth keeping — see hasPersistableContent's KDoc.
                     chatRepository.deleteMessage(assistantId)

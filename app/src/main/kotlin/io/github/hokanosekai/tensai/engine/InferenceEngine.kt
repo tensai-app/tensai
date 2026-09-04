@@ -197,6 +197,18 @@ enum class StopReason {
      * "the model chose to say nothing", when in fact it was never given a chance to say anything.
      */
     ContextBudgetExhausted,
+
+    /**
+     * The decode ended on a [DecodeEvent.Error] (TEN-52). Never reported in [DecodeStats]: a failed
+     * decode produces no stats at all, which is precisely the problem this value exists to solve.
+     * The app layer needs a name for the third way a generation can end when it records one (see
+     * [io.github.hokanosekai.tensai.data.chat.MessageEntity.stopReason]), because a generation the
+     * user stopped records no stop reason either, so a genuine failure and a deliberate stop used
+     * to look identical once persisted. Engines must not emit this: they report a failure by
+     * emitting [DecodeEvent.Error], not by finishing with a stop reason that says they didn't
+     * finish.
+     */
+    Failed,
 }
 
 /**

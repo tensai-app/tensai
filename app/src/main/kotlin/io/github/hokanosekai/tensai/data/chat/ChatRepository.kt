@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.data.chat
 import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.MessageRole
+import io.github.hokanosekai.tensai.engine.StopReason
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
@@ -73,12 +74,18 @@ class ChatRepository(private val dao: ChatDao) {
      * [appendUserMessage]/[startAssistantMessage] this deliberately does not also touch the owning
      * conversation's `updatedAt` (that already happened once, in [startAssistantMessage] — bumping
      * it again on every token would just be write amplification for no observable benefit).
+     *
+     * @param stopReason defaults to [stats]' own, which is what a decode that reached
+     *   [io.github.hokanosekai.tensai.engine.DecodeEvent.Done] reports. Passed explicitly for
+     *   [io.github.hokanosekai.tensai.engine.StopReason.Failed] (TEN-52), the one stop reason that
+     *   comes with no stats to carry it: a failed decode never produced any.
      */
     suspend fun updateAssistantMessage(
         id: String,
         content: String,
         thinking: String? = null,
         stats: DecodeStats? = null,
+        stopReason: StopReason? = stats?.stopReason,
     ) {
         dao.updateMessage(
             id = id,
@@ -87,7 +94,7 @@ class ChatRepository(private val dao: ChatDao) {
             tokensGenerated = stats?.tokensGenerated,
             tokPerSec = stats?.tokPerSec,
             ttftMs = stats?.ttftMs,
-            stopReason = stats?.stopReason?.name,
+            stopReason = stopReason?.name,
         )
     }
 

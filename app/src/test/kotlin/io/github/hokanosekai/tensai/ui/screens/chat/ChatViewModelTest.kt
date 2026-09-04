@@ -19,12 +19,14 @@ import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
+import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +37,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -124,11 +127,20 @@ class ChatViewModelTest {
         )
     }
 
-    /** Polls (like the `androidTest` suite's own tests) until [conversationId] has [expectedCount] messages and the last one has finished generating. */
-    private suspend fun waitForAssistantReply(conversationId: String, expectedCount: Int): List<MessageEntity> =
+    /**
+     * Polls (like the `androidTest` suite's own tests) until [conversationId] has [expectedCount]
+     * messages and its last one is [settled] — by default, that it has stats, i.e. that it
+     * finished. A decode that failed never gets stats (TEN-52), so those tests pass a predicate of
+     * their own rather than waiting five seconds for something that will not happen.
+     */
+    private suspend fun waitForAssistantReply(
+        conversationId: String,
+        expectedCount: Int,
+        settled: (MessageEntity) -> Boolean = { it.tokensGenerated != null },
+    ): List<MessageEntity> =
         withTimeout(5_000) {
             var current = chatRepository.observeMessages(conversationId).first()
-            while (current.size < expectedCount || current.last().tokensGenerated == null) {
+            while (current.size < expectedCount || !settled(current.last())) {
                 delay(10)
                 current = chatRepository.observeMessages(conversationId).first()
             }
@@ -249,6 +261,128 @@ class ChatViewModelTest {
 
         assertEquals("the answer", reply.content)
         assertEquals("step one", reply.thinking)
+    }
+
+    /**
+     * TEN-52, first of the three outcomes: a decode that reached [DecodeEvent.Done] records the
+     * engine's own [StopReason], and is the only one of the three that has stats.
+     */
+    @Test
+    fun aGenerationThatFinishesRecordsItsStopReasonAlongsideItsStats() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+
+        assertEquals("hi", reply.content)
+        assertEquals(StopReason.Complete.name, reply.stopReason)
+        assertEquals(TOKENS_PER_TURN, reply.tokensGenerated)
+
+        val ui = viewModel.messages.first().last()
+        assertFalse("a reply that finished is not a failed one", ui.failed)
+    }
+
+    /**
+     * TEN-52, second outcome: the user tapped stop. The partial reply stays, and nothing is
+     * recorded about how it ended — there is nothing to tell the user that they don't already
+     * know, and it must not read as a failure.
+     */
+    @Test
+    fun aGenerationTheUserStopsKeepsItsPartialReplyAndRecordsNoStopReason() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(DecodeEvent.Token("half an answer"))
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        // The first token is always persisted (the throttle window starts open), so this lands
+        // once the reply is streaming and before any terminal event can arrive.
+        waitForAssistantReply(conversation, expectedCount = 2) { it.content.isNotEmpty() }
+        viewModel.stop()
+        withTimeout(5_000) {
+            while (inferenceQueue.state.value !is QueueState.ModelReady) delay(10)
+        }
+
+        val reply = chatRepository.observeMessages(conversation).first().last()
+        assertEquals("half an answer", reply.content)
+        assertNull("a stopped reply never finished, so it has no stats", reply.tokensGenerated)
+        assertNull("stopping is not a stop reason: it is the absence of one", reply.stopReason)
+
+        val ui = viewModel.messages.first().last()
+        assertFalse("stopping on purpose must not be shown as a failure", ui.failed)
+    }
+
+    /**
+     * TEN-52's actual bug: a [DecodeEvent.Error] arriving *after* the first token used to be
+     * swallowed whole. The partial reply was persisted with no stats and no stop reason, which is
+     * byte for byte what a deliberate stop looks like, so a broken generation was presented as a
+     * short answer the user had asked to cut short.
+     */
+    @Test
+    fun anErrorAfterTheFirstTokenKeepsThePartialReplyAndRecordsTheFailure() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("the answer is "),
+            DecodeEvent.Error(RuntimeException("llama_decode failed")),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("2+2?")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+
+        assertEquals("the partial reply must survive the failure", "the answer is ", reply.content)
+        assertEquals(StopReason.Failed.name, reply.stopReason)
+        assertNull("a failed decode reports no stats", reply.tokensGenerated)
+
+        val ui = viewModel.messages.first().last()
+        assertTrue("the failure has to reach the UI, not just the row", ui.failed)
+        assertNull("no stats chip for a decode that never finished", ui.stats)
+    }
+
+    /**
+     * TEN-64's guarantee, re-checked now that a failure is also recorded as a stop reason: an error
+     * *before* the first token leaves nothing to keep, so the exception's own text becomes the
+     * message body rather than the turn being dropped as empty.
+     */
+    @Test
+    fun anErrorBeforeTheFirstTokenStillCarriesItsMessageAsTheReply() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(DecodeEvent.Error(RuntimeException("model gone")))
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+
+        assertEquals("Error: model gone", reply.content)
+        assertEquals(StopReason.Failed.name, reply.stopReason)
+    }
+
+    /**
+     * The same guarantee for a reply that opened and closed an empty `<think>` block before
+     * failing: the splitter reports an empty (not absent) reasoning, which is still nothing worth
+     * keeping by [hasPersistableContent]'s own reckoning, so this must take the failure message
+     * rather than be dropped as an empty turn.
+     */
+    @Test
+    fun anErrorAfterAnEmptyThinkBlockStillCarriesItsMessageAsTheReply() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("<think></think>"),
+            DecodeEvent.Error(RuntimeException("out of memory")),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+
+        assertEquals("Error: out of memory", reply.content)
+        assertEquals(StopReason.Failed.name, reply.stopReason)
     }
 
     /** In-memory [ChatDao] fake — no Room/Android needed, same convention as `SessionRepositoryTest`'s `FakeSessionDao`. */
@@ -384,13 +518,17 @@ class ChatViewModelTest {
      * non-empty exactly the way a real generation would, without any native code. [saveShouldFail]
      * lets a test force [SaveResult.Failed][io.github.hokanosekai.tensai.data.session.SaveResult.Failed]
      * on demand, and [scriptedEvents] lets one dictate the exact [DecodeEvent] stream a decode
-     * produces (the `DecodeEvent.Done` is still appended automatically, so token accounting stays
-     * consistent with the default reply).
+     * produces (a `DecodeEvent.Done` is appended unless the script already ends on a terminal event
+     * of its own, so token accounting stays consistent with the default reply while a script can
+     * still end on a `DecodeEvent.Error`: `LoadedModel.decode`'s contract is exactly one terminal
+     * event, not two). [hangBeforeTerminal] holds a decode open just short of that terminal event,
+     * so a test can stop a generation that would otherwise have finished instantly.
      */
     private class FakeLlamaKtEngine : LlamaKtEngine {
         private var usedCells = 0
         var saveShouldFail = false
         var scriptedEvents: List<DecodeEvent>? = null
+        var hangBeforeTerminal = false
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             override val metadata = LoadedModelInfo(
@@ -401,9 +539,14 @@ class ChatViewModelTest {
             )
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
-                (scriptedEvents ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
+                val scripted = scriptedEvents
+                (scripted ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
                 usedCells += TOKENS_PER_TURN
-                emit(DecodeEvent.Done(DecodeStats(tokensGenerated = TOKENS_PER_TURN, tokPerSec = 1f, ttftMs = 1L)))
+                if (hangBeforeTerminal) awaitCancellation()
+                val endsOnItsOwnTerminal = scripted?.lastOrNull().let { it is DecodeEvent.Done || it is DecodeEvent.Error }
+                if (!endsOnItsOwnTerminal) {
+                    emit(DecodeEvent.Done(DecodeStats(tokensGenerated = TOKENS_PER_TURN, tokPerSec = 1f, ttftMs = 1L)))
+                }
             }
 
             override suspend fun tokenize(text: String): Int = 0
