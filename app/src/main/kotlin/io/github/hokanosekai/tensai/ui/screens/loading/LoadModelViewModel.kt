@@ -15,6 +15,7 @@ import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -160,6 +161,12 @@ class LoadModelViewModel(
                 _state.value = LoadUiState.Success
             } catch (_: OutOfMemoryException) {
                 _state.value = LoadUiState.OomFailed(model)
+            } catch (e: CancellationException) {
+                // Same guard `ModelsScreen`/`OnboardingScreen` put on their imports (TEN-53), here
+                // for the same reason (TEN-73): a cancellation is not a load failure and must not
+                // be posted as one, nor swallowed. [LoadFailure.of] re-throws it too — this states
+                // the intent where the decision is, rather than leaving it to the classifier.
+                throw e
             } catch (e: Exception) {
                 _state.value = LoadUiState.GenericFailed(model, LoadFailure.of(e))
             } finally {

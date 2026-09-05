@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.ui.screens.loading
 
 import io.github.hokanosekai.tensai.engine.ModelLoadException
 import io.github.hokanosekai.tensai.runtime.QueueBusyException
+import kotlinx.coroutines.CancellationException
 
 /**
  * Why a load stopped, as much of it as is worth telling the user (TEN-39).
@@ -30,8 +31,25 @@ enum class LoadFailure {
     ;
 
     companion object {
-        /** Classifies a load failure. Total: every throwable maps to something. */
+        /**
+         * Classifies a load failure. Total over every throwable that *is* a failure — with the
+         * same one exception [ImportFailure.of][io.github.hokanosekai.tensai.ui.screens.models.ImportFailure.Companion.of]
+         * makes, for the same reasons (TEN-73 after TEN-53).
+         *
+         * A [CancellationException] is re-thrown rather than classified. It would otherwise land
+         * on [Unknown] and be swallowed on the way — a cancellation turned into a return value
+         * leaves the coroutine carrying it running on as though it had not been cancelled, which
+         * is the structured-concurrency contract broken rather than a cosmetic wording problem.
+         *
+         * Unlike TEN-53's case, this one is not reachable from the app today: every
+         * [io.github.hokanosekai.tensai.runtime.InferenceQueue.loadModel] call in the app runs on
+         * `RuntimeGraph.applicationScope`, deliberately so (see [LoadModelViewModel]'s KDoc —
+         * "Continue in background" is the whole feature), and that scope is never cancelled. This
+         * is the backstop for the caller that one day doesn't, since a classifier taking
+         * `Throwable` is exactly the shape that invites it.
+         */
         fun of(throwable: Throwable): LoadFailure = when (throwable) {
+            is CancellationException -> throw throwable
             is ModelLoadException -> UnreadableModel
             is QueueBusyException -> EngineBusy
             else -> Unknown

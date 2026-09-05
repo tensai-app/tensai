@@ -13,8 +13,11 @@ import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.MessageRole
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.GgufInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -274,6 +277,67 @@ class InferenceQueueTest {
     }
 
     /**
+     * TEN-73. The two methods above answer every failure with a sentinel and never throw, which is
+     * what their callers want — but a cancellation is not a failure, and `-1` swallowed it. This is
+     * the layer that decides whether anyone upstream ever sees one: `SessionRepository` takes these
+     * two as its `saveOnEngine`/`restoreOnEngine`, so its own cancellation guards are unreachable
+     * unless these re-throw first.
+     *
+     * The outcome is read after [cancelAndJoin], not inside the cancelled coroutine, where the only
+     * thing observable would be the exception `cancel()` itself raises.
+     */
+    @Test
+    fun aCancelledSaveSessionPropagatesTheCancellationRatherThanReportingAnEngineFailure() = runBlocking {
+        val inSave = CompletableDeferred<Unit>()
+        val queue = InferenceQueue(FakeLlamaKtEngine(saveGate = inSave))
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        var outcome: Any? = null
+
+        val job = launch(Dispatchers.IO) {
+            try {
+                outcome = queue.saveSession("/sessions/a.state")
+            } catch (e: Throwable) {
+                outcome = e
+                throw e
+            }
+        }
+        inSave.await()
+        job.cancelAndJoin()
+
+        assertTrue(
+            "a cancelled dump reported as $outcome is indistinguishable from an engine that tried " +
+                "and failed",
+            outcome is CancellationException,
+        )
+    }
+
+    /** The restore half of the same guard — where a swallowed cancellation costs a good session. */
+    @Test
+    fun aCancelledRestoreSessionPropagatesTheCancellationRatherThanReportingAnEngineFailure() = runBlocking {
+        val inLoad = CompletableDeferred<Unit>()
+        val queue = InferenceQueue(FakeLlamaKtEngine(loadGate = inLoad))
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        var outcome: Any? = null
+
+        val job = launch(Dispatchers.IO) {
+            try {
+                outcome = queue.restoreSession("/sessions/a.state")
+            } catch (e: Throwable) {
+                outcome = e
+                throw e
+            }
+        }
+        inLoad.await()
+        job.cancelAndJoin()
+
+        assertTrue(
+            "`false` is read upstream as \"this session is unusable\" and self-heals it off disk; " +
+                "got $outcome",
+            outcome is CancellationException,
+        )
+    }
+
+    /**
      * TEN-74, first link. The hook is documented as being allowed to throw, and its exception
      * still propagates — but it must not take the model's last reference with it (several GB of
      * native memory nothing can free any more) nor leave [InferenceQueue.state] advertising a
@@ -516,6 +580,11 @@ class InferenceQueueTest {
         private val saveThrows: Boolean = false,
         private val loadResult: Boolean = false,
         private val loadThrows: Boolean = false,
+        // Completed once the call is inside the engine, then it hangs until cancelled — the only
+        // way to cancel a save/restore *while it is running* rather than before it starts, which
+        // is the window TEN-73 is about. A fake that returned promptly could never reach it.
+        private val saveGate: CompletableDeferred<Unit>? = null,
+        private val loadGate: CompletableDeferred<Unit>? = null,
     ) : LlamaKtEngine {
         val savedPaths = mutableListOf<String>()
         val loadedPaths = mutableListOf<String>()
@@ -535,12 +604,14 @@ class InferenceQueueTest {
         override suspend fun saveSession(path: String): Int {
             savedPaths += path
             if (saveThrows) throw RuntimeException("save failed")
+            saveGate?.let { it.complete(Unit); awaitCancellation() }
             return saveTokens
         }
 
         override suspend fun loadSession(path: String): Boolean {
             loadedPaths += path
             if (loadThrows) throw RuntimeException("load failed")
+            loadGate?.let { it.complete(Unit); awaitCancellation() }
             return loadResult
         }
 

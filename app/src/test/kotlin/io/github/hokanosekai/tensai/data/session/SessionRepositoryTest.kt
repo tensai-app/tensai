@@ -3,12 +3,19 @@ package io.github.hokanosekai.tensai.data.session
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -539,6 +546,95 @@ class SessionRepositoryTest {
                 "deleted",
             dao.rows.isEmpty(),
         )
+    }
+
+    // ---- cancellation (TEN-73) ----
+
+    /**
+     * A cancelled state dump is not a failed save. [SaveResult.Failed] used to carry the
+     * [CancellationException] itself, which is two wrongs at once: a panic reported as a verdict on
+     * the engine, and — because the cancellation became a return value — a coroutine that had been
+     * cancelled left running as though it had not.
+     *
+     * The outcome is captured inside the coroutine and asserted *after* [cancelAndJoin]: asserting
+     * in there would only ever observe the exception `cancel()` itself throws, never what [save]
+     * chose to hand back. Same shape as `ModelImporterTest`'s cancellation tests, for the same
+     * reason.
+     */
+    @Test
+    fun cancellingDuringTheStateDumpPropagatesTheCancellationRatherThanReportingAFailedSave() = runBlocking {
+        val inDump = CompletableDeferred<Unit>()
+        var outcome: Any? = null
+
+        val job = launch(Dispatchers.IO) {
+            try {
+                outcome = repository.save("c1", key) { path ->
+                    // Half a dump on disk before the cancellation lands, so the cleanup below has
+                    // something to prove it removed.
+                    File(path).writeText("half a state dump")
+                    inDump.complete(Unit)
+                    awaitCancellation()
+                }
+            } catch (e: Throwable) {
+                outcome = e
+                throw e
+            }
+        }
+        inDump.await()
+        job.cancelAndJoin()
+
+        assertTrue(
+            "a cancelled dump must surface as a cancellation, not as $outcome",
+            outcome is CancellationException,
+        )
+        assertNull("nothing may be committed for a save that never finished", dao.getByConversation("c1"))
+        assertEquals(
+            "the partial dump goes with the cancellation",
+            emptyList<String>(),
+            File(storageRoot, "sessions").listFiles().orEmpty().map { it.name },
+        )
+    }
+
+    /**
+     * The same swallow on the restore side, where it also destroyed data: a `false` from
+     * `restoreOnEngine` means "this session is unusable", and [SessionRepository.restore] answers
+     * it by deleting the state file and its row so a broken session can't occupy the slot forever.
+     * Turning a cancellation into that `false` pointed the self-heal at a session that was never
+     * shown to be broken.
+     */
+    @Test
+    fun cancellingDuringTheEngineRestoreKeepsTheSessionRatherThanSelfHealingItAway() = runBlocking {
+        repository.save("c1", key) { path -> File(path).writeText("kv-state"); 128 }
+        val statePath = dao.getByConversation("c1")!!.filePath
+
+        val inRestore = CompletableDeferred<Unit>()
+        val repo = SessionRepository(
+            dao = dao,
+            storageRoot = storageRoot,
+            restoreOnEngine = { inRestore.complete(Unit); awaitCancellation() },
+        )
+        var outcome: Any? = null
+
+        val job = launch(Dispatchers.IO) {
+            try {
+                outcome = repo.restore("c1", key)
+            } catch (e: Throwable) {
+                outcome = e
+                throw e
+            }
+        }
+        inRestore.await()
+        job.cancelAndJoin()
+
+        assertTrue(
+            "a cancelled restore must surface as a cancellation, not as $outcome",
+            outcome is CancellationException,
+        )
+        assertNotNull(
+            "a cancellation says nothing about the session, so the row must survive it",
+            dao.getByConversation("c1"),
+        )
+        assertTrue("and so must the file it points at", File(statePath).exists())
     }
 
     /** In-memory [SessionDao] fake — no Room/Android needed, same convention as `InferenceQueueTest`'s fakes. */

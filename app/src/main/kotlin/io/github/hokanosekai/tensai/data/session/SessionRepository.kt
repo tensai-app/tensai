@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.data.session
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -190,6 +191,16 @@ class SessionRepository(
      * A third, unrelated way (TEN-38): **Discarded**, if [purgeAll] runs between this call
      * starting and it committing — see [SaveResult.Discarded] and [commitMutex].
      *
+     * Cancellation is **not** one of the ways this ends in a [SaveResult]: a cancelled
+     * [saveOnEngine] re-throws (TEN-73), taking the temp file with it. It is not a failure to
+     * report — the caller asked for this — and answering with one would swallow it, leaving a
+     * coroutine that has been cancelled running on as though it had not.
+     *
+     * No caller can currently reach that: every path in ends on
+     * `RuntimeGraph.applicationScope`, which nothing cancels. TEN-73 fixed the shape rather than a
+     * symptom, and the ticket's own premise ("l'app tuée pendant `MainActivity.onStop`") turned out
+     * to be wrong for the same reason.
+     *
      * Write-then-rename otherwise: [saveOnEngine] is asked to write to a temp path first, and the DB
      * row is only written (and the temp file only renamed into place) once that call has actually
      * succeeded — a failure at any point (the engine call itself, or the rename) leaves any
@@ -225,6 +236,15 @@ class SessionRepository(
 
         val tokenCount = try {
             saveOnEngine(tempFile.absolutePath)
+        } catch (e: CancellationException) {
+            // Ahead of the catch below, which would otherwise answer a cancellation with
+            // [SaveResult.Failed] — a `CancellationException` in a field callers read as "what the
+            // engine said went wrong", and, having turned the cancellation into a return value,
+            // the calling coroutine left running as though it had never been cancelled (TEN-73).
+            // The temp file still goes with it: the partial dump is worthless either way, and
+            // `delete()` doesn't suspend, so it runs even here.
+            tempFile.delete()
+            throw e
         } catch (e: Exception) {
             tempFile.delete()
             return SaveResult.Failed(e)
@@ -302,6 +322,20 @@ class SessionRepository(
 
         val restored = try {
             restoreOnEngine(entity.filePath)
+        } catch (e: CancellationException) {
+            // The same swallow as [save]'s, except this one would destroy data on its way past
+            // (TEN-73): `restored = false` falls into the self-healing branch below, which deletes
+            // this conversation's state file *and* its row. A cancelled caller is no evidence that
+            // the session is unusable — it says nothing about the session at all — so that branch
+            // would throw away a good multi-hundred-MB session and re-prefill from scratch forever
+            // after.
+            //
+            // Would, not does: like [LoadFailure.of]'s guard, this is a backstop, not a live bug.
+            // Every caller of this method runs on `RuntimeGraph.applicationScope`
+            // (`ChatViewModel.scope`), which nothing in the app cancels — backgrounding does not,
+            // which is the whole point of that scope. This is here because the consequence of
+            // being wrong is silent data loss, and the next caller need only be scoped normally.
+            throw e
         } catch (e: Exception) {
             false
         }
