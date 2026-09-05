@@ -50,10 +50,8 @@ import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
+import io.github.hokanosekai.tensai.ui.components.shortModelLabel
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
-
-/** Max length of the short label shown in [InputPill]'s model chip — the full name lives on [io.github.hokanosekai.tensai.ui.navigation.TensaiTopBar]'s pill. */
-private const val ModelChipLabelMaxLength = 18
 
 /**
  * The chat screen for `chat/{conversationId}` (TEN-32) — replaces `ChatScreenPlaceholder`. Chrome
@@ -64,12 +62,16 @@ private const val ModelChipLabelMaxLength = 18
  *   the "new chat" sentinel is resolved before this composable is ever reached.
  * @param onNavigateToModels used both by [ChatError.NoModelLoaded]'s banner and by the input
  *   pill's model chip.
+ * @param initialPrompt a first turn handed over by Home (TEN-37), sent once on arrival — see
+ *   [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat.ARG_PROMPT]. `null` for
+ *   every other way into a conversation.
  */
 @Composable
 fun ChatScreen(
     conversationId: String,
     onNavigateToModels: () -> Unit,
     modifier: Modifier = Modifier,
+    initialPrompt: String? = null,
     viewModel: ChatViewModel = remember(conversationId) { ChatViewModel(conversationId) },
 ) {
     val messages by viewModel.messages.collectAsState(initial = null)
@@ -88,6 +90,18 @@ fun ChatScreen(
 
     var input by rememberSaveable { mutableStateOf("") }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+
+    // Home's send hands its text over on the route rather than writing it itself, so the first
+    // reply streams here where it can be watched. rememberSaveable and not a plain flag: the route
+    // still carries the prompt after process death, and a restored back stack entry must not
+    // re-ask the question it already asked.
+    var initialPromptSent by rememberSaveable(conversationId) { mutableStateOf(false) }
+    LaunchedEffect(conversationId, initialPrompt) {
+        if (initialPrompt.isNullOrBlank() || initialPromptSent) return@LaunchedEffect
+        initialPromptSent = true
+        viewModel.send(initialPrompt)
+    }
+
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -339,7 +353,3 @@ private fun ChatToolbarRow(
         }
     }
 }
-
-/** e.g. "Qwen3-4B-Instruct-Q4_K_M" -> "Qwen3-4B-Instruct…" — keeps [InputPill]'s chip compact. */
-private fun shortModelLabel(name: String): String =
-    if (name.length <= ModelChipLabelMaxLength) name else name.take(ModelChipLabelMaxLength).trimEnd() + "…"

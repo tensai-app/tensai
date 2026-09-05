@@ -1,5 +1,7 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
+import android.net.Uri
+
 /** Top-level routes for the app's [androidx.navigation.NavHost]. */
 sealed class TensaiDestination(val route: String) {
 
@@ -9,8 +11,17 @@ sealed class TensaiDestination(val route: String) {
     data object Settings : TensaiDestination("settings")
     data object Server : TensaiDestination("server")
 
-    data object Chat : TensaiDestination("chat/{conversationId}") {
+    data object Chat : TensaiDestination("chat/{conversationId}?prompt={prompt}") {
         const val ARG_CONVERSATION_ID = "conversationId"
+
+        /**
+         * Optional: the first turn's text, handed over by Home (TEN-37). Home creates the
+         * conversation and navigates; the message itself is sent from `ChatScreen`, so the reply
+         * streams where the user can see it. Carried on the route rather than in a process-wide
+         * holder so it survives with the back stack: a chat restored after process death still
+         * knows what it was opened to ask.
+         */
+        const val ARG_PROMPT = "prompt"
 
         /**
          * Sentinel used when a load's success navigates to a brand new conversation rather than
@@ -21,6 +32,10 @@ sealed class TensaiDestination(val route: String) {
         const val NEW_CONVERSATION_ID = "new"
 
         fun route(conversationId: String) = "chat/$conversationId"
+
+        /** [route] with a first turn attached — see [ARG_PROMPT]. */
+        fun route(conversationId: String, prompt: String) =
+            "chat/$conversationId?prompt=${Uri.encode(prompt)}"
     }
 
     data object ModelDetail : TensaiDestination("model/{modelId}") {

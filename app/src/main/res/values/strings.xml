@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Home's copy (TEN-37). Every user-facing string on this screen lives here rather than in the
+     composable so the "localised suggestions" the ticket asks for are actually translatable —
+     TEN-41 adds the other locales, this file is what it will translate.
+-->
+<resources>
+
+    <!-- Greetings, one per band of io.github.hokanosekai.tensai.ui.screens.Greeting. -->
+    <string name="home_greeting_morning">Good morning.</string>
+    <string name="home_greeting_afternoon">Good afternoon.</string>
+    <string name="home_greeting_evening">Good evening.</string>
+    <string name="home_greeting_night">Still up.</string>
+
+    <string name="home_subtitle">Everything here runs on this device.</string>
+
+    <!-- Suggestion chips. Tapping one fills the input pill; the text is both label and prompt. -->
+    <string name="home_suggestion_summarize_log">Summarize a log</string>
+    <string name="home_suggestion_explain_error">Explain this error</string>
+    <string name="home_suggestion_draft_reply">Draft a reply</string>
+    <string name="home_suggestion_commit_message">Write a commit message</string>
+
+    <!-- Input pill, non-Ready states — see io.github.hokanosekai.tensai.ui.screens.HomePillState. -->
+    <!-- %1$s is a model's display name. -->
+    <string name="home_pill_load_model">Load %1$s to start…</string>
+    <string name="home_pill_no_model">Import a model to start</string>
+
+</resources>

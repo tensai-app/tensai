@@ -60,16 +60,33 @@ fun TensaiNavGraph(
         }
 
         composable(TensaiDestination.Home.route) {
-            HomeScreen()
+            HomeScreen(
+                // The conversation already exists by the time this runs (Home created it), so
+                // unlike the load path below this navigates straight at a real id — no sentinel to
+                // resolve. Home is left on the stack: back from that first chat returns to it.
+                onNavigateToChat = { conversationId, prompt ->
+                    navController.navigate(TensaiDestination.Chat.route(conversationId, prompt))
+                },
+                onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                onNavigateToLoad = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+            )
         }
 
         composable(
             route = TensaiDestination.Chat.route,
-            arguments = listOf(navArgument(TensaiDestination.Chat.ARG_CONVERSATION_ID) { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument(TensaiDestination.Chat.ARG_CONVERSATION_ID) { type = NavType.StringType },
+                navArgument(TensaiDestination.Chat.ARG_PROMPT) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
         ) { backStackEntry ->
             val conversationId = backStackEntry.arguments
                 ?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
                 .orEmpty()
+            val initialPrompt = backStackEntry.arguments?.getString(TensaiDestination.Chat.ARG_PROMPT)
 
             if (conversationId == TensaiDestination.Chat.NEW_CONVERSATION_ID) {
                 // Resolve the sentinel into a real, persisted conversation, then replace this
@@ -85,6 +102,7 @@ fun TensaiNavGraph(
                 ChatScreen(
                     conversationId = conversationId,
                     onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                    initialPrompt = initialPrompt,
                 )
             }
         }

@@ -43,6 +43,18 @@ import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
+/** Max length of the short label shown in [InputPill]'s model chip — the full name lives on [io.github.hokanosekai.tensai.ui.navigation.TensaiTopBar]'s pill. */
+private const val ModelChipLabelMaxLength = 18
+
+/**
+ * Trims a model name down to what fits [InputPill]'s chip without squeezing the text field —
+ * e.g. "Qwen3-4B-Instruct-Q4_K_M" -> "Qwen3-4B-Instruct…". Shared
+ * by both of the pill's callers ([io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and
+ * Home) so the chip reads the same on either screen.
+ */
+internal fun shortModelLabel(name: String): String =
+    if (name.length <= ModelChipLabelMaxLength) name else name.take(ModelChipLabelMaxLength).trimEnd() + "…"
+
 /**
  * The app's single text-entry affordance — a pill holding the active model chip, a plain text
  * field, and a send/stop action. Shared by
