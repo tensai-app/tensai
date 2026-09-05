@@ -4,10 +4,13 @@ import com.tensai.llamakt.ChatParseCallback
 import com.tensai.llamakt.LlamaEngine
 import com.tensai.llamakt.LoadProgressCallback
 import com.tensai.llamakt.TokenCallback
+import java.io.Closeable
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -31,14 +34,92 @@ import com.tensai.llamakt.SamplingParams as LlamaSamplingParams
  * instance*. This is a stopgap: it does not serialize across multiple
  * engine instances or coordinate with other work — strict, app-wide
  * inference serialization arrives with the `InferenceQueue` (TEN-26).
+ *
+ * **Lifecycle: whoever constructs an engine owns it and must [close] it**
+ * (TEN-66). [dispatcher]'s thread belongs to this instance, not to the
+ * process: nothing else ever reclaims it, so an engine that is never closed
+ * leaks a live thread for as long as the process runs. `RuntimeGraph` builds
+ * exactly one and deliberately never closes it — a process-lifetime singleton
+ * has nothing to close *to* — but anywhere an engine is built per unit of
+ * work, and instrumented tests build one per test, [close] is mandatory.
+ *
+ * Ownership stays at the construction site and is not passed on:
+ * [io.github.hokanosekai.tensai.runtime.InferenceQueue] is *handed* an engine
+ * and must never close it, because in the app that same instance also backs
+ * `ModelRepository`'s GGUF metadata reads and the save-before-swap hook (see
+ * `RuntimeGraph`) — a queue closing what it merely borrows would break two
+ * consumers that never asked.
+ *
+ * Free the model *before* closing the engine. [LoadedModel.free] releases the
+ * native handle and has to run on [dispatcher], which [close] shuts down, so a
+ * `free()` after a `close()` throws rather than freeing and the weights stay
+ * resident until the process dies.
  */
-class LlamaKtEngineImpl : LlamaKtEngine {
+class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
 
     private val llamaEngine = LlamaEngine()
 
     private val dispatcher = Executors
         .newSingleThreadExecutor { runnable -> Thread(runnable, "llama-kt-engine") }
         .asCoroutineDispatcher()
+
+    /** Set once by [close], never cleared — an engine does not reopen. */
+    private val closed = AtomicBoolean(false)
+
+    /**
+     * Shuts [dispatcher] down, ending this engine's thread. Idempotent, safe from any thread, and
+     * non-blocking — it does not wait for the thread to actually die.
+     *
+     * Work already running on [dispatcher] is not aborted: the executor is shut down gracefully,
+     * so an in-flight call runs to completion and the thread dies once it returns. A blocking
+     * `completion()` is the one that could hold it for minutes, hence the [LlamaEngine.interrupt]
+     * first — a flag llama.cpp checks between tokens, safe from any thread (same mechanism the
+     * decode's `awaitClose` uses), which ends the generation early instead of leaving the very
+     * thread this call exists to reclaim alive until it finishes on its own. Best-effort by
+     * nature: it does nothing when no completion is running, and nothing at all once the model has
+     * been freed (the native side no-ops on a zero handle).
+     *
+     * That interrupt is why "free the model first" means *sequenced before*, not merely "at some
+     * point": it reads the native handle from the calling thread, and a [LoadedModel.free] running
+     * on [dispatcher] at that same moment is busy invalidating it. Awaiting the free before
+     * closing is what keeps the two apart — the same hazard the decode's `awaitClose` already
+     * lives with.
+     *
+     * Afterwards, every suspending call on this engine and on any [LoadedModel] it produced fails
+     * with [IllegalStateException]. That is deliberately a hard failure rather than the silent
+     * alternative: dispatching to a closed [kotlinx.coroutines.ExecutorCoroutineDispatcher]
+     * cancels the calling coroutine's job and then reroutes the block to
+     * [kotlinx.coroutines.Dispatchers.IO] — the native handle would be touched from an arbitrary
+     * pool thread, which is precisely what this class's single-thread dispatcher exists to
+     * prevent.
+     */
+    override fun close() {
+        if (closed.getAndSet(true)) return
+        llamaEngine.interrupt()
+        dispatcher.close()
+    }
+
+    /**
+     * Runs [block] on [dispatcher], refusing to dispatch onto a closed one. Every suspending entry
+     * point goes through this rather than calling `withContext(dispatcher)` itself, so the check
+     * cannot be forgotten at one site — and so it happens *before* the dispatch, which is the only
+     * point at which it can still be turned into a clean failure (see [close]).
+     *
+     * Best-effort against a caller closing the engine concurrently with its own in-flight call:
+     * nothing here can close that window, and nothing tries to. The owner is expected not to close
+     * an engine it is still using.
+     *
+     * @throws IllegalStateException if [close] has been called.
+     */
+    private suspend fun <T> onEngineThread(block: suspend CoroutineScope.() -> T): T {
+        checkOpen()
+        return withContext(dispatcher, block)
+    }
+
+    /** See [onEngineThread] — split out for the one caller that dispatches by hand, `decode`. */
+    private fun checkOpen() = check(!closed.get()) {
+        "LlamaKtEngineImpl is closed — its dispatcher thread is gone and this call cannot run"
+    }
 
     /**
      * Last KV-cache fill read from the native context, published for [kvCacheUsedCells].
@@ -59,7 +140,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
         kvUsedCells.set(runCatching { llamaEngine.kvUsed() }.getOrDefault(0))
     }
 
-    override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = withContext(dispatcher) {
+    override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = onEngineThread {
         val nGpuLayers = resolveNGpuLayers(config.backend)
         val kvCacheTypeArg = config.kvCacheType.toLibArg()
         val libProgress = config.onProgress?.let { onProgress ->
@@ -106,7 +187,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
 
     override fun kvCacheUsedCells(): Int = kvUsedCells.get()
 
-    override suspend fun saveSession(path: String): Int = withContext(dispatcher) {
+    override suspend fun saveSession(path: String): Int = onEngineThread {
         val savedTokens = try {
             llamaEngine.saveSession(path)
         } catch (e: Exception) {
@@ -118,7 +199,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
         savedTokens
     }
 
-    override suspend fun loadSession(path: String): Boolean = withContext(dispatcher) {
+    override suspend fun loadSession(path: String): Boolean = onEngineThread {
         val restored = try {
             llamaEngine.loadSession(path) >= 0
         } catch (e: Exception) {
@@ -133,7 +214,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
         restored
     }
 
-    override suspend fun readMetadata(path: String): GgufInfo = withContext(dispatcher) {
+    override suspend fun readMetadata(path: String): GgufInfo = onEngineThread {
         val meta = try {
             LlamaEngine.readMetadata(path)
         } catch (e: Exception) {
@@ -188,10 +269,21 @@ class LlamaKtEngineImpl : LlamaKtEngine {
      * handle. Because llama.kt's `LlamaEngine` has exactly one handle per
      * instance, calling [LlamaKtEngineImpl.loadModel] again (or [free])
      * invalidates every [LoadedModel] previously returned by this engine.
+     *
+     * [free] runs on the enclosing engine's dispatcher, so it has to happen
+     * before [LlamaKtEngineImpl.close] — see that method and this engine's
+     * class KDoc for what a `free()` on a closed engine does instead (throws,
+     * and leaves the weights resident).
      */
     private inner class LoadedModelImpl(override val metadata: LoadedModelInfo) : LoadedModel {
 
         override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = callbackFlow {
+            // The one dispatch this class makes by hand rather than through `onEngineThread`, so
+            // the closed check is made by hand too (TEN-66). It sits here, in the cold flow's
+            // body, rather than in `decode` itself: what matters is that the engine is still open
+            // when the `launch(dispatcher)` below actually happens, and between building this flow
+            // and collecting it there is an arbitrary amount of time for a close to land.
+            checkOpen()
             val libMessages = request.messages.map { LlamaChatMessage(it.role.toLibRole(), it.content) }
             val reasoningBudget = request.sampling.reasoningBudget
             // With a split budget, llama.kt still needs a single nPredict — the two per-phase
@@ -317,7 +409,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
             awaitClose { llamaEngine.interrupt() }
         }.buffer(Channel.UNLIMITED)
 
-        override suspend fun tokenize(text: String): Int = withContext(dispatcher) {
+        override suspend fun tokenize(text: String): Int = onEngineThread {
             try {
                 llamaEngine.tokenize(text).size
             } catch (e: Exception) {
@@ -325,7 +417,7 @@ class LlamaKtEngineImpl : LlamaKtEngine {
             }
         }
 
-        override suspend fun free() = withContext(dispatcher) {
+        override suspend fun free() = onEngineThread {
             llamaEngine.free()
             // Nothing is resident any more; leaving the last fill behind would have the next
             // reader attribute it to whatever gets loaded next.

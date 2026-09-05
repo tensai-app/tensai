@@ -104,6 +104,16 @@ private fun ModelLoadConfig.dedupKey(): ModelLoadConfig = copy(onProgress = null
  * for keeping its own blocking work off the caller's thread (see
  * `LlamaKtEngineImpl`, which routes every call through its own
  * single-thread dispatcher).
+ *
+ * **A queue borrows its [engine]; it does not own it and never closes it**
+ * (TEN-66). Closing an engine ends the thread it runs everything on, and in
+ * this app the very instance handed here is shared with two other consumers:
+ * `RuntimeGraph` gives the same one to `ModelRepository` for its GGUF metadata
+ * reads and to the save-before-swap hook wired into [onBeforeModelSwap]. A
+ * queue tearing that down would break both, neither of which asked for
+ * anything. Releasing the *model* is a different matter and is this class's
+ * job — see [unloadModel]. Whoever constructed the engine closes it, once,
+ * when nobody is using it any more (see `LlamaKtEngineImpl.close`).
  */
 class InferenceQueue(private val engine: InferenceEngine) {
 

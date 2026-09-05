@@ -72,6 +72,7 @@ class ChatViewModelTest {
     private lateinit var db: TensaiDb
     private lateinit var chatRepository: ChatRepository
     private lateinit var sessionRepository: SessionRepository
+    private lateinit var engine: LlamaKtEngineImpl
     private lateinit var queue: InferenceQueue
     private lateinit var scope: CoroutineScope
 
@@ -79,7 +80,8 @@ class ChatViewModelTest {
     fun setUp() {
         db = Room.inMemoryDatabaseBuilder(context, TensaiDb::class.java).build()
         chatRepository = ChatRepository(db.chatDao())
-        queue = InferenceQueue(LlamaKtEngineImpl())
+        engine = LlamaKtEngineImpl()
+        queue = InferenceQueue(engine)
         // cacheDir, never filesDir: this must never touch the real device's imported models (see
         // ModelRepository's storageRoot KDoc) — same reasoning applies to any real Room db.
         sessionRepository = SessionRepository(
@@ -96,6 +98,11 @@ class ChatViewModelTest {
     fun tearDown() {
         scope.cancel()
         db.close()
+        // TEN-66: the queue is handed this engine and does not own it, so closing it is this
+        // test's job — one engine is built per test here, and each one's `llama-kt-engine` thread
+        // would otherwise stay alive for the rest of the instrumented run. Last, after the tests'
+        // own `unloadTestModel()`: releasing a model runs on the dispatcher this shuts down.
+        engine.close()
     }
 
     private suspend fun loadTestModel() = withTimeout(LOAD_TIMEOUT_MS) {

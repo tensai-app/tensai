@@ -50,34 +50,41 @@ class EngineSmokeTest {
             File(modelPath).exists(),
         )
 
-        val engine: LlamaKtEngine = LlamaKtEngineImpl()
-        val model = withTimeout(LOAD_TIMEOUT_MS) {
-            engine.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
-        }
-
+        // TEN-66: this test builds an engine of its own, so this test closes it — an engine's
+        // dispatcher thread outlives every model loaded on it and nothing else ever reclaims it.
+        val engine = LlamaKtEngineImpl()
         try {
-            val request = DecodeRequest(
-                messages = listOf(ChatMessage(role = MessageRole.User, content = "Say hi")),
-                sampling = SamplingConfig(maxTokens = 16),
-            )
+            val model = withTimeout(LOAD_TIMEOUT_MS) {
+                engine.loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))
+            }
 
-            val events = withTimeout(GENERATE_TIMEOUT_MS) { model.decode(request).toList() }
+            try {
+                val request = DecodeRequest(
+                    messages = listOf(ChatMessage(role = MessageRole.User, content = "Say hi")),
+                    sampling = SamplingConfig(maxTokens = 16),
+                )
 
-            val tokenEvents = events.filterIsInstance<DecodeEvent.Token>()
-            val doneEvents = events.filterIsInstance<DecodeEvent.Done>()
-            val errorEvents = events.filterIsInstance<DecodeEvent.Error>()
+                val events = withTimeout(GENERATE_TIMEOUT_MS) { model.decode(request).toList() }
 
-            assertTrue("expected no error events, got $errorEvents", errorEvents.isEmpty())
-            assertTrue("expected at least one token event", tokenEvents.isNotEmpty())
-            assertTrue("expected exactly one done event, got ${doneEvents.size}", doneEvents.size == 1)
+                val tokenEvents = events.filterIsInstance<DecodeEvent.Token>()
+                val doneEvents = events.filterIsInstance<DecodeEvent.Done>()
+                val errorEvents = events.filterIsInstance<DecodeEvent.Error>()
 
-            val stats = doneEvents.single().stats
-            assertTrue("tokensGenerated should be > 0, was ${stats.tokensGenerated}", stats.tokensGenerated > 0)
-            assertTrue("tokPerSec should be > 0, was ${stats.tokPerSec}", stats.tokPerSec > 0f)
+                assertTrue("expected no error events, got $errorEvents", errorEvents.isEmpty())
+                assertTrue("expected at least one token event", tokenEvents.isNotEmpty())
+                assertTrue("expected exactly one done event, got ${doneEvents.size}", doneEvents.size == 1)
+
+                val stats = doneEvents.single().stats
+                assertTrue("tokensGenerated should be > 0, was ${stats.tokensGenerated}", stats.tokensGenerated > 0)
+                assertTrue("tokPerSec should be > 0, was ${stats.tokPerSec}", stats.tokPerSec > 0f)
+            } finally {
+                // Bounded like the load above (TEN-55) — a `free()` that never returns must fail this
+                // test rather than freeze the runner.
+                withTimeout(UNLOAD_TIMEOUT_MS) { model.free() }
+            }
         } finally {
-            // Bounded like the load above (TEN-55) — a `free()` that never returns must fail this
-            // test rather than freeze the runner.
-            withTimeout(UNLOAD_TIMEOUT_MS) { model.free() }
+            // After `free()`, never before: `free()` runs on the very dispatcher this shuts down.
+            engine.close()
         }
     }
 

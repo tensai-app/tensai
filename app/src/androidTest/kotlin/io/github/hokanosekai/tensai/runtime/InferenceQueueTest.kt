@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -72,7 +73,32 @@ class InferenceQueueTest {
         )
     }
 
-    private fun newQueue() = InferenceQueue(LlamaKtEngineImpl())
+    /**
+     * Every engine [newQueue] has built, closed in [closeEngines] (TEN-66).
+     *
+     * A queue does not own the engine it is handed and must not close it (see [InferenceQueue]'s
+     * KDoc), so with one queue — and therefore one engine — built per test, the closing has to
+     * happen here, at the construction site. Without it each test left its engine's
+     * `llama-kt-engine` thread alive for the rest of the instrumented run: two of them were
+     * observed still resident during the TEN-55 freeze.
+     */
+    private val engines = mutableListOf<LlamaKtEngineImpl>()
+
+    private fun newQueue() = InferenceQueue(LlamaKtEngineImpl().also(engines::add))
+
+    /**
+     * Runs after each test's own `unloadTestModel()` — the order [LlamaKtEngineImpl.close]
+     * requires, since releasing the model runs on the dispatcher this shuts down. A test that
+     * failed before unloading still gets its thread back: `close` interrupts an in-flight
+     * completion rather than waiting for it. It does not get the *weights* back, but that is the
+     * pre-existing shape of these tests (the unloads are not in a `finally`), not something
+     * closing the engine could fix.
+     */
+    @After
+    fun closeEngines() {
+        engines.forEach { it.close() }
+        engines.clear()
+    }
 
     private suspend fun InferenceQueue.loadTestModel() = withTimeout(LOAD_TIMEOUT_MS) {
         loadModel(ModelLoadConfig(path = modelPath, nCtx = 512, backend = BackendHint.Cpu))

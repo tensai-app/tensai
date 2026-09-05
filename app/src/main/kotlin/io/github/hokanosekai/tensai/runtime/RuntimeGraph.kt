@@ -88,6 +88,14 @@ object RuntimeGraph {
      * on the engine's single-thread dispatcher rather than running immediately — acceptable for
      * V1's import flow (no generation is expected to be active while importing a new model), but
      * worth revisiting if that stops holding.
+     *
+     * Never closed, deliberately (TEN-66): this is a process-lifetime singleton, so there is no
+     * point at which closing it would be correct — the process exiting is what reclaims its
+     * thread. That is also why closing it is *not* [inferenceQueue]'s business despite the queue
+     * being its main consumer: the two other consumers wired up here, [modelRepository]'s
+     * metadata reads and the save hook in `init`, hold the same instance. See
+     * [LlamaKtEngineImpl.close] for the callers that do have to close one — the instrumented
+     * tests, which build an engine per test.
      */
     private val llamaEngine: LlamaKtEngineImpl by lazy { LlamaKtEngineImpl() }
 

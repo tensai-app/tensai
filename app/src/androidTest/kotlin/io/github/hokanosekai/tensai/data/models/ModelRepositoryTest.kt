@@ -45,6 +45,7 @@ class ModelRepositoryTest {
 
     private lateinit var db: TensaiDb
     private lateinit var repository: ModelRepository
+    private lateinit var engine: LlamaKtEngineImpl
 
     // Isolated storage root for this test — NEVER context.filesDir. The repository deletes/
     // overwrites files under `<root>/models/`; pointing that at the real filesDir wiped the user's
@@ -61,7 +62,7 @@ class ModelRepositoryTest {
         )
         storageRoot = File(context.cacheDir, "model-repo-test-${System.nanoTime()}").apply { mkdirs() }
         db = Room.inMemoryDatabaseBuilder(context, TensaiDb::class.java).build()
-        val engine = LlamaKtEngineImpl()
+        engine = LlamaKtEngineImpl()
         repository = ModelRepository(
             context = context,
             modelDao = db.modelDao(),
@@ -77,6 +78,11 @@ class ModelRepositoryTest {
         // tearDown must not turn that skip into a failure.
         if (!::db.isInitialized) return
         db.close()
+        // TEN-66: this suite builds an engine per test, only to borrow its `readMetadata`. It is
+        // still a whole engine, with a `llama-kt-engine` thread nothing else ever reclaims, so it
+        // gets closed like any other. No model is ever loaded on it here, so there is nothing to
+        // free first.
+        engine.close()
         // Only ever deletes this test's own temp sandbox — never the app's real storage.
         storageRoot.deleteRecursively()
     }

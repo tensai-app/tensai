@@ -566,9 +566,10 @@ class InferenceQueueTest {
         override suspend fun tokenize(text: String): Int = 0
 
         override suspend fun free() {
-            // Suspends like the real one (`LlamaKtEngineImpl.free` is `withContext(dispatcher)`), so a
-            // cancelled caller reaching here throws before doing the work unless the queue guards
-            // it. A non-suspending fake silently passes `aCancelledUnloadStillFreesTheModel`.
+            // Suspends like the real one (`LlamaKtEngineImpl.free` dispatches onto the engine's own
+            // single thread), so a cancelled caller reaching here throws before doing the work unless
+            // the queue guards it. A non-suspending fake silently passes
+            // `aCancelledUnloadStillFreesTheModel`.
             yield()
             onFree()
         }

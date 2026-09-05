@@ -422,12 +422,50 @@ Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
 ---
 
+## 13. TEN-66 — le thread du moteur est-il réellement rendu
+
+Le correctif est livré (`LlamaKtEngineImpl : Closeable`, fermé au site de
+construction) mais **son acceptation est structurellement invérifiable en JVM**,
+ce que le ticket ne disait pas.
+
+`LlamaEngine`'s companion object appelle `System.loadLibrary("llamakt")`
+(`LlamaEngine.kt:284-287`), donc `LlamaKtEngineImpl()` lève `UnsatisfiedLinkError`
+hors device. Aucun test unitaire ne peut construire un moteur, donc aucun ne peut
+observer son thread mourir.
+
+**Protocole**, une fois un device disponible. Lancer la suite instrumentée par
+classes (jamais `connectedDebugAndroidTest`, voir les règles en tête de ce
+document) et compter les threads entre deux classes :
+
+```
+adb shell ps -T <pid> | grep llama-kt-engine | wc -l
+```
+
+Attendu : **0 ou 1**, jamais croissant avec le nombre de classes exécutées. Avant
+TEN-66 chaque test en laissait un ; deux ont été observés vivants pendant le gel
+de TEN-55.
+
+**Ce qui n'est pas couvert et qui m'inquiète plus que le compte** : `close()`
+appelle `llamaEngine.interrupt()` depuis le thread appelant, alors qu'un
+`free()` en vol sur le dispatcher est en train d'invalider le handle natif. La
+règle « free puis close » évite la course, et les tests la respectent, mais rien
+ne l'impose au compilateur. Vérifier qu'aucun crash natif ne sort d'une classe
+qui échoue **avant** son unload — c'est exactement le cas où l'ordre n'est pas
+tenu.
+
+Lié : TEN-55, dont ce ticket retire une variable sans prétendre être la cause.
+
+---
+
 ## Ce qui ne demande pas de device
 
 Pour mémoire, afin de ne pas bloquer par erreur : TEN-71, TEN-69 (le cas
-Qwen3-sans-raisonnement est unitaire), TEN-66, TEN-53, TEN-54, TEN-70, la phase 4
-(TEN-35 à 40 — mais voir §11, TEN-39 laisse deux états invérifiables sans device)
-et la phase 5 hors TEN-43/44.
+Qwen3-sans-raisonnement est unitaire), TEN-53, TEN-54, TEN-70, TEN-73, TEN-74,
+TEN-75, la phase 4 (TEN-35 à 40 — mais voir §11, TEN-39 laisse deux états
+invérifiables sans device) et la phase 5 hors TEN-43/44.
+
+**TEN-66 a quitté cette liste** (voir §13) : le correctif est écrit, son
+acceptation ne l'est pas.
 
 **TEN-42 (CI/CD) monte en priorité** tant qu'il n'y a pas de device : un build et
 des tests automatisés à chaque commit sont le seul filet qui reste.

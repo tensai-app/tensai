@@ -55,53 +55,64 @@ class LoadFlowTest {
             File(modelPath).exists(),
         )
 
+        // TEN-66: this test builds an engine of its own, so this test closes it — an engine's
+        // dispatcher thread outlives every model loaded on it and nothing else ever reclaims it.
+        // Wraps everything from here down: a failure in the metadata read below must not leak the
+        // thread either.
         val engine = LlamaKtEngineImpl()
-        val info = withTimeout(READ_METADATA_TIMEOUT_MS) { engine.readMetadata(modelPath) }
-        val model = ModelEntity(
-            id = UUID.randomUUID().toString(),
-            displayName = info.name.ifBlank { "test-model" },
-            fileName = "test-model.gguf",
-            filePath = modelPath,
-            sizeBytes = info.fileSizeBytes,
-            architecture = info.architecture,
-            quantLabel = info.quantLabel,
-            paramCount = info.paramCount,
-            contextLength = info.contextLength,
-            embeddingLength = info.embeddingLength,
-            blockCount = info.blockCount,
-            supportsThinking = info.supportsThinking,
-            importedAt = 0L,
-        )
-
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val profile = DeviceProfiler(context).profile()
-        val plan = LoadPolicy.compute(model, profile)
-
-        val queue = InferenceQueue(engine)
         try {
-            withTimeout(LOAD_TIMEOUT_MS) {
-                queue.loadModel(
-                    ModelLoadConfig(
-                        path = model.filePath,
-                        nCtx = plan.nCtx,
-                        // CPU, explicitly. The default (Auto) resolves to full Vulkan offload on
-                        // this device, and Vulkan buffers are non-evictable — chained with the
-                        // rest of the suite this froze the whole device once (2026-08-03).
-                        // Device tests always pin CPU; GPU behavior is TEN-43's manual QA pass.
-                        backend = BackendHint.Cpu,
-                        kvCacheType = plan.kvCacheType,
-                    ),
-                )
-            }
-
-            assertTrue(
-                "expected ModelReady after load, got ${queue.state.value}",
-                queue.state.value is QueueState.ModelReady,
+            val info = withTimeout(READ_METADATA_TIMEOUT_MS) { engine.readMetadata(modelPath) }
+            val model = ModelEntity(
+                id = UUID.randomUUID().toString(),
+                displayName = info.name.ifBlank { "test-model" },
+                fileName = "test-model.gguf",
+                filePath = modelPath,
+                sizeBytes = info.fileSizeBytes,
+                architecture = info.architecture,
+                quantLabel = info.quantLabel,
+                paramCount = info.paramCount,
+                contextLength = info.contextLength,
+                embeddingLength = info.embeddingLength,
+                blockCount = info.blockCount,
+                supportsThinking = info.supportsThinking,
+                importedAt = 0L,
             )
+
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val profile = DeviceProfiler(context).profile()
+            val plan = LoadPolicy.compute(model, profile)
+
+            val queue = InferenceQueue(engine)
+            try {
+                withTimeout(LOAD_TIMEOUT_MS) {
+                    queue.loadModel(
+                        ModelLoadConfig(
+                            path = model.filePath,
+                            nCtx = plan.nCtx,
+                            // CPU, explicitly. The default (Auto) resolves to full Vulkan offload
+                            // on this device, and Vulkan buffers are non-evictable — chained with
+                            // the rest of the suite this froze the whole device once (2026-08-03).
+                            // Device tests always pin CPU; GPU behavior is TEN-43's manual QA pass.
+                            backend = BackendHint.Cpu,
+                            kvCacheType = plan.kvCacheType,
+                        ),
+                    )
+                }
+
+                assertTrue(
+                    "expected ModelReady after load, got ${queue.state.value}",
+                    queue.state.value is QueueState.ModelReady,
+                )
+            } finally {
+                // Never leave 400MB of weights resident after this test, pass or fail. Bounded like
+                // the load above (TEN-55) — a stuck unload must fail loudly, not freeze the runner.
+                withTimeout(UNLOAD_TIMEOUT_MS) { queue.unloadModel() }
+            }
         } finally {
-            // Never leave 400MB of weights resident after this test, pass or fail. Bounded like
-            // the load above (TEN-55) — a stuck unload must fail loudly, not freeze the runner.
-            withTimeout(UNLOAD_TIMEOUT_MS) { queue.unloadModel() }
+            // After the unload, never before: releasing the model runs on the very dispatcher this
+            // shuts down. The queue is handed this engine, it does not own it — closing is the
+            // construction site's job, i.e. here.
+            engine.close()
         }
     }
 
