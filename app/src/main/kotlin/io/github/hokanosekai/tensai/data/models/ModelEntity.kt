@@ -21,6 +21,14 @@ import androidx.room.PrimaryKey
  *   [io.github.hokanosekai.tensai.compat.CompatibilityChecker].
  * @param blockCount number of transformer layers — see [io.github.hokanosekai.tensai.engine.GgufInfo.blockCount].
  * @param importedAt epoch millis when this model was imported.
+ * @param kvFullElementsPerToken K+V cache elements per context token across the layers sized by
+ *   `n_ctx` — see [io.github.hokanosekai.tensai.engine.GgufInfo.kvFullElementsPerToken]. `0` means
+ *   *unknown*, not *none*: rows imported before TEN-18 carry it until
+ *   [ModelRepository.backfillKvCacheShape] re-reads their header, and every consumer must route
+ *   through [KvCacheSize], which falls back to the old [embeddingLength]-based over-estimate.
+ * @param kvSwaElementsPerToken same, for sliding-window layers capped at [slidingWindow] — see
+ *   [io.github.hokanosekai.tensai.engine.GgufInfo.kvSwaElementsPerToken].
+ * @param slidingWindow sliding-window size in tokens, `0` unless [kvSwaElementsPerToken] is set.
  */
 @Entity(tableName = "models")
 data class ModelEntity(
@@ -37,4 +45,7 @@ data class ModelEntity(
     val blockCount: Long,
     val supportsThinking: Boolean,
     val importedAt: Long,
+    val kvFullElementsPerToken: Long = 0,
+    val kvSwaElementsPerToken: Long = 0,
+    val slidingWindow: Long = 0,
 )

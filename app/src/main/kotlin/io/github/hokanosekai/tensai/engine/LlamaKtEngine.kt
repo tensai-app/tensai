@@ -17,6 +17,18 @@ package io.github.hokanosekai.tensai.engine
  * @param fileSizeBytes size of the GGUF file on disk, in bytes.
  * @param supportsThinking whether the model's chat template supports a
  *   thinking/reasoning mode (e.g. Qwen3).
+ * @param kvFullElementsPerToken K+V cache elements one context token occupies
+ *   across the layers whose cache is sized by `n_ctx`, summed the way
+ *   llama.cpp allocates it (per-layer KV head count × head dimension) rather
+ *   than assumed from [embeddingLength]. **0 means the GGUF header didn't
+ *   yield a usable attention shape** — see
+ *   [io.github.hokanosekai.tensai.data.models.KvCacheSize] for the fallback.
+ * @param kvSwaElementsPerToken same, for sliding-window layers, whose cache is
+ *   capped at [slidingWindow] rather than growing with `n_ctx`. 0 when the
+ *   model has none *or* when they couldn't be identified — those layers are
+ *   then already counted in [kvFullElementsPerToken].
+ * @param slidingWindow window size in tokens, 0 unless
+ *   [kvSwaElementsPerToken] is non-zero.
  */
 data class GgufInfo(
     val architecture: String,
@@ -29,6 +41,9 @@ data class GgufInfo(
     val vocabSize: Long,
     val fileSizeBytes: Long,
     val supportsThinking: Boolean,
+    val kvFullElementsPerToken: Long = 0,
+    val kvSwaElementsPerToken: Long = 0,
+    val slidingWindow: Long = 0,
 )
 
 /**

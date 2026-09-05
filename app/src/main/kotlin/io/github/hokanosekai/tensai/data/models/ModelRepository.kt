@@ -141,9 +141,41 @@ class ModelRepository(
             blockCount = info.blockCount,
             supportsThinking = info.supportsThinking,
             importedAt = System.currentTimeMillis(),
+            kvFullElementsPerToken = info.kvFullElementsPerToken,
+            kvSwaElementsPerToken = info.kvSwaElementsPerToken,
+            slidingWindow = info.slidingWindow,
         )
         modelDao.insert(entity)
         entity
+    }
+
+    /**
+     * Fills in the KV-cache shape of models imported before TEN-18 added it (see
+     * [TensaiDbMigrations.MIGRATION_6_7]), by re-reading their GGUF header. Header-only, so it
+     * costs milliseconds per model even at several GB, and it only touches rows still carrying the
+     * migration's `0` sentinel — a no-op on every start after the first.
+     *
+     * The alternative was to leave those rows on [KvCacheSize]'s fallback until the user
+     * re-imported. Not worth it: the fallback is what pinned Gemma-4 to `n_ctx = 256` in the first
+     * place, and a re-import means copying gigabytes again to recover data that's already sitting
+     * in the file on disk.
+     *
+     * Failures are swallowed per model, not batched: a file that has been moved or deleted, or a
+     * header that no longer parses, just leaves that row on the conservative estimate — which is
+     * exactly the state it was already in — while the other rows still get fixed.
+     */
+    suspend fun backfillKvCacheShape() = withContext(Dispatchers.IO) {
+        modelDao.withUnknownKvCacheShape().forEach { model ->
+            val info = runCatching { readMetadata(model.filePath) }.getOrNull() ?: return@forEach
+            if (info.kvFullElementsPerToken <= 0) return@forEach
+
+            modelDao.updateKvCacheShape(
+                id = model.id,
+                kvFullElementsPerToken = info.kvFullElementsPerToken,
+                kvSwaElementsPerToken = info.kvSwaElementsPerToken,
+                slidingWindow = info.slidingWindow,
+            )
+        }
     }
 
     /**

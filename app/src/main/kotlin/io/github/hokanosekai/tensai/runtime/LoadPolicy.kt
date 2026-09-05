@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.runtime
 
 import io.github.hokanosekai.tensai.compat.DeviceProfile
+import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 
@@ -33,8 +34,6 @@ object LoadPolicy {
     /** Never request less than this — a degenerate context isn't useful even on the tightest device. */
     private const val MIN_CTX_TOKENS = 256
 
-    /** K and V caches are each sized the same. */
-    private const val KV_CACHE_TENSORS = 2L
     private const val KV_BYTES_PER_ELEMENT_F16 = 2L
     private const val KV_BYTES_PER_ELEMENT_Q8_0 = 1L
 
@@ -58,25 +57,19 @@ object LoadPolicy {
      *    below [MIN_CTX_TOKENS]) — Q8_0 over F16 here because it buys more headroom per byte in an
      *    already RAM-constrained load.
      *
-     * This assumes `n_head_kv == n_head` (no grouped-query attention), the same documented
-     * over-estimate as
-     * [io.github.hokanosekai.tensai.compat.CompatibilityChecker.check]'s own KV-cache math —
-     * safer to over-estimate KV size (and so under-estimate the context we can afford) than the
-     * reverse.
+     * KV size comes from [KvCacheSize], which reads the model's real attention shape out of the
+     * GGUF header and falls back to a deliberate over-estimate when that shape is unknown — see
+     * its KDoc for why every uncertainty resolves upwards.
      */
     fun compute(model: ModelEntity, profile: DeviceProfile): LoadPlan {
         val wanted = minOf(model.contextLength, CTX_LATENCY_CAP.toLong())
         val availableForKv = (profile.availableRamBytes - model.sizeBytes - OVERHEAD_BYTES).coerceAtLeast(0)
 
-        val bytesPerTokenF16 = KV_CACHE_TENSORS * model.embeddingLength * model.blockCount * KV_BYTES_PER_ELEMENT_F16
-        val bytesPerTokenQ8 = KV_CACHE_TENSORS * model.embeddingLength * model.blockCount * KV_BYTES_PER_ELEMENT_Q8_0
-
-        val ctxFaisableF16 = ctxFor(availableForKv, bytesPerTokenF16)
-        if (wanted <= ctxFaisableF16) {
+        if (KvCacheSize.bytesAt(model, wanted, KV_BYTES_PER_ELEMENT_F16) <= availableForKv) {
             return LoadPlan(wanted.toInt(), KvCacheType.F16)
         }
 
-        val ctxFaisableQ8 = ctxFor(availableForKv, bytesPerTokenQ8)
+        val ctxFaisableQ8 = KvCacheSize.maxCtxFitting(model, availableForKv, KV_BYTES_PER_ELEMENT_Q8_0, wanted)
         if (wanted <= ctxFaisableQ8) {
             return LoadPlan(wanted.toInt(), KvCacheType.Q8_0)
         }
@@ -84,7 +77,4 @@ object LoadPolicy {
         val reduced = ctxFaisableQ8.coerceAtLeast(MIN_CTX_TOKENS.toLong())
         return LoadPlan(reduced.toInt(), KvCacheType.Q8_0)
     }
-
-    private fun ctxFor(availableBytes: Long, bytesPerToken: Long): Long =
-        if (bytesPerToken <= 0) Long.MAX_VALUE else availableBytes / bytesPerToken
 }

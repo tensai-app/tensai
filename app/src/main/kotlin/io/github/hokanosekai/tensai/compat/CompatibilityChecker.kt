@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.compat
 
+import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
 import java.util.Locale
@@ -54,9 +55,6 @@ data class Compatibility(
  *   GPU offload wins when a Vulkan device is available.
  */
 object CompatibilityChecker {
-
-    /** K and V caches are each sized the same — see [kvCacheBytes]. */
-    private const val KV_CACHE_TENSORS = 2L
 
     /** f16 KV cache (the engine's default, [io.github.hokanosekai.tensai.engine.KvCacheType.F16]). */
     private const val KV_BYTES_PER_ELEMENT_F16 = 2L
@@ -130,16 +128,13 @@ object CompatibilityChecker {
     }
 
     /**
-     * `KV bytes ~= 2 (K+V) * min(contextLength, plannedCtx) * embeddingLength * blockCount * 2
-     * (f16 bytes)`. This assumes `n_head_kv == n_head` (no grouped-query attention) since
-     * [ModelEntity] doesn't carry `n_head`/`n_head_kv` yet (blocked on TEN-18 exposing them from
-     * llama.kt) — GQA models (most current ones) will have a real KV cache smaller than this
-     * estimate, so this formula is a documented over-estimate, not exact. Safer to overestimate
-     * for a memory-pressure check than to underestimate into a device that gets OOM-killed.
+     * KV-cache bytes at [PLANNED_CTX_TOKENS], from the model's real attention shape — see
+     * [KvCacheSize], which also holds the fallback for models whose shape is unknown (imported
+     * before TEN-18, or a header that didn't yield one).
      */
     private fun kvCacheBytes(model: ModelEntity): Long {
         val plannedCtx = minOf(model.contextLength, PLANNED_CTX_TOKENS)
-        return KV_CACHE_TENSORS * plannedCtx * model.embeddingLength * model.blockCount * KV_BYTES_PER_ELEMENT_F16
+        return KvCacheSize.bytesAt(model, plannedCtx, KV_BYTES_PER_ELEMENT_F16)
     }
 
     private fun isLikelySlow(model: ModelEntity): Boolean {

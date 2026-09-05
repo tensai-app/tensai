@@ -27,6 +27,10 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  * resuming one doesn't need a full re-prefill — see
  * [io.github.hokanosekai.tensai.data.session.SessionRepository].
  *
+ * Version 7 added [ModelEntity]'s KV-cache shape columns (TEN-18) — see [KvCacheSize]. Rows
+ * predating it get `0`, which [KvCacheSize] reads as *unknown* and answers with the old
+ * over-estimate; [ModelRepository.backfillKvCacheShape] then fills them in on the next start.
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -34,7 +38,7 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class, SessionEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

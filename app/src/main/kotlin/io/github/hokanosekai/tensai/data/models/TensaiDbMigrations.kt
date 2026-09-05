@@ -89,6 +89,35 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v6 → v7 (TEN-18): adds [ModelEntity.kvFullElementsPerToken],
+     * [ModelEntity.kvSwaElementsPerToken] and [ModelEntity.slidingWindow], the model's real KV
+     * shape as read from its GGUF header.
+     *
+     * Existing rows get `0`, which [KvCacheSize] treats as *unknown* rather than *none* and
+     * answers with the pre-TEN-18 over-estimate — so a model imported before this migration keeps
+     * exactly the context it had, never a larger one it can't afford. Unlike [MIGRATION_1_2],
+     * which left its `0`s standing forever, that sentinel is temporary:
+     * [ModelRepository.backfillKvCacheShape] re-reads the header of every row still carrying it on
+     * the next app start (a header-only read, milliseconds even on a multi-GB file), so the user
+     * doesn't have to re-import to get the better estimate. The sentinel is what makes that
+     * backfill safe to fail — a moved or deleted file just leaves the row conservative.
+     */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `kvFullElementsPerToken` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `kvSwaElementsPerToken` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `slidingWindow` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
-    val ALL = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+    val ALL = arrayOf(
+        MIGRATION_1_2,
+        MIGRATION_2_3,
+        MIGRATION_3_4,
+        MIGRATION_4_5,
+        MIGRATION_5_6,
+        MIGRATION_6_7,
+    )
 }

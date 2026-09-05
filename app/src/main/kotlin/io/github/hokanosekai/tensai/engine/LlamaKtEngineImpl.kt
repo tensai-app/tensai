@@ -178,6 +178,9 @@ class LlamaKtEngineImpl : LlamaKtEngine {
         vocabSize = vocabSize,
         fileSizeBytes = fileSizeBytes,
         supportsThinking = supportsThinking,
+        kvFullElementsPerToken = kvFullElementsPerToken,
+        kvSwaElementsPerToken = kvSwaElementsPerToken,
+        slidingWindow = slidingWindow,
     )
 
     /**

@@ -131,4 +131,36 @@ class TensaiDbMigrationTest {
 
         migrated.query("SELECT * FROM sessions").use { assertEquals(0, it.count) }
     }
+
+    /**
+     * A model imported before TEN-18 keeps its row and lands on the `0` sentinel for all three
+     * KV-shape columns — which [KvCacheSize] reads as *unknown* and answers with the old
+     * over-estimate, so the model's planned context can only stay the same or grow later, never
+     * jump to one the device can't afford. `ModelRepository.backfillKvCacheShape` replaces the
+     * sentinel on the next start; this test is about the state it starts from.
+     */
+    @Test
+    fun migrate6To7LeavesExistingModelsWithoutAKvShape() {
+        helper.createDatabase(testDbName, 6).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, " +
+                    "quantLabel, paramCount, contextLength, embeddingLength, blockCount, supportsThinking, " +
+                    "importedAt) VALUES ('m1', 'Qwen3 1.7B', 'qwen3.gguf', " +
+                    "'/data/data/io.github.hokanosekai.tensai/files/models/qwen3.gguf', " +
+                    "1234567, 'qwen3', 'Q4_K_M', 1700000000, 40960, 2048, 28, 0, 1000)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 7, true, TensaiDbMigrations.MIGRATION_6_7)
+
+        val cursor = migrated.query("SELECT * FROM models WHERE id = 'm1'")
+        assertTrue("expected the pre-migration model to still be there", cursor.moveToFirst())
+        assertEquals("Qwen3 1.7B", cursor.getString(cursor.getColumnIndexOrThrow("displayName")))
+        assertEquals(28L, cursor.getLong(cursor.getColumnIndexOrThrow("blockCount")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("kvFullElementsPerToken")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("kvSwaElementsPerToken")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("slidingWindow")))
+        cursor.close()
+    }
 }

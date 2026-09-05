@@ -474,6 +474,24 @@ class ChatViewModelTest {
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
 
+        override suspend fun withUnknownKvCacheShape(): List<ModelEntity> =
+            models.values.filter { it.kvFullElementsPerToken == 0L }
+
+        override suspend fun updateKvCacheShape(
+            id: String,
+            kvFullElementsPerToken: Long,
+            kvSwaElementsPerToken: Long,
+            slidingWindow: Long,
+        ) {
+            val existing = models[id] ?: return
+            models[id] = existing.copy(
+                kvFullElementsPerToken = kvFullElementsPerToken,
+                kvSwaElementsPerToken = kvSwaElementsPerToken,
+                slidingWindow = slidingWindow,
+            )
+            flow.value = models.values.toList()
+        }
+
         override suspend fun insert(model: ModelEntity) {
             models[model.id] = model
             flow.value = models.values.toList()
