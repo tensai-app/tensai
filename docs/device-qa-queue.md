@@ -14,7 +14,7 @@ Dernière mise à jour : 2026-09-05.
 
 - **Jamais** `./gradlew connectedDebugAndroidTest` ni `connectedCheck`. AGP
   désinstalle l'app en nettoyage et efface les modèles, plusieurs Go.
-  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §9).
+  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §10).
 - **Jamais** `adb reboot`, `adb shell reboot`, `adb shell su`, `adb uninstall`,
   `pm clear`. Un builder a déjà redémarré le téléphone de l'utilisateur.
 - Installer avec `adb install -r`, qui préserve la base et les modèles.
@@ -270,7 +270,59 @@ qu'un tap dessus traverse jusqu'à ce qui est dessous.
 
 ---
 
-## 8. TEN-68 — les 350 s après une longue génération
+## 8. TEN-38 — Settings, et surtout ce que « Clear » fait en vrai
+
+Les courses purge contre save sont couvertes par neuf tests unitaires, y compris
+le chemin `Unchanged`. La logique n'est pas à revérifier.
+
+**Ce qui reste sur device est le comportement observable**, et un cas vaut le
+détour bien plus que le rendu.
+
+### Le test qui compte : Clear pendant une génération
+
+Lancer une génération longue sur une conversation avec du contexte, et taper
+Clear dans Settings **pendant** qu'elle streame.
+
+Attendu, et c'est délibéré :
+- la réponse **continue de streamer** sans interruption
+- la conversation garde son contexte à l'écran
+- le dossier `files/sessions/` est vide après coup
+- **aucun fichier orphelin ne reste** : `run-as … ls -l files/sessions/` ne doit
+  rien montrer, ni `.llamastate` ni `.llamastate.tmp`
+
+Le dernier point est celui qui casserait en silence. Un save en vol au moment du
+purge écrit son dump puis le jette ; si un `.tmp` de plusieurs centaines de Mo
+survit, la logique de rejet n'a pas fonctionné et rien dans l'app ne le
+ramassera jamais.
+
+Puis envoyer un nouveau message : une session doit être réécrite. Clear libère le
+disque, il ne désactive pas la persistance.
+
+### Le second : Clear pendant un swap de modèle
+
+Même manipulation mais en changeant de modèle, ce qui déclenche un save par
+`onBeforeModelSwap`. Vérifier que le swap aboutit et que rien ne reste sur disque.
+
+### Les chiffres
+
+La barre d'usage doit correspondre au réel :
+
+```bash
+adb shell 'run-as io.github.hokanosekai.tensai du -sk files/models files/sessions'
+```
+
+Et un contrôle qui a du sens vu ce qui a été construit : supprimer un fichier de
+modèle depuis les réglages système, puis rouvrir Settings. La taille annoncée doit
+refléter ce qui est sur le disque, pas ce que la base prétend.
+
+### Le reste
+
+Les quatre groupes, le thème appliqué **à chaud** (l'acceptation le demande
+explicitement), et la conformité au prototype dans les deux thèmes.
+
+---
+
+## 9. TEN-68 — les 350 s après une longue génération
 
 Observé **une fois**, jamais reproduit sur la tentative suivante à volume
 identique. Restore de 2879 tokens rendu en 780 ms, puis 350 758 ms de TTFT.
@@ -285,7 +337,7 @@ s'effondre et où.
 
 ---
 
-## 9. Tests instrumentés
+## 10. Tests instrumentés
 
 **Toujours sous wrapper hôte**, et traiter le code de sortie **124 comme un échec** :
 
@@ -308,7 +360,7 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 10. TEN-43 — QA device pass V1
+## 11. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
