@@ -457,6 +457,60 @@ Lié : TEN-55, dont ce ticket retire une variable sans prétendre être la cause
 
 ---
 
+## 14. TEN-72 — la passe de relecture se déclenche une fois, et une seule
+
+La logique est unitaire (`KvCacheShapeBackfillTest`, 9 tests) et la migration
+v7 → v8 a son test (`TensaiDbMigrationTest.migrate7To8...`). Ce qui reste tient
+en deux points, tous deux hors JVM.
+
+**Le numéro annoncé par le JNI.** `LlamaEngine.kvShapeVersion()` traverse
+`System.loadLibrary("llamakt")`, donc rien ne peut l'appeler hors device (même
+raison qu'au §13). Le symbole est bien exporté dans le `.so` construit ici
+(`nm -D … | grep nativeKvShapeVersion`), mais la valeur rendue n'a jamais été
+lue par du Kotlin.
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb logcat -c
+adb logcat -v time TensaiJNI:V "*:S" > qa72.txt &
+# app > drawer > Models > n'importe quel modèle > Load model
+```
+
+Attendu dans `qa72.txt` : `"kv_shape_version": 2` dans le JSON de
+`nativeReadGgufMetadata`. Un `0` signifierait que le champ n'est pas émis, et
+alors **chaque démarrage relit tous les en-têtes**, ce qui est précisément la
+panne que le ticket évite.
+
+**Une passe, pas deux.** C'est l'acceptation qui coûte cher si elle est fausse :
+une relecture qui change `n_ctx` invalide toutes les sessions du modèle, donc
+re-prefill complet de chaque conversation.
+
+```sql
+SELECT displayName, kvFullElementsPerToken, kvShapeVersion FROM models;
+```
+
+Protocole : installer par-dessus une base v7 (`adb install -r`, jamais
+`pm clear`), lancer l'app, lire la table. Toutes les lignes dont le fichier
+existe encore doivent porter `kvShapeVersion = 2`. Puis tuer l'app, la relancer,
+et vérifier qu'**aucune** ligne d'`I/TensaiJNI: nativeReadGgufMetadata:` ne sort
+au second démarrage.
+
+| Attendu | Verdict |
+|---|---|
+| aucun `nativeReadGgufMetadata` au 2ᵉ lancement | le ticket est livré |
+| les mêmes lectures qu'au 1ᵉʳ | la version n'est pas réécrite, chaque démarrage retaxe l'utilisateur |
+
+**Contrôle de valeur, lié au §1.** Un modèle importé entre TEN-18 et son
+correctif porte un chiffre sous-compté. Après la passe, son
+`kvFullElementsPerToken` doit avoir **augmenté** ou être resté identique, jamais
+baissé — une baisse voudrait dire que la formule courante sous-compte encore.
+
+Enfin, `ModelDaoTest` (nouveau, sans GGUF requis) épingle le prédicat SQL
+`kvShapeVersion != :version`, que le fake de la suite JVM ne peut pas couvrir.
+À passer via `am instrument` sous wrapper hôte (§10).
+
+---
+
 ## Ce qui ne demande pas de device
 
 Pour mémoire, afin de ne pas bloquer par erreur : TEN-71, TEN-69 (le cas

@@ -64,6 +64,7 @@ class LoadModelCancellationTest {
             context = ContextWrapper(null),
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
+            kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
             currentLoadedModelName = { null },
             storageRoot = storageRoot,
         )
@@ -166,14 +167,15 @@ class LoadModelCancellationTest {
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
 
-        override suspend fun withUnknownKvCacheShape(): List<ModelEntity> =
-            models.values.filter { it.kvFullElementsPerToken == 0L }
+        override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
+            models.values.filter { it.kvShapeVersion != kvShapeVersion }
 
         override suspend fun updateKvCacheShape(
             id: String,
             kvFullElementsPerToken: Long,
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
+            kvShapeVersion: Long,
         ) = Unit
 
         override suspend fun insert(model: ModelEntity) {

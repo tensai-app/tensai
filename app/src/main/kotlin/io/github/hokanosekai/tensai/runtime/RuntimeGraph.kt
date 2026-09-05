@@ -72,11 +72,12 @@ object RuntimeGraph {
         // file I/O.
         applicationScope.launch { runCatching { sessionRepository.pruneToStoragePolicy() } }
 
-        // One-time per model: fills in the KV-cache shape of anything imported before TEN-18 added
-        // it, so an existing install gets the corrected `n_ctx` without a re-import. Same
+        // One-time per model *per revision of the native KV-shape formula* (TEN-72): re-derives
+        // the shape of anything whose stored numbers came from a different formula than the one
+        // now loaded, so an existing install gets the corrected `n_ctx` without a re-import. Same
         // fire-and-forget shape as the prune above — it reads GGUF headers off disk, nothing in
-        // `init` waits on it, and a model whose file has gone missing simply keeps the
-        // conservative estimate it already had (see [ModelRepository.backfillKvCacheShape]).
+        // `init` waits on it, and a model whose file has gone missing simply keeps the estimate it
+        // already had (see [ModelRepository.backfillKvCacheShape]).
         applicationScope.launch { runCatching { modelRepository.backfillKvCacheShape() } }
     }
 
@@ -158,6 +159,7 @@ object RuntimeGraph {
             context = appContext,
             modelDao = database.modelDao(),
             readMetadata = llamaEngine::readMetadata,
+            kvShapeVersion = llamaEngine::kvShapeVersion,
             currentLoadedModelName = {
                 (inferenceQueue.state.value as? QueueState.ModelReady)?.info?.name
             },

@@ -57,6 +57,9 @@ data class StorageUsage(val modelsBytes: Long, val freeBytes: Long, val totalByt
  *   [io.github.hokanosekai.tensai.engine.LlamaKtEngine.readMetadata] on the same engine instance
  *   [io.github.hokanosekai.tensai.runtime.RuntimeGraph.inferenceQueue] runs on (see
  *   `RuntimeGraph`'s KDoc for why that sharing is safe but not free of contention).
+ * @param kvShapeVersion the revision of the native KV-shape derivation the engine currently
+ *   carries — see [KvCacheShapeBackfill] for why this is asked of the library rather than written
+ *   down here.
  * @param currentLoadedModelName the display name of whatever model is currently loaded in the
  *   queue, or `null` if none is — used by [deleteModel]'s in-use guard. Note:
  *   `LoadedModelInfo` (what `QueueState.ModelReady` carries) has no file path, only a name, so this
@@ -68,6 +71,7 @@ class ModelRepository(
     private val context: Context,
     private val modelDao: ModelDao,
     private val readMetadata: suspend (path: String) -> GgufInfo,
+    private val kvShapeVersion: () -> Long,
     private val currentLoadedModelName: () -> String?,
     // Root under which imported GGUFs are stored. Defaults to the app's real filesDir; tests MUST
     // pass a temp dir — this class deletes/overwrites files under `models/`, and pointing it at the
@@ -139,33 +143,36 @@ class ModelRepository(
         )
     }
 
+    // Everything backfillKvCacheShape does once it is on a background thread — over in
+    // KvCacheShapeBackfill for the same reason the import logic is in ModelImporter: it is pure
+    // logic worth testing, and this class can't be built on the JVM. Lazy to match `importer`,
+    // and because it is touched exactly once per process.
+    private val kvShapeBackfill: KvCacheShapeBackfill by lazy {
+        KvCacheShapeBackfill(
+            modelDao = modelDao,
+            readMetadata = readMetadata,
+            currentShapeVersion = kvShapeVersion,
+        )
+    }
+
     /**
-     * Fills in the KV-cache shape of models imported before TEN-18 added it (see
-     * [TensaiDbMigrations.MIGRATION_6_7]), by re-reading their GGUF header. Header-only, so it
-     * costs milliseconds per model even at several GB, and it only touches rows still carrying the
-     * migration's `0` sentinel — a no-op on every start after the first.
+     * Re-reads the GGUF header of every model whose stored KV-cache shape was derived by a
+     * different revision of the native formula than the one now loaded — models imported before
+     * TEN-18 added the columns, and models whose numbers came out of a formula that has since been
+     * corrected. Header-only, so it costs milliseconds per model even at several GB, and it
+     * selects nothing on the start after the one that fixed them.
      *
-     * The alternative was to leave those rows on [KvCacheSize]'s fallback until the user
-     * re-imported. Not worth it: the fallback is what pinned Gemma-4 to `n_ctx = 256` in the first
-     * place, and a re-import means copying gigabytes again to recover data that's already sitting
-     * in the file on disk.
+     * The alternative was to leave those rows wrong until the user re-imported. Not worth it: the
+     * pre-TEN-18 fallback is what pinned Gemma-4 to `n_ctx = 256`, an under-count from the first
+     * TEN-18 formula is worse than that (it over-promises context on a device that can't back it),
+     * and a re-import means copying gigabytes again to recover data already sitting in the file on
+     * disk.
      *
-     * Failures are swallowed per model, not batched: a file that has been moved or deleted, or a
-     * header that no longer parses, just leaves that row on the conservative estimate — which is
-     * exactly the state it was already in — while the other rows still get fixed.
+     * See [KvCacheShapeBackfill] for how staleness is decided and why the deciding number comes
+     * from the native library rather than from this module.
      */
     suspend fun backfillKvCacheShape() = withContext(Dispatchers.IO) {
-        modelDao.withUnknownKvCacheShape().forEach { model ->
-            val info = runCatching { readMetadata(model.filePath) }.getOrNull() ?: return@forEach
-            if (info.kvFullElementsPerToken <= 0) return@forEach
-
-            modelDao.updateKvCacheShape(
-                id = model.id,
-                kvFullElementsPerToken = info.kvFullElementsPerToken,
-                kvSwaElementsPerToken = info.kvSwaElementsPerToken,
-                slidingWindow = info.slidingWindow,
-            )
-        }
+        kvShapeBackfill.run()
     }
 
     /**

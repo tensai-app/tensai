@@ -266,6 +266,20 @@ class ModelImporterTest {
         assertEquals(listOf(entity), dao.rows)
     }
 
+    /**
+     * The import half of TEN-72's "one backfill pass, ever": a model imported now already carries
+     * the shape version that produced its numbers, so `KvCacheShapeBackfill` never selects it.
+     * Leave this off and every fresh import lands on the migration's `0`, which no longer matches
+     * anything the library reports — so its header would be re-read on every start, forever.
+     */
+    @Test
+    fun anImportRecordsWhichFormulaDerivedItsKvShape() = runBlocking {
+        val entity = importer.import("qwen.gguf", 64, plentyOfSpace, { ByteArrayInputStream(ByteArray(64)) }) {}
+
+        assertEquals(SHAPE_VERSION, entity.kvShapeVersion)
+        assertEquals(SHAPE_VERSION, dao.rows.single().kvShapeVersion)
+    }
+
     @Test
     fun aSecondImportOfTheSameNameAndSizeIsRejectedBeforeAnythingIsCopied() = runBlocking {
         importer.import("qwen.gguf", 64, plentyOfSpace, { ByteArrayInputStream(ByteArray(64)) }) {}
@@ -346,14 +360,15 @@ class ModelImporterTest {
 
         override suspend fun getById(id: String): ModelEntity? = rows.find { it.id == id }
 
-        override suspend fun withUnknownKvCacheShape(): List<ModelEntity> =
-            rows.filter { it.kvFullElementsPerToken == 0L }
+        override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
+            rows.filter { it.kvShapeVersion != kvShapeVersion }
 
         override suspend fun updateKvCacheShape(
             id: String,
             kvFullElementsPerToken: Long,
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
+            kvShapeVersion: Long,
         ) = Unit
 
         // Synchronized because the race test really does insert from two threads at once.
@@ -379,5 +394,15 @@ class ModelImporterTest {
         vocabSize = 151_936,
         fileSizeBytes = 0,
         supportsThinking = true,
+        kvFullElementsPerToken = 114_688,
+        kvShapeVersion = SHAPE_VERSION,
     )
+
+    private companion object {
+        /**
+         * Stands in for whatever `tensai_jni.cpp` reports (TEN-72) — an arbitrary number on
+         * purpose, since nothing on the Kotlin side is allowed to know or assume it.
+         */
+        const val SHAPE_VERSION = 7L
+    }
 }

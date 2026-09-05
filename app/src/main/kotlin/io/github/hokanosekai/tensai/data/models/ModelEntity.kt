@@ -29,6 +29,13 @@ import androidx.room.PrimaryKey
  * @param kvSwaElementsPerToken same, for sliding-window layers capped at [slidingWindow] — see
  *   [io.github.hokanosekai.tensai.engine.GgufInfo.kvSwaElementsPerToken].
  * @param slidingWindow sliding-window size in tokens, `0` unless [kvSwaElementsPerToken] is set.
+ * @param kvShapeVersion which revision of the native derivation produced the three fields above —
+ *   see [io.github.hokanosekai.tensai.engine.GgufInfo.kvShapeVersion]. Stored, never interpreted:
+ *   [KvCacheShapeBackfill] re-reads the header of every row whose value *differs* from what the
+ *   native library currently reports, which is the only way a row written by a superseded formula
+ *   can be told apart from a correct one — the numbers themselves look equally plausible. `0` is
+ *   the pre-TEN-72 "written by an unrecorded formula" default (see
+ *   [TensaiDbMigrations.MIGRATION_7_8]); the library never reports it.
  */
 @Entity(tableName = "models")
 data class ModelEntity(
@@ -48,4 +55,5 @@ data class ModelEntity(
     val kvFullElementsPerToken: Long = 0,
     val kvSwaElementsPerToken: Long = 0,
     val slidingWindow: Long = 0,
+    val kvShapeVersion: Long = 0,
 )

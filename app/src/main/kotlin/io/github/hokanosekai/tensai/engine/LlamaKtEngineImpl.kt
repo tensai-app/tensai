@@ -223,6 +223,22 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         (meta ?: throw ModelLoadException("Not a readable GGUF file: $path")).toGgufInfo()
     }
 
+    /**
+     * Which revision of the native KV-shape derivation this build carries — the same number
+     * [readMetadata] reports in [GgufInfo.kvShapeVersion], but without needing a file. Feeds
+     * [io.github.hokanosekai.tensai.data.models.KvCacheShapeBackfill], which has to know *which*
+     * stored shapes are stale before it opens anything.
+     *
+     * Deliberately not on the [LlamaKtEngine] interface: it is a property of the native library
+     * this class binds, not of "an inference engine", and putting it there would make five test
+     * fakes carry a stub for a constant none of them has an opinion about. [RuntimeGraph] holds
+     * the concrete type anyway.
+     *
+     * Not `suspend` and not routed through `onEngineThread`: it reads a compile-time constant out
+     * of the shared library, touching neither the model handle nor llama.cpp state.
+     */
+    fun kvShapeVersion(): Long = LlamaEngine.kvShapeVersion()
+
     private fun resolveNGpuLayers(hint: BackendHint): Int = when (hint) {
         BackendHint.Cpu -> 0
         BackendHint.Gpu -> FULL_GPU_OFFLOAD
@@ -262,6 +278,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         kvFullElementsPerToken = kvFullElementsPerToken,
         kvSwaElementsPerToken = kvSwaElementsPerToken,
         slidingWindow = slidingWindow,
+        kvShapeVersion = kvShapeVersion,
     )
 
     /**

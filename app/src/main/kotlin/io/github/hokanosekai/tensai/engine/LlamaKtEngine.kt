@@ -31,6 +31,12 @@ package io.github.hokanosekai.tensai.engine
  *   then already counted in [kvFullElementsPerToken].
  * @param slidingWindow window size in tokens, 0 unless
  *   [kvSwaElementsPerToken] is non-zero.
+ * @param kvShapeVersion which revision of the native derivation produced the
+ *   three fields above — see [LlamaKtEngineImpl.kvShapeVersion]. Recorded on
+ *   the row so
+ *   [io.github.hokanosekai.tensai.data.models.KvCacheShapeBackfill] can tell a
+ *   shape derived by an older formula from one derived by the current
+ *   one. 0 only ever comes from a native library too old to report one.
  */
 data class GgufInfo(
     val architecture: String,
@@ -46,6 +52,7 @@ data class GgufInfo(
     val kvFullElementsPerToken: Long = 0,
     val kvSwaElementsPerToken: Long = 0,
     val slidingWindow: Long = 0,
+    val kvShapeVersion: Long = 0,
 )
 
 /**

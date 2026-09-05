@@ -120,6 +120,11 @@ internal class ModelImporter(
                 kvFullElementsPerToken = info.kvFullElementsPerToken,
                 kvSwaElementsPerToken = info.kvSwaElementsPerToken,
                 slidingWindow = info.slidingWindow,
+                // Stamped at import so a model that arrives current is never re-read by
+                // KvCacheShapeBackfill — the row already says which formula produced the three
+                // numbers above it. Omitting this would default to 0 and hand every new import
+                // straight back to the backfill on the next start.
+                kvShapeVersion = info.kvShapeVersion,
             )
             modelDao.insert(entity)
             return entity

@@ -31,6 +31,11 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  * predating it get `0`, which [KvCacheSize] reads as *unknown* and answers with the old
  * over-estimate; [ModelRepository.backfillKvCacheShape] then fills them in on the next start.
  *
+ * Version 8 added [ModelEntity.kvShapeVersion] (TEN-72): *which* derivation produced those
+ * numbers. Without it a shape computed by a superseded formula is indistinguishable from a current
+ * one — same column, same plausible magnitude — and the version-7 backfill, which only looked for
+ * zeroes, could never revisit it. See [KvCacheShapeBackfill].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -38,7 +43,7 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class, SessionEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

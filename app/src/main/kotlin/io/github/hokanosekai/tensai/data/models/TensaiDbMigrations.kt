@@ -111,6 +111,33 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v7 → v8 (TEN-72): adds [ModelEntity.kvShapeVersion], recording *which* revision of the
+     * native derivation produced a row's KV-shape columns.
+     *
+     * Existing rows get `0`, and `0` means **unrecorded**, not "version zero" — the native library
+     * numbers its derivations from 1. That default is not a fallback, it is the honest answer:
+     * TEN-18 shipped one formula and its follow-up fix shipped a second, corrected one, neither
+     * stamped, so a row written between the two carries an under-count that reads exactly like a
+     * correct value. Nothing in the database can tell them apart after the fact, so every
+     * pre-v8 row is declared stale and re-read once by [KvCacheShapeBackfill].
+     *
+     * The alternative — defaulting to the current version and trusting what's there — would leave
+     * precisely the rows this issue exists for frozen on an under-count, and an under-counted
+     * KV cache is the direction that gets a load OOM-killed (see [KvCacheSize]).
+     *
+     * The re-read costs one header parse per model, once, and only rewrites `n_ctx`-relevant
+     * numbers where the old formula actually got them wrong; a row that was already correct comes
+     * back identical, so nothing downstream (notably the session invalidation keyed on `nCtx`)
+     * notices. From then on the row's version matches and [ModelDao.withStaleKvCacheShape] skips
+     * it — unlike [MIGRATION_6_7]'s sentinel, this one is never re-tested by guesswork.
+     */
+    val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `kvShapeVersion` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -119,5 +146,6 @@ object TensaiDbMigrations {
         MIGRATION_4_5,
         MIGRATION_5_6,
         MIGRATION_6_7,
+        MIGRATION_7_8,
     )
 }

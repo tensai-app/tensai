@@ -163,4 +163,66 @@ class TensaiDbMigrationTest {
         assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("slidingWindow")))
         cursor.close()
     }
+
+    /**
+     * A model carrying a KV shape from before TEN-72 keeps every column it had, and lands on
+     * `kvShapeVersion = 0` — *unrecorded*, which is not a version the native library ever reports,
+     * so `KvCacheShapeBackfill` re-derives the row once on the next start.
+     *
+     * The row below is the case the issue exists for: it was imported between TEN-18's first
+     * formula and its correction, so its 57 344 is an under-count that looks like any other
+     * number. The pre-v8 backfill only looked for zeroes and would have left it standing forever;
+     * nothing this migration can see distinguishes it from a correct row either, which is why the
+     * default is 0 for *every* pre-v8 row rather than only the zeroed ones.
+     */
+    @Test
+    fun migrate7To8LeavesExistingKvShapesInPlaceButMarksThemUnrecorded() {
+        helper.createDatabase(testDbName, 7).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, " +
+                    "quantLabel, paramCount, contextLength, embeddingLength, blockCount, supportsThinking, " +
+                    "importedAt, kvFullElementsPerToken, kvSwaElementsPerToken, slidingWindow) VALUES " +
+                    "('m1', 'Qwen3 1.7B', 'qwen3.gguf', " +
+                    "'/data/data/io.github.hokanosekai.tensai/files/models/qwen3.gguf', " +
+                    "1234567, 'qwen3', 'Q4_K_M', 1700000000, 40960, 2048, 28, 0, 1000, 57344, 0, 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 8, true, TensaiDbMigrations.MIGRATION_7_8)
+
+        val cursor = migrated.query("SELECT * FROM models WHERE id = 'm1'")
+        assertTrue("expected the pre-migration model to still be there", cursor.moveToFirst())
+        assertEquals("Qwen3 1.7B", cursor.getString(cursor.getColumnIndexOrThrow("displayName")))
+        assertEquals(1234567L, cursor.getLong(cursor.getColumnIndexOrThrow("sizeBytes")))
+        assertEquals(28L, cursor.getLong(cursor.getColumnIndexOrThrow("blockCount")))
+        // Untouched — the migration adds a column, it does not re-derive anything. The correction
+        // is the backfill's job, on the next start, with the GGUF header in hand.
+        assertEquals(57344L, cursor.getLong(cursor.getColumnIndexOrThrow("kvFullElementsPerToken")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("kvShapeVersion")))
+        cursor.close()
+    }
+
+    /** The full chain still lands a v1 row on v8 intact, not just the single hop above. */
+    @Test
+    fun modelRowSurvivesV1ToV8() {
+        helper.createDatabase(testDbName, 1).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, " +
+                    "quantLabel, paramCount, contextLength, supportsThinking, importedAt) VALUES " +
+                    "('m1', 'Model One', 'm1.gguf', '/data/data/io.github.hokanosekai.tensai/files/models/m1.gguf', " +
+                    "123456, 'llama', 'Q4_K_M', 7000000000, 4096, 1, 1000)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 8, true, *TensaiDbMigrations.ALL)
+
+        val cursor = migrated.query("SELECT * FROM models WHERE id = 'm1'")
+        assertTrue("expected the pre-migration row to still be there", cursor.moveToFirst())
+        assertEquals("Model One", cursor.getString(cursor.getColumnIndexOrThrow("displayName")))
+        assertEquals(4096L, cursor.getLong(cursor.getColumnIndexOrThrow("contextLength")))
+        assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("kvShapeVersion")))
+        cursor.close()
+    }
 }

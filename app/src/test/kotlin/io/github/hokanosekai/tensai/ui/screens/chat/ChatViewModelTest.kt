@@ -82,6 +82,7 @@ class ChatViewModelTest {
             context = ContextWrapper(null),
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
+            kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
             currentLoadedModelName = { (inferenceQueue.state.value as? QueueState.ModelReady)?.info?.name },
             storageRoot = storageRoot,
         )
@@ -760,20 +761,22 @@ class ChatViewModelTest {
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
 
-        override suspend fun withUnknownKvCacheShape(): List<ModelEntity> =
-            models.values.filter { it.kvFullElementsPerToken == 0L }
+        override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
+            models.values.filter { it.kvShapeVersion != kvShapeVersion }
 
         override suspend fun updateKvCacheShape(
             id: String,
             kvFullElementsPerToken: Long,
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
+            kvShapeVersion: Long,
         ) {
             val existing = models[id] ?: return
             models[id] = existing.copy(
                 kvFullElementsPerToken = kvFullElementsPerToken,
                 kvSwaElementsPerToken = kvSwaElementsPerToken,
                 slidingWindow = slidingWindow,
+                kvShapeVersion = kvShapeVersion,
             )
             flow.value = models.values.toList()
         }
