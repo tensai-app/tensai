@@ -7,10 +7,8 @@ import android.provider.OpenableColumns
 import io.github.hokanosekai.tensai.engine.GgufInfo
 import java.io.File
 import java.io.IOException
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -83,6 +81,19 @@ class ModelRepository(
     private val modelsDir: File = File(storageRoot, "models")
         get() = field.apply { mkdirs() }
 
+    // Everything importModel does once the Uri has been resolved to a name/size/stream, and the
+    // only place the import's concurrency, cleanup and cancellation rules live — see
+    // ModelImporter's KDoc for why they are over there and not here. Lazy so that merely
+    // constructing a repository does not create `models/` on disk.
+    private val importer: ModelImporter by lazy {
+        ModelImporter(
+            modelsDir = modelsDir,
+            modelDao = modelDao,
+            models = models,
+            readMetadata = readMetadata,
+        )
+    }
+
     fun storageUsage(): Flow<StorageUsage> = models.map { list ->
         val stat = StatFs(modelsDir.absolutePath)
         StorageUsage(
@@ -96,70 +107,24 @@ class ModelRepository(
      * Copies [uri] into app storage (streaming, so [onProgress] reports real bytes-copied
      * progress for large multi-GB files), reads its GGUF metadata, and persists a [ModelEntity].
      *
-     * On any failure the partial copy is deleted before the exception propagates — see
+     * This end only resolves [uri] — a name, a size if the content provider reports one, and a
+     * stream — and hands those to [ModelImporter], which owns the rest and the guarantees that go
+     * with it: two concurrent imports of the same source name get two files, any abnormal exit
+     * deletes the copy first, and a cancellation stays a cancellation. See
      * [DuplicateModelException], [InsufficientStorageException], [ModelImportException] and
-     * [ModelMetadataException].
+     * [ModelMetadataException] for the ways this refuses.
      */
     suspend fun importModel(uri: Uri, onProgress: (Float) -> Unit): ModelEntity = withContext(Dispatchers.IO) {
-        val sourceName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "model.gguf"
-        val sourceSize = querySize(uri)
-
-        if (sourceSize != null) {
-            val duplicate = models.first().any { it.fileName == sourceName && it.sizeBytes == sourceSize }
-            if (duplicate) {
-                throw DuplicateModelException(sourceName)
-            }
-
-            val freeBytes = StatFs(modelsDir.absolutePath).availableBytes
-            if (freeBytes < sourceSize) {
-                throw InsufficientStorageException(sourceName, neededBytes = sourceSize, freeBytes = freeBytes)
-            }
-        }
-
-        val destFile = uniqueDestFile(sourceName)
-        val copiedBytes = try {
-            copyToFile(uri, destFile, sourceSize, onProgress)
-        } catch (e: IOException) {
-            destFile.delete()
-            throw ModelImportException(sourceName, e)
-        }
-
-        // Covers content providers that don't report a size upfront (checked pre-copy above).
-        if (sourceSize == null) {
-            val duplicate = models.first().any { it.fileName == sourceName && it.sizeBytes == copiedBytes }
-            if (duplicate) {
-                destFile.delete()
-                throw DuplicateModelException(sourceName)
-            }
-        }
-
-        val info = try {
-            readMetadata(destFile.absolutePath)
-        } catch (e: Exception) {
-            destFile.delete()
-            throw ModelMetadataException(sourceName, e)
-        }
-
-        val entity = ModelEntity(
-            id = UUID.randomUUID().toString(),
-            displayName = info.name.takeIf { it.isNotBlank() } ?: sourceName.removeSuffix(".gguf"),
-            fileName = sourceName,
-            filePath = destFile.absolutePath,
-            sizeBytes = copiedBytes,
-            architecture = info.architecture,
-            quantLabel = info.quantLabel,
-            paramCount = info.paramCount,
-            contextLength = info.contextLength,
-            embeddingLength = info.embeddingLength,
-            blockCount = info.blockCount,
-            supportsThinking = info.supportsThinking,
-            importedAt = System.currentTimeMillis(),
-            kvFullElementsPerToken = info.kvFullElementsPerToken,
-            kvSwaElementsPerToken = info.kvSwaElementsPerToken,
-            slidingWindow = info.slidingWindow,
+        importer.import(
+            sourceName = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "model.gguf",
+            sourceSize = querySize(uri),
+            freeBytes = { StatFs(modelsDir.absolutePath).availableBytes },
+            openSource = {
+                context.contentResolver.openInputStream(uri)
+                    ?: throw IOException("Could not open an input stream for $uri")
+            },
+            onProgress = onProgress,
         )
-        modelDao.insert(entity)
-        entity
     }
 
     /**
@@ -205,18 +170,6 @@ class ModelRepository(
         modelDao.delete(entity)
     }
 
-    private fun uniqueDestFile(sourceName: String): File {
-        var candidate = File(modelsDir, sourceName)
-        if (!candidate.exists()) return candidate
-        val base = sourceName.removeSuffix(".gguf")
-        var suffix = 1
-        do {
-            candidate = File(modelsDir, "$base-$suffix.gguf")
-            suffix++
-        } while (candidate.exists())
-        return candidate
-    }
-
     private fun queryDisplayName(uri: Uri): String? = context.contentResolver
         .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { cursor ->
@@ -238,30 +191,4 @@ class ModelRepository(
                 null
             }
         }
-
-    private fun copyToFile(uri: Uri, destFile: File, totalBytes: Long?, onProgress: (Float) -> Unit): Long {
-        val input = context.contentResolver.openInputStream(uri)
-            ?: throw IOException("Could not open an input stream for $uri")
-        var copied = 0L
-        input.use { source ->
-            destFile.outputStream().use { sink ->
-                val buffer = ByteArray(COPY_BUFFER_SIZE)
-                while (true) {
-                    val read = source.read(buffer)
-                    if (read < 0) break
-                    sink.write(buffer, 0, read)
-                    copied += read
-                    if (totalBytes != null && totalBytes > 0) {
-                        onProgress((copied.toFloat() / totalBytes).coerceIn(0f, 1f))
-                    }
-                }
-            }
-        }
-        onProgress(1f)
-        return copied
-    }
-
-    private companion object {
-        const val COPY_BUFFER_SIZE = 256 * 1024
-    }
 }

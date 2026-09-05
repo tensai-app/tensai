@@ -27,10 +27,12 @@ import org.junit.runner.RunWith
  *   /sdcard/Android/data/io.github.hokanosekai.tensai/files/test-model.gguf
  * ```
  *
- * No plain JVM unit test accompanies this: [ModelRepository]'s dedup/import logic is inseparable
- * from `Context` (`ContentResolver` for the source `Uri`, `StatFs` and real file I/O for the
- * copy) and the project has neither Robolectric nor a mocking library to fake those — an
- * instrumented test against the real framework classes is the only isolatable option here.
+ * What is left here is only what genuinely needs the framework: [ModelRepository] itself is
+ * inseparable from `Context` (`ContentResolver` for the source `Uri`, `StatFs` for free space)
+ * and the project has neither Robolectric nor a mocking library to fake those. The import logic
+ * proper — dedup, destination reservation, cleanup, cancellation — moved to [ModelImporter] in
+ * TEN-53 and is covered by `ModelImporterTest` on the JVM, which is where the concurrency and
+ * failure cases belong: they need to be provoked, not waited for.
  */
 @RunWith(AndroidJUnit4::class)
 class ModelRepositoryTest {

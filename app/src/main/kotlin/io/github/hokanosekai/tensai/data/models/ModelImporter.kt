@@ -1,0 +1,209 @@
+package io.github.hokanosekai.tensai.data.models
+
+import io.github.hokanosekai.tensai.engine.GgufInfo
+import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.util.UUID
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+
+/**
+ * The half of [ModelRepository.importModel] that starts once the source `Uri` has been resolved
+ * to a name, a size and a way to open it: reserve a destination, copy, read the header, insert
+ * the row — and undo the file if any of that goes wrong.
+ *
+ * Split out of [ModelRepository] by TEN-53 so it can be tested. The three things this class is
+ * careful about (a concurrent import picking the same destination, a partial copy surviving a
+ * failure, a cancellation arriving as something else) are pure logic that needs neither a device
+ * nor a real GGUF — but [ModelRepository] cannot be built off one, since it holds a `Context` and
+ * its entry point takes a `Uri`, and neither has a JVM-side constructor. Nothing below touches
+ * the Android framework, so `ModelImporterTest` can drive all three to a conclusion on the JVM.
+ *
+ * @param modelsDir directory the copies live in — see [ModelRepository]'s `storageRoot` KDoc for
+ *   why a test must never point this at a real `filesDir`.
+ * @param models the current library, read to reject a re-import of something already there.
+ */
+internal class ModelImporter(
+    private val modelsDir: File,
+    private val modelDao: ModelDao,
+    private val models: Flow<List<ModelEntity>>,
+    private val readMetadata: suspend (path: String) -> GgufInfo,
+) {
+
+    /**
+     * Copies the source into [modelsDir] and persists a [ModelEntity] for it.
+     *
+     * @param sourceName the source file's own name, used for the destination and for dedup.
+     * @param sourceSize the source's size if its content provider reports one, `null` otherwise —
+     *   which is what moves both the dedup check and the free-space check around (see below).
+     * @param freeBytes free space on the volume, read lazily because it is only consulted when
+     *   [sourceSize] is known; there is nothing to compare it against otherwise.
+     * @param openSource opens the source for reading. Called once, closed by this function.
+     *
+     * Every abnormal exit deletes the copy before it propagates, cancellation included, and a
+     * cancellation propagates *as* a cancellation — never repackaged as a copy or metadata
+     * failure, which would leave the coroutine that was cancelled believing it merely failed.
+     */
+    suspend fun import(
+        sourceName: String,
+        sourceSize: Long?,
+        freeBytes: () -> Long,
+        openSource: () -> InputStream,
+        onProgress: (Float) -> Unit,
+    ): ModelEntity {
+        if (sourceSize != null) {
+            if (isDuplicate(sourceName, sourceSize)) {
+                throw DuplicateModelException(sourceName)
+            }
+            val free = freeBytes()
+            if (free < sourceSize) {
+                throw InsufficientStorageException(sourceName, neededBytes = sourceSize, freeBytes = free)
+            }
+        }
+
+        val destFile = try {
+            reserveDestFile(sourceName)
+        } catch (e: IOException) {
+            // Nothing to clean up: createNewFile either created the file or it threw.
+            throw ModelImportException(sourceName, e)
+        }
+
+        // The destination now exists on disk, so from here on *every* way out other than the
+        // successful one has to remove it — hence one catch on Throwable around the lot rather
+        // than a `destFile.delete()` repeated at each throw site, which is how the old code let a
+        // SecurityException (SAF permission revoked mid-copy) strand a multi-GB partial file with
+        // no row pointing at it and no way for the user to find it (TEN-53). The catches inside
+        // classify; this one cleans up, and re-throws whatever it caught untouched.
+        try {
+            val copiedBytes = try {
+                copyInto(destFile, sourceSize, openSource, onProgress)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw ModelImportException(sourceName, e)
+            }
+
+            // Covers content providers that don't report a size upfront (checked pre-copy above).
+            if (sourceSize == null && isDuplicate(sourceName, copiedBytes)) {
+                throw DuplicateModelException(sourceName)
+            }
+
+            val info = try {
+                readMetadata(destFile.absolutePath)
+            } catch (e: CancellationException) {
+                // Before the CancellationException clause existed, leaving the screen mid-import
+                // came back as "this is probably not a GGUF file" — the catch below swallowed the
+                // cancellation and answered with a verdict on the file instead (TEN-53).
+                throw e
+            } catch (e: Exception) {
+                throw ModelMetadataException(sourceName, e)
+            }
+
+            val entity = ModelEntity(
+                id = UUID.randomUUID().toString(),
+                displayName = info.name.takeIf { it.isNotBlank() } ?: sourceName.removeSuffix(".gguf"),
+                fileName = sourceName,
+                filePath = destFile.absolutePath,
+                sizeBytes = copiedBytes,
+                architecture = info.architecture,
+                quantLabel = info.quantLabel,
+                paramCount = info.paramCount,
+                contextLength = info.contextLength,
+                embeddingLength = info.embeddingLength,
+                blockCount = info.blockCount,
+                supportsThinking = info.supportsThinking,
+                importedAt = System.currentTimeMillis(),
+                kvFullElementsPerToken = info.kvFullElementsPerToken,
+                kvSwaElementsPerToken = info.kvSwaElementsPerToken,
+                slidingWindow = info.slidingWindow,
+            )
+            modelDao.insert(entity)
+            return entity
+        } catch (e: Throwable) {
+            destFile.delete()
+            throw e
+        }
+    }
+
+    private suspend fun isDuplicate(fileName: String, sizeBytes: Long): Boolean =
+        models.first().any { it.fileName == fileName && it.sizeBytes == sizeBytes }
+
+    /**
+     * Creates and returns an unused file under [modelsDir] — [sourceName] if it is free, then
+     * `name-1.gguf`, `name-2.gguf`, and so on.
+     *
+     * The file is *created* here, not merely named. [File.createNewFile] tests and creates in one
+     * atomic step (`O_CREAT | O_EXCL`), which is the whole point: the previous version checked
+     * [File.exists] and only opened the stream minutes later, at the start of the copy, so two
+     * imports of the same source name — a double-tapped import button, or one coroutine per file
+     * from a multi-select — could both walk away holding `model.gguf` and then overwrite each
+     * other's bytes (TEN-53).
+     *
+     * A mutex was the other option on the table and it is the weaker one here. To close the
+     * window it would have to be held across the copy, which is minutes on a multi-GB model, and
+     * an import that blocks every other import for that long is a worse bug than the one being
+     * fixed. Releasing it after picking a name instead fixes nothing, because a name that nothing
+     * has created is still free for the next caller to pick the moment the lock is dropped —
+     * reserving means creating either way. And a mutex only binds this process: it would not stop
+     * a second `ModelRepository` instance, or anything else writing into `models/`, from landing
+     * on the same name. `SessionRepository.commitMutex` (TEN-38) is a real precedent for a
+     * different problem: it guards a check against an in-memory epoch counter, which no
+     * filesystem primitive can make atomic, and it deliberately keeps the long engine dump
+     * outside the lock. There is no in-memory state to guard here — only a file.
+     *
+     * What it costs is an empty file left behind if a later step fails, which is exactly what
+     * [import]'s cleanup removes; the reservation is not a special case there, it is the same
+     * `destFile.delete()` that clears a half-written copy.
+     */
+    private fun reserveDestFile(sourceName: String): File {
+        modelsDir.mkdirs()
+        val base = sourceName.removeSuffix(".gguf")
+        var candidate = File(modelsDir, sourceName)
+        var suffix = 0
+        while (!candidate.createNewFile()) {
+            suffix++
+            candidate = File(modelsDir, "$base-$suffix.gguf")
+        }
+        return candidate
+    }
+
+    /** Streams the source into [destFile], reporting real bytes-copied progress. */
+    private suspend fun copyInto(
+        destFile: File,
+        totalBytes: Long?,
+        openSource: () -> InputStream,
+        onProgress: (Float) -> Unit,
+    ): Long {
+        var copied = 0L
+        openSource().use { source ->
+            destFile.outputStream().use { sink ->
+                val buffer = ByteArray(COPY_BUFFER_SIZE)
+                while (true) {
+                    // Copying several GB is minutes of blocking reads with no suspension point of
+                    // its own, so without this check a coroutine cancelled the moment the user
+                    // left the screen would go on copying to the very end before anything noticed
+                    // — and the cancellation would only surface at readMetadata, after the cost
+                    // had already been paid. One volatile read per 256 KB buys prompt cancellation.
+                    coroutineContext.ensureActive()
+                    val read = source.read(buffer)
+                    if (read < 0) break
+                    sink.write(buffer, 0, read)
+                    copied += read
+                    if (totalBytes != null && totalBytes > 0) {
+                        onProgress((copied.toFloat() / totalBytes).coerceIn(0f, 1f))
+                    }
+                }
+            }
+        }
+        onProgress(1f)
+        return copied
+    }
+
+    private companion object {
+        const val COPY_BUFFER_SIZE = 256 * 1024
+    }
+}

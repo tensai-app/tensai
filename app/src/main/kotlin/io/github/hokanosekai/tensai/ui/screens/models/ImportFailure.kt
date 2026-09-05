@@ -4,6 +4,7 @@ import io.github.hokanosekai.tensai.data.models.DuplicateModelException
 import io.github.hokanosekai.tensai.data.models.InsufficientStorageException
 import io.github.hokanosekai.tensai.data.models.ModelImportException
 import io.github.hokanosekai.tensai.data.models.ModelMetadataException
+import kotlinx.coroutines.CancellationException
 
 /**
  * What the user is told when an import doesn't finish (TEN-39) — one case per way
@@ -46,8 +47,21 @@ sealed interface ImportFailure {
     data object Unknown : ImportFailure
 
     companion object {
-        /** Classifies an [importModel][io.github.hokanosekai.tensai.data.models.ModelRepository.importModel] failure. Total: every throwable maps to something. */
+        /**
+         * Classifies an [importModel][io.github.hokanosekai.tensai.data.models.ModelRepository.importModel]
+         * failure. Total over every throwable that *is* a failure — with one exception, in both
+         * senses of the word.
+         *
+         * A [CancellationException] is re-thrown rather than classified (TEN-53). It would
+         * otherwise land on [Unknown] and put "the import failed for an unknown reason" in front
+         * of a user who cancelled the import themselves by leaving the screen — and worse, having
+         * turned the cancellation into a return value, this would have swallowed it, leaving the
+         * calling coroutine to carry on as if it had not been cancelled. Both call sites already
+         * catch and re-throw it before reaching here; this is the backstop for the third one that
+         * forgets, since a classifier taking `Throwable` is exactly the shape that invites it.
+         */
         fun of(throwable: Throwable): ImportFailure = when (throwable) {
+            is CancellationException -> throw throwable
             is DuplicateModelException -> AlreadyImported(throwable.fileName)
             is InsufficientStorageException ->
                 NotEnoughSpace(neededBytes = throwable.neededBytes, freeBytes = throwable.freeBytes)
