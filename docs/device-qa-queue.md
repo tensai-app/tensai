@@ -523,3 +523,30 @@ acceptation ne l'est pas.
 
 **TEN-42 (CI/CD) monte en priorité** tant qu'il n'y a pas de device : un build et
 des tests automatisés à chaque commit sont le seul filet qui reste.
+
+## 15. Audit 2026-09-05 — le volet perf, à chiffrer
+
+L'audit du moteur (`docs/audit-inference-2026-09-05.md`) a confirmé plusieurs
+capacités llama.cpp non câblées. **Aucun gain n'est mesuré** : ce sont des
+estimations par lecture, et elles ne deviendront des tickets qu'une fois
+chiffrées.
+
+**Établir d'abord une baseline**, sinon rien de ce qui suit n'est interprétable :
+Qwen3-1.7B et Gemma-4-E2B, prefill et decode séparés, CPU et Vulkan, sur une
+conversation courte et une longue. Lire `ttftMs` et `tokPerSec` persistés, sur des
+générations **menées à terme** (voir les pièges de mesure en tête de document).
+
+| À mesurer | Hypothèse à valider ou tuer |
+|---|---|
+| `n_ubatch` à 128 vs défaut (`tensai_jni.cpp:658`) | Diviserait grossièrement par quatre le budget de 300 Mo codé en dur, au prix d'un peu de débit prefill. Différence entre « ce modèle ne se charge pas » et « il se charge plus lentement » |
+| Affinité CPU (`tensai_jni.cpp:664`) | Les 2 threads gros cœurs ne sont pinnés sur rien. Le profil big.LITTLE du Dimensity 900 est déjà détecté côté threads, pas côté placement |
+| Flash attention (`LlamaKtEngineImpl.kt:151`) | `AUTO` est subi, jamais choisi. Touche directement la forme du cache V, donc la comptabilité de TEN-18/TEN-72 : à mesurer **avec** un contrôle de non-régression sur `n_ctx` |
+| Taux de réutilisation KV (`LlamaKtEngineImpl.kt:351`) | Le compteur existe côté natif, jamais échantillonné. **Sans lui, impossible de savoir si les sessions servent** — donc à câbler avant de mesurer TEN-78 et TEN-81 |
+| `DeviceProfiler.profile()` en composition (`DeviceProfiler.kt:47`) | Appelé sur le thread principal, une fois par carte et par recomposition. Coût réel inconnu |
+
+**Contrôle de répétition** (`tensai_jni.cpp:790`, non vérifié) : `repeat`,
+`frequency`, `presence`, DRY, XTC et la **seed** ne sont jamais écrits. Ce n'est
+pas de la perf mais de la qualité de sortie — et sans seed, aucune mesure de
+qualité n'est reproductible. À traiter avant toute comparaison A/B de sampling.
+
+---
