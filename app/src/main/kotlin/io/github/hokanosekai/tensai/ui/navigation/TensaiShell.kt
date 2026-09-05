@@ -18,6 +18,8 @@ import androidx.navigation.compose.rememberNavController
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.launch
 
@@ -48,12 +50,13 @@ private fun detailTitleForRoute(route: String?): String = when {
  * Note: Material3's [ModalNavigationDrawer] only exposes [androidx.compose.material3.DrawerDefaults.scrimColor] —
  * there's no public hook to swap its slide animation for [io.github.hokanosekai.tensai.ui.theme.TensaiMotion].
  *
- * @param hasModels whether at least one model has been imported — picks [TensaiDestination.Home]
- * vs [TensaiDestination.Onboarding] as the start destination. See `MainActivity` for how this is
- * resolved from [io.github.hokanosekai.tensai.data.models.ModelRepository] before first composition.
+ * @param onboardingEntry whether this launch starts in the first-run flow, and at which step —
+ * picks [TensaiDestination.Home] vs [TensaiDestination.Onboarding] as the start destination. See
+ * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate] for the rule, and
+ * `MainActivity` for how it is resolved before first composition.
  */
 @Composable
-fun TensaiShell(hasModels: Boolean) {
+fun TensaiShell(onboardingEntry: OnboardingEntry) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -67,7 +70,11 @@ fun TensaiShell(hasModels: Boolean) {
         ?.let { "${it.name} · ${it.nCtxEffective}" }
         ?: "no model"
 
-    val startDestination = if (hasModels) TensaiDestination.Home.route else TensaiDestination.Onboarding.route
+    val startDestination = when (onboardingEntry) {
+        OnboardingEntry.None -> TensaiDestination.Home.route
+        is OnboardingEntry.Show -> TensaiDestination.Onboarding.route
+    }
+    val onboardingStartStep = (onboardingEntry as? OnboardingEntry.Show)?.step ?: OnboardingStep.Welcome
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -113,6 +120,7 @@ fun TensaiShell(hasModels: Boolean) {
             TensaiNavGraph(
                 navController = navController,
                 startDestination = startDestination,
+                onboardingStartStep = onboardingStartStep,
                 modifier = Modifier.padding(innerPadding),
             )
         }

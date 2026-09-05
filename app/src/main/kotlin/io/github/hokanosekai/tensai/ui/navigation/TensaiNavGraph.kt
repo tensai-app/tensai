@@ -10,23 +10,28 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
-import io.github.hokanosekai.tensai.ui.screens.OnboardingPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.ServerScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.SettingsScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 
 /**
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
  * are body content only.
+ *
+ * @param onboardingStartStep step the onboarding opens at when [startDestination] is it — see
+ *   [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate].
  */
 @Composable
 fun TensaiNavGraph(
     navController: NavHostController,
     startDestination: String,
     modifier: Modifier = Modifier,
+    onboardingStartStep: OnboardingStep = OnboardingStep.Welcome,
 ) {
     NavHost(
         navController = navController,
@@ -34,10 +39,21 @@ fun TensaiNavGraph(
         modifier = modifier,
     ) {
         composable(TensaiDestination.Onboarding.route) {
-            OnboardingPlaceholder(
-                onContinue = {
+            OnboardingScreen(
+                startStep = onboardingStartStep,
+                // A model came out of the flow: straight into its load, which continues into a
+                // new chat on success (see the Loading destination below) — that's the ticket's
+                // "blank device to first chat without leaving the flow". Skipping stops at Home.
+                // Home is pushed in both cases rather than loading landing on an empty stack:
+                // `LoadingScreen`'s own back/"see smaller models" actions pop, and popping the
+                // only entry would drop the user out of the app. The onboarding itself is always
+                // popped — it is re-entered by relaunching with no model, never by going back.
+                onDone = { modelId ->
                     navController.navigate(TensaiDestination.Home.route) {
                         popUpTo(TensaiDestination.Onboarding.route) { inclusive = true }
+                    }
+                    if (modelId != null) {
+                        navController.navigate(TensaiDestination.Loading.route(modelId))
                     }
                 },
             )

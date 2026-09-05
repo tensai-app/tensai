@@ -2,6 +2,10 @@ package io.github.hokanosekai.tensai.runtime
 
 import android.content.Context
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
+import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.OnboardingRepository
+import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
@@ -91,6 +95,20 @@ object RuntimeGraph {
 
     /** See [DeviceProfiler]'s KDoc for what's cached vs. re-read on each [DeviceProfiler.profile] call. */
     val deviceProfiler: DeviceProfiler by lazy { DeviceProfiler(appContext) }
+
+    /**
+     * User preferences, each backed by its own DataStore file (see [ThemeRepository]).
+     * They live here rather than being constructed per-screen so every reader — `MainActivity`'s
+     * theme, [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel]'s backend, the
+     * onboarding's writes of both — goes through one instance.
+     */
+    val themeRepository: ThemeRepository by lazy { ThemeRepository(appContext) }
+
+    /** Backend the user picked in onboarding/settings — see [BackendPreference.resolve]. */
+    val backendRepository: BackendRepository by lazy { BackendRepository(appContext) }
+
+    /** First-run bookkeeping — see [OnboardingRepository] and `OnboardingGate`. */
+    val onboardingRepository: OnboardingRepository by lazy { OnboardingRepository(appContext) }
 
     private val database: TensaiDb by lazy { TensaiDb.build(appContext) }
 

@@ -43,8 +43,11 @@ import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import kotlinx.coroutines.launch
 
-/** MIME types to offer in the document picker — GGUF has no registered MIME type of its own. */
-private val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
+/**
+ * MIME types to offer in the document picker — GGUF has no registered MIME type of its own.
+ * Shared with the onboarding's own import step (TEN-36) so both pickers offer the same thing.
+ */
+internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
 
 /**
  * Models library — lists imported [io.github.hokanosekai.tensai.data.models.ModelEntity]s and

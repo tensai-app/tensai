@@ -9,10 +9,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
-import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.navigation.TensaiShell
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
+import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate
 import io.github.hokanosekai.tensai.ui.theme.TensaiTheme
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.first
@@ -20,10 +21,10 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val themeRepository by lazy { ThemeRepository(applicationContext) }
+    private val themeRepository by lazy { RuntimeGraph.themeRepository }
 
     /** Null until the first-run check below resolves — the splash screen stays up until then. */
-    private val hasModelsState = mutableStateOf<Boolean?>(null)
+    private val onboardingEntryState = mutableStateOf<OnboardingEntry?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
@@ -31,16 +32,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         lifecycleScope.launch {
-            hasModelsState.value = RuntimeGraph.modelRepository.models.first().isNotEmpty()
+            onboardingEntryState.value = OnboardingGate.entry(
+                models = RuntimeGraph.modelRepository.models.first(),
+                skipped = RuntimeGraph.onboardingRepository.skipped.first(),
+            )
         }
-        splashScreen.setKeepOnScreenCondition { hasModelsState.value == null }
+        splashScreen.setKeepOnScreenCondition { onboardingEntryState.value == null }
 
         setContent {
             val themeMode by themeRepository.themeMode.collectAsState(initial = ThemeMode.System)
-            val hasModels = hasModelsState.value
+            val onboardingEntry = onboardingEntryState.value
             TensaiTheme(themeMode = themeMode) {
-                if (hasModels != null) {
-                    TensaiShell(hasModels = hasModels)
+                if (onboardingEntry != null) {
+                    TensaiShell(onboardingEntry = onboardingEntry)
                 }
             }
         }

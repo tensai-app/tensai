@@ -2,8 +2,9 @@ package io.github.hokanosekai.tensai.ui.screens.loading
 
 import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
-import io.github.hokanosekai.tensai.compat.DeviceProfiler
+import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.engine.BackendHint
@@ -79,7 +80,10 @@ sealed class LoadUiState {
 class LoadModelViewModel(
     private val modelId: String,
     private val modelRepository: ModelRepository = RuntimeGraph.modelRepository,
-    private val deviceProfiler: DeviceProfiler = RuntimeGraph.deviceProfiler,
+    private val deviceProfile: () -> DeviceProfile = { RuntimeGraph.deviceProfiler.profile() },
+    private val backendPreference: suspend () -> BackendPreference = {
+        RuntimeGraph.backendRepository.preference.first()
+    },
     private val queue: InferenceQueue = RuntimeGraph.inferenceQueue,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
 ) {
@@ -113,7 +117,7 @@ class LoadModelViewModel(
                 return@launch
             }
 
-            val profile = deviceProfiler.profile()
+            val profile = deviceProfile()
             val compatibility = CompatibilityChecker.check(model, profile)
             if (compatibility.verdict == Verdict.WontFit && !confirmedOverride) {
                 _state.value = LoadUiState.Blocked(model, compatibility)
@@ -124,7 +128,11 @@ class LoadModelViewModel(
             val config = ModelLoadConfig(
                 path = model.filePath,
                 nCtx = plan.nCtx,
-                backend = backendOverride ?: compatibility.recommendedBackend,
+                // The user's persisted choice wins over the checker's recommendation, and a
+                // manual retry from a failure dialog wins over both — a "Retry on CPU" that
+                // silently loaded on GPU again because a preference said so would be a dead
+                // button. BackendPreference.Auto is exactly "no opinion, use the recommendation".
+                backend = backendOverride ?: backendPreference().resolve(compatibility.recommendedBackend),
                 kvCacheType = plan.kvCacheType,
             )
             _state.value = LoadUiState.InProgress(model, 0f)
