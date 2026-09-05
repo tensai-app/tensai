@@ -14,7 +14,7 @@ Dernière mise à jour : 2026-09-05.
 
 - **Jamais** `./gradlew connectedDebugAndroidTest` ni `connectedCheck`. AGP
   désinstalle l'app en nettoyage et efface les modèles, plusieurs Go.
-  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §7).
+  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §8).
 - **Jamais** `adb reboot`, `adb shell reboot`, `adb shell su`, `adb uninstall`,
   `pm clear`. Un builder a déjà redémarré le téléphone de l'utilisateur.
 - Installer avec `adb install -r`, qui préserve la base et les modèles.
@@ -213,7 +213,36 @@ main avec du JSON limite : elle doit s'ouvrir, jamais crasher.
 
 ---
 
-## 6. TEN-68 — les 350 s après une longue génération
+## 6. TEN-36 — les écrans d'onboarding
+
+La logique est couverte sans device : le portail (six états, fonction pure), la
+persistance du skip et des choix, et le fait que le backend choisi atteigne
+réellement le `ModelLoadConfig`. Ne pas refaire ça sur device, c'est démontré.
+
+**Ce qui reste est le parcours complet, sur un install vraiment vierge.** C'est
+l'acceptation littérale du ticket : device sans aucun modèle, onboarding, import
+d'un GGUF via SAF, chargement, premier chat, sans jamais sortir du flow.
+
+À regarder en chemin :
+- le feu tricolore s'affiche bien sur le fichier importé, et dit la vérité
+- le sélecteur de backend et celui de thème appliquent leur choix **immédiatement**,
+  pas au redémarrage suivant
+- le bouton skip mène quelque part d'utilisable, et non à un accueil mort
+
+**Le cas qui mérite d'être provoqué**, parce qu'il n'arrive jamais par hasard :
+importer un modèle, puis supprimer son fichier depuis les réglages système
+d'Android (effacer les données de l'app garde la base mais pas forcément les
+fichiers). Au lancement suivant, l'onboarding doit revenir comme sur un install
+neuf, et non ouvrir un accueil qui ne peut rien charger. La logique est testée,
+le comportement réel de ce nettoyage sur ce téléphone ne l'est pas.
+
+**Non couvert non plus** : que le splash tienne bien jusqu'à la décision du
+portail sans flash visible. Le code le garantit (`setKeepOnScreenCondition` sur
+un état null), mais une frame parasite ne se voit qu'à l'oeil.
+
+---
+
+## 7. TEN-68 — les 350 s après une longue génération
 
 Observé **une fois**, jamais reproduit sur la tentative suivante à volume
 identique. Restore de 2879 tokens rendu en 780 ms, puis 350 758 ms de TTFT.
@@ -228,7 +257,7 @@ s'effondre et où.
 
 ---
 
-## 7. Tests instrumentés
+## 8. Tests instrumentés
 
 **Toujours sous wrapper hôte**, et traiter le code de sortie **124 comme un échec** :
 
@@ -251,7 +280,7 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 8. TEN-43 — QA device pass V1
+## 9. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
