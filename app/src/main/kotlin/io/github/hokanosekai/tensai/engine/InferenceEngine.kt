@@ -130,28 +130,38 @@ data class SamplingConfig(
 )
 
 /**
- * Splits a decode's token budget into a reasoning cap and a response cap (TEN-61), so that a
+ * Caps how much of a decode's token budget the model's reasoning may spend (TEN-61), so that a
  * thinking model spending [SamplingConfig.maxTokens] entirely on its `<think>` block — TEN-60's
  * problem — can no longer starve the actual answer.
  *
- * The engine treats [endMarker] as an opaque string, not a parsed tag: it has no notion that
- * `<think>` exists (that's [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser]'s job, on
- * the app side) — only that seeing [endMarker] in the stream means "reasoning is over, count
- * against [responseMaxTokens] from here on". Carrying the marker as data rather than baking the
- * format into the engine is what lets a model whose chat template marks reasoning differently
- * (e.g. Gemma's `<|channel|>`, TEN-47) reuse this same mechanism with no engine change.
+ * The two figures are a **cap on reasoning** and a **floor under the answer**, not two separate
+ * allowances: reasoning stops at [reasoningMaxTokens], and the answer may then run to the whole
+ * `reasoningMaxTokens + responseMaxTokens`, keeping whatever reasoning left unspent. So
+ * [responseMaxTokens] is what the answer is *guaranteed* even against the most verbose reasoning,
+ * and a model that reasons briefly or not at all answers into the full budget (TEN-69 — before it
+ * the answer was also *held to* [responseMaxTokens], so an empty `<think>` block cost 1021
+ * generated tokens that nothing ever used).
  *
- * Known limitation, left as-is rather than worked around: if the model never emits [endMarker],
- * generation is cut when [reasoningMaxTokens] runs out and [StopReason.ReasoningBudgetExhausted]
- * is reported — there is no way to *force* an answer out of a model stuck reasoning. Doing that for
+ * Where the reasoning ends is decided by the engine's own parse of the reply when it offers one
+ * ([DecodeEvent.Parsed], TEN-47) — that parse comes from the model's own chat template, so it holds
+ * for `<think>`, for harmony's `<|channel|>`, and for a model that emits no reasoning at all.
+ * [endMarker] is the fallback for when no parse arrives, and the engine treats it as an opaque
+ * string, not a parsed tag: it has no notion that `<think>` exists (that's
+ * [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser]'s job, on the app side) — only that
+ * seeing it in the stream means "reasoning is over".
+ *
+ * Known limitation, left as-is rather than worked around: a model that really does reason past
+ * [reasoningMaxTokens] has its generation cut there and [StopReason.ReasoningBudgetExhausted] is
+ * reported — there is no way to *force* an answer out of a model stuck reasoning. Doing that for
  * real would mean re-injecting a synthetic [endMarker] and re-running the completion from there
  * (a full re-prefill of the reasoning so far), which is out of scope here.
  *
- * @param reasoningMaxTokens cap on tokens sampled before [endMarker] is seen in the stream.
- * @param responseMaxTokens cap on tokens sampled from [endMarker] onward.
- * @param endMarker string that ends the reasoning phase. Matched across token boundaries — a model
- *   rarely emits it as a single token — by whoever tracks it (see
- *   `io.github.hokanosekai.tensai.engine.ReasoningBudgetTracker`).
+ * @param reasoningMaxTokens cap on tokens sampled while the model is still reasoning.
+ * @param responseMaxTokens tokens the answer is guaranteed. It may use more — up to the sum of the
+ *   two caps — when reasoning came in under [reasoningMaxTokens].
+ * @param endMarker string that ends the reasoning phase when the engine offers no parse of its own.
+ *   Matched across token boundaries — a model rarely emits it as a single token — by whoever tracks
+ *   it (see `io.github.hokanosekai.tensai.engine.ReasoningBudgetTracker`).
  */
 data class ReasoningBudget(
     val reasoningMaxTokens: Int,
@@ -186,7 +196,13 @@ enum class StopReason {
      */
     ReasoningBudgetExhausted,
 
-    /** [ReasoningBudget.responseMaxTokens] was reached after reasoning ended (TEN-61). The answer is cut off mid-thought, same as [TokenBudget] but counted from the reasoning/response split. */
+    /**
+     * The decode spent everything [ReasoningBudget] allows — `reasoningMaxTokens +
+     * responseMaxTokens` — while writing its answer (TEN-61, TEN-69). The answer is cut off
+     * mid-thought, same as [TokenBudget]. Not "the answer reached
+     * [ReasoningBudget.responseMaxTokens]": the answer also gets whatever reasoning left unspent,
+     * so how many tokens of answer this stands for depends on how long the model reasoned.
+     */
     ResponseBudgetExhausted,
 
     /**

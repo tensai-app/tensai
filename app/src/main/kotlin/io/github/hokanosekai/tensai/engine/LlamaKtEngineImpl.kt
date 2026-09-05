@@ -258,10 +258,18 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                         // a decode can legitimately produce none of these, hence
                         // `DecodeEvent.Parsed`'s "consumers must cope with this never arriving".
                         //
-                        // Deliberately kept out of the TokenCallback above: ReasoningBudgetTracker
-                        // counts one callback per sampled token and matches its end marker on raw
-                        // text (TEN-61), and the raw stream is exactly what it must keep seeing.
+                        // TEN-69 also feeds it to the budget tracker, which is the only source that
+                        // can tell reasoning from answer for a template that doesn't use `<think>`,
+                        // or for a model that skipped reasoning altogether. It stays a *separate*
+                        // callback from the TokenCallback above rather than being folded into it:
+                        // the tracker's counting must remain one call per sampled token on the raw
+                        // stream (TEN-61), and this one fires at most once per token and not at all
+                        // for a token that left the parse unchanged. Phase in, counting out.
+                        //
+                        // Runs on `dispatcher` inside the same blocking completion as the token
+                        // callback, so the tracker is still only ever touched from one thread.
                         val chatParseCallback = ChatParseCallback { content, reasoningContent ->
+                            budgetTracker?.onParsed(content, reasoningContent)
                             trySend(DecodeEvent.Parsed(content, reasoningContent.ifEmpty { null }))
                         }
                         llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
