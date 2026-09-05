@@ -56,13 +56,23 @@ fun LoadingScreen(
     val requestNotificationPermission = rememberNotificationPermissionRequester()
 
     LaunchedEffect(modelId) {
-        // Per the ticket: right before the loadModel() call rather than at app startup — not
-        // blocking, a refusal just means no persistent notification later. Not once per session
-        // though, despite what TEN-27 asked for: this effect re-fires on every entry to this
-        // screen and the permission helper only suppresses re-asking for those who accepted. See
-        // [rememberNotificationPermissionRequester]'s KDoc and TEN-75.
-        requestNotificationPermission()
+        // Per the ticket: at the moment the user triggers a load rather than at app startup, where
+        // a prompt is much more likely to get a hard "deny, don't ask again". Since TEN-75 it is
+        // at most one dialog per install — this effect re-fires on every entry to this screen and
+        // the screen is re-entrable (its own back action is "continue in the background"), so the
+        // latch has to be persisted rather than remembered; see [NotificationPermissionGate].
+        //
+        // The load starts *first*, and the order is load-bearing. Asking now suspends on a
+        // DataStore read, and this effect is cancelled the moment the user leaves the screen — so
+        // asking first would mean a back press during that read leaves the load never started.
+        // Starting first costs nothing: start() is not a suspend function and runs the attempt on
+        // RuntimeGraph.applicationScope (see [LoadModelViewModel]), so nothing here can cancel it.
+        //
+        // The consequence is a window where the service posts notifications while the permission
+        // is still pending, which is deliberate — see [InferenceService] for what is lost in it
+        // and why waiting for the answer would be worse.
         viewModel.start()
+        requestNotificationPermission()
     }
 
     LaunchedEffect(uiState) {

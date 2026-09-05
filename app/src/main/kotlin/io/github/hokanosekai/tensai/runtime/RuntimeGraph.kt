@@ -5,6 +5,7 @@ import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
 import io.github.hokanosekai.tensai.data.LanguageRepository
+import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
@@ -132,6 +133,15 @@ object RuntimeGraph {
 
     /** First-run bookkeeping — see [OnboardingRepository] and `OnboardingGate`. */
     val onboardingRepository: OnboardingRepository by lazy { OnboardingRepository(appContext) }
+
+    /**
+     * Whether the `POST_NOTIFICATIONS` dialog has already been spent (TEN-75) — see
+     * [NotificationPermissionRepository] for why that has to outlive the process, and
+     * [NotificationPermissionGate] for the rule it feeds.
+     */
+    val notificationPermissionRepository: NotificationPermissionRepository by lazy {
+        NotificationPermissionRepository(appContext)
+    }
 
     private val database: TensaiDb by lazy { TensaiDb.build(appContext) }
 

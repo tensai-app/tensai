@@ -103,6 +103,27 @@ class InferenceService : Service() {
      * this call is a documented no-op: no `SecurityException`, the
      * notification is simply not shown while the foreground service keeps
      * running regardless. Safe to call unconditionally.
+     *
+     * **The commonest form of "not granted" is "not answered yet."**
+     * `LoadingScreen` starts the load and then puts the dialog up without
+     * waiting for the answer (see that screen for why waiting would risk
+     * never starting the load at all), so on the one install where the
+     * dialog is ever shown, this service starts and posts into the pending
+     * window. Every post inside it is silently dropped, including for a
+     * user who is about to grant.
+     *
+     * That is bounded rather than permanent: the observer in [onCreate]
+     * re-posts on every [QueueState] emission and [QueueState.Loading]
+     * emits on each progress step, so the notification appears on the first
+     * step after the grant — a second or two of a load that takes tens.
+     * The one case it does not repair is a load that reaches
+     * [QueueState.ModelReady] *inside* that window: that state emits once,
+     * so its "Ready · tap to open" notification and its Unload action stay
+     * missing until the next state change. Reaching ModelReady before the
+     * user can dismiss a dialog means a load of a couple of seconds, which
+     * is the case where the notification was worth least; the fix, if it
+     * ever bites, is an explicit re-post triggered from the permission
+     * result rather than making the load wait.
      */
     @SuppressLint("MissingPermission")
     private fun postNotification(notification: Notification) {
