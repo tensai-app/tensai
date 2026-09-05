@@ -404,10 +404,141 @@ class SessionRepositoryTest {
         val paths = dao.rows.values.map { it.filePath }
         paths.forEach { File(it).parentFile?.mkdirs(); File(it).writeText("state") }
 
-        repository.purgeAll()
+        val report = repository.purgeAll()
 
         assertTrue(dao.rows.isEmpty())
         paths.forEach { assertFalse(File(it).exists()) }
+        assertEquals(2, report.sessionCount)
+        assertEquals("state".length.toLong() * 2, report.freedBytes)
+    }
+
+    @Test
+    fun purgeAllOnAnEmptyTableIsAHarmlessNoOp() = runBlocking {
+        val report = repository.purgeAll()
+
+        assertEquals(PurgeReport(sessionCount = 0, orphanFileCount = 0, freedBytes = 0), report)
+    }
+
+    @Test
+    fun purgeAllBillsARowWhoseFileIsAlreadyGoneAtNothing() = runBlocking {
+        dao.upsert(sessionRow("c1", lastAccessedAt = 1)) // row only, no file on disk
+
+        val report = repository.purgeAll()
+
+        assertTrue(dao.rows.isEmpty())
+        assertEquals(1, report.sessionCount)
+        assertEquals("freedBytes is what came off the disk, not what the table claimed", 0L, report.freedBytes)
+    }
+
+    @Test
+    fun purgeAllSweepsStateFilesNoRowPointsAt() = runBlocking {
+        // What a save killed between its rename and its DB write leaves behind (process death, a
+        // kill during onStop's best-effort save). Nothing else in the app cleans these up: every
+        // other eviction path walks rows, and there is no row.
+        val sessionsDir = File(storageRoot, "sessions").apply { mkdirs() }
+        val orphan = File(sessionsDir, "ghost.llamastate").apply { writeText("1234") }
+        val orphanTemp = File(sessionsDir, "ghost2.llamastate.tmp").apply { writeText("12") }
+
+        val report = repository.purgeAll()
+
+        assertFalse(orphan.exists())
+        assertFalse(orphanTemp.exists())
+        assertEquals(0, report.sessionCount)
+        assertEquals(2, report.orphanFileCount)
+        assertEquals(6L, report.freedBytes)
+    }
+
+    @Test
+    fun purgeAllLeavesTheDirectoryAndAnythingItDoesNotOwnAlone() = runBlocking {
+        val sessionsDir = File(storageRoot, "sessions").apply { mkdirs() }
+        val notOurs = File(sessionsDir, "README.txt").apply { writeText("hands off") }
+
+        repository.purgeAll()
+
+        assertTrue("the sessions directory itself must survive", sessionsDir.isDirectory)
+        assertTrue("purge matches this class's own file names, it is not a deleteRecursively", notOurs.exists())
+    }
+
+    // ---- purgeAll racing a save (TEN-38) ----
+
+    @Test
+    fun aSaveThatWasAlreadyRunningWhenTheUserClearedIsDiscardedRatherThanCommitted() = runBlocking {
+        // The exact interleaving Settings > Clear can hit: the app is backgrounding (or swapping
+        // models), a multi-hundred-MB state dump is in flight, and the user taps Clear. The dump
+        // is allowed to finish — it is not cancellable — but its row and file must not appear
+        // afterwards, or the storage the user just reclaimed silently comes back.
+        val result = repository.save("c1", key) { path ->
+            File(path).writeText("kv-state")
+            repository.purgeAll()
+            128
+        }
+
+        assertEquals(SaveResult.Discarded, result)
+        assertNull("no row may be written after the purge", dao.getByConversation("c1"))
+        assertEquals(
+            "and no file either — an orphan here is a few hundred MB no eviction path would " +
+                "ever find again",
+            emptyList<String>(),
+            File(storageRoot, "sessions").listFiles().orEmpty().map { it.name },
+        )
+    }
+
+    @Test
+    fun aSaveThatFinishesBeforeTheClearIsPurgedNormally() = runBlocking {
+        // The other order, for contrast: nothing exotic, the save commits and the purge takes it.
+        val saved = repository.save("c1", key) { path -> File(path).writeText("kv-state"); 128 }
+        assertTrue(saved is SaveResult.Saved)
+
+        val report = repository.purgeAll()
+
+        assertEquals(1, report.sessionCount)
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun aClearDuringAnUnchangedSaveStillLeavesNothingBehind() = runBlocking {
+        // The fast path that returns without ever calling the engine: it reads the existing row
+        // under the same lock the purge commits in, so it can't report "already saved" about a row
+        // that is being deleted.
+        val repo = SessionRepository(
+            dao = dao,
+            storageRoot = storageRoot,
+            restoreOnEngine = { true },
+            currentTokenCount = { 128 },
+        )
+        repo.save("c1", key) { path -> File(path).writeText("kv-state"); 128 }
+        repo.purgeAll()
+
+        val result = repo.save("c1", key) { path -> File(path).writeText("kv-state"); 128 }
+
+        assertTrue(
+            "with the row gone, the same call has to write a real session rather than claim one " +
+                "is already there",
+            result is SaveResult.Saved,
+        )
+    }
+
+    @Test
+    fun aRestoreInFlightWhenTheUserClearsDoesNotPutItsRowBack() = runBlocking {
+        lateinit var repo: SessionRepository
+        repo = SessionRepository(
+            dao = dao,
+            storageRoot = storageRoot,
+            // The engine is mid-read when the purge lands. The restore itself succeeds — POSIX
+            // keeps the open file alive — and the conversation resumes, which is correct: Clear
+            // deletes files, it does not reach into RAM.
+            restoreOnEngine = { repo.purgeAll(); true },
+        )
+        repo.save("c1", key) { path -> File(path).writeText("kv-state"); 128 }
+
+        val result = repo.restore("c1", key)
+
+        assertEquals(RestoreResult.Restored(128), result)
+        assertTrue(
+            "but its bookkeeping write must not resurrect a row pointing at a file the user just " +
+                "deleted",
+            dao.rows.isEmpty(),
+        )
     }
 
     /** In-memory [SessionDao] fake — no Room/Android needed, same convention as `InferenceQueueTest`'s fakes. */

@@ -2,7 +2,10 @@ package io.github.hokanosekai.tensai.data.session
 
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Result of [SessionRepository.save]. */
 sealed class SaveResult {
@@ -23,9 +26,36 @@ sealed class SaveResult {
      */
     data object NothingToSave : SaveResult()
 
+    /**
+     * Nothing was persisted because [SessionRepository.purgeAll] ran while this save was in
+     * flight (TEN-38's Settings > Storage > Clear) — the state dump completed, and was then thrown
+     * away rather than committed, because the user asked for an empty sessions directory *after*
+     * this save started.
+     *
+     * Distinct from [Failed] on purpose even though both mean "nothing on disk": nothing went
+     * wrong here, and no previous session survives either (the purge took it). Callers deciding
+     * whether live state is safe to overwrite must treat it like [Failed] — the state was not
+     * written — but callers reporting an error to the user must not.
+     */
+    data object Discarded : SaveResult()
+
     /** Nothing was persisted — any previous session for this conversation is untouched. */
     data class Failed(val cause: Throwable) : SaveResult()
 }
+
+/**
+ * What a [SessionRepository.purgeAll] removed — Settings > Storage reports it back to the user.
+ *
+ * @param sessionCount rows deleted from the `sessions` table.
+ * @param orphanFileCount state files deleted that no row pointed at — a save interrupted between
+ *   its rename and its DB write (process death, a kill during `onStop`'s best-effort save) leaves
+ *   exactly this, and nothing else in the app ever cleans it up, since every other eviction path
+ *   works from rows.
+ * @param freedBytes total bytes of every file actually deleted, rows and orphans together. A row
+ *   whose file was already gone contributes 0 — this is what came off the disk, not what the
+ *   table claimed.
+ */
+data class PurgeReport(val sessionCount: Int, val orphanFileCount: Int, val freedBytes: Long)
 
 /** Result of [SessionRepository.restore]. */
 sealed class RestoreResult {
@@ -91,7 +121,48 @@ class SessionRepository(
 
     private val sessionsDir: File = File(storageRoot, "sessions")
 
-    /** Every persisted session, most recently accessed first — for a future Settings > Storage list. */
+    /**
+     * Serializes the *commit* half of everything that mutates a row or a file — [save]'s
+     * rename-and-upsert, [restore]'s bookkeeping write, [delete], [purgeAll],
+     * [pruneToStoragePolicy]. Nothing inside this lock ever calls back into
+     * [io.github.hokanosekai.tensai.runtime.InferenceQueue], which is what makes it a **leaf**
+     * lock and therefore deadlock-free: the two long, engine-touching calls this class makes
+     * ([save]'s `saveOnEngine` and [restoreOnEngine]) both run outside it, so a save arriving
+     * from `onBeforeModelSwap` (already holding the queue's mutex, then taking this one) can
+     * never sit opposite a save arriving from `ChatViewModel` (holding this one, then wanting the
+     * queue's).
+     *
+     * The engine work staying outside is also the point: a purge must not have to wait behind a
+     * multi-hundred-MB state dump, and a generation's save must not be blocked by a purge.
+     *
+     * ### The one thing this lock does *not* protect, and what does
+     *
+     * Two [save] calls for the **same** conversation overlapping would dump into the same temp
+     * path and then rename it twice: interleaved writes, the first rename winning, the second
+     * reporting "the engine succeeded but wrote no file". Nothing here prevents that — the dumps
+     * happen outside this lock by design.
+     *
+     * What prevents it is [io.github.hokanosekai.tensai.runtime.InferenceQueue]'s own mutex, one
+     * layer up: `onBeforeModelSwap` holds it while calling the engine directly, and every other
+     * caller reaches the engine through `inferenceQueue::saveSession`, which takes it. So the dumps
+     * are already serialized before they get here.
+     *
+     * That is an invariant spanning two classes, and this one is deliberately decoupled from the
+     * other (see this class's KDoc), so it is worth stating rather than assuming: **a future caller
+     * that dumps state without going through the queue would corrupt the temp file, and no test
+     * here would catch it.**
+     */
+    private val commitMutex = Mutex()
+
+    /**
+     * Bumped by every [purgeAll]. [save] reads it before it starts and re-reads it under
+     * [commitMutex] before committing: a different value means a purge landed in between, and the
+     * save resolves to [SaveResult.Discarded] instead of writing a row the user just asked to be
+     * rid of. Read outside the lock too, so it is atomic rather than mutex-guarded state.
+     */
+    private val purgeEpoch = AtomicLong(0)
+
+    /** Every persisted session, most recently accessed first — feeds Settings > Storage (TEN-38). */
     fun observeSessions(): Flow<List<SessionEntity>> = dao.observeAll()
 
     /**
@@ -116,6 +187,9 @@ class SessionRepository(
      *   resuming from; any previous session for this conversation is left as-is rather than
      *   replaced with a useless empty one.
      *
+     * A third, unrelated way (TEN-38): **Discarded**, if [purgeAll] runs between this call
+     * starting and it committing — see [SaveResult.Discarded] and [commitMutex].
+     *
      * Write-then-rename otherwise: [saveOnEngine] is asked to write to a temp path first, and the DB
      * row is only written (and the temp file only renamed into place) once that call has actually
      * succeeded — a failure at any point (the engine call itself, or the rename) leaves any
@@ -127,7 +201,13 @@ class SessionRepository(
         key: SessionModelKey,
         saveOnEngine: suspend (path: String) -> Int,
     ): SaveResult {
-        val existingBeforeSave = dao.getByConversation(conversationId)
+        // Read under the lock, together, so a purge can't slip between them: an
+        // `existingBeforeSave` row that a purge is about to delete would otherwise let the
+        // Unchanged branch below claim this conversation is already on disk when it is about to
+        // stop being.
+        val (epochAtStart, existingBeforeSave) = commitMutex.withLock {
+            purgeEpoch.get() to dao.getByConversation(conversationId)
+        }
         if (existingBeforeSave != null &&
             existingBeforeSave.modelId == key.modelId &&
             existingBeforeSave.nCtx == key.nCtx &&
@@ -157,33 +237,47 @@ class SessionRepository(
             tempFile.delete()
             return SaveResult.NothingToSave
         }
-        if (!tempFile.exists()) {
-            return SaveResult.Failed(IllegalStateException("Session save reported success but wrote no file"))
-        }
 
-        if (!moveIntoPlace(tempFile, finalFile)) {
-            tempFile.delete()
-            return SaveResult.Failed(IOException("Could not move saved session into place at $finalFile"))
-        }
+        return commitMutex.withLock {
+            // Checked before the file checks below, not after: a purge deletes the temp file out
+            // from under an in-flight dump (see [purgeAll]), so "the engine wrote nothing" and
+            // "the user cleared storage mid-save" would otherwise be reported as the same
+            // failure, and only one of them is one.
+            if (purgeEpoch.get() != epochAtStart) {
+                tempFile.delete()
+                return@withLock SaveResult.Discarded
+            }
+            if (!tempFile.exists()) {
+                return@withLock SaveResult.Failed(
+                    IllegalStateException("Session save reported success but wrote no file"),
+                )
+            }
+            if (!moveIntoPlace(tempFile, finalFile)) {
+                tempFile.delete()
+                return@withLock SaveResult.Failed(
+                    IOException("Could not move saved session into place at $finalFile"),
+                )
+            }
 
-        val now = System.currentTimeMillis()
-        val sizeBytes = finalFile.length()
-        dao.upsert(
-            SessionEntity(
-                conversationId = conversationId,
-                modelId = key.modelId,
-                filePath = finalFile.absolutePath,
-                nCtx = key.nCtx,
-                kvCacheType = key.kvCacheType.name,
-                backend = key.backend,
-                tokenCount = tokenCount,
-                sizeBytes = sizeBytes,
-                createdAt = existingBeforeSave?.createdAt ?: now,
-                lastAccessedAt = now,
-            ),
-        )
-        enforceStoragePolicy(justWritten = conversationId)
-        return SaveResult.Saved(tokenCount, sizeBytes)
+            val now = System.currentTimeMillis()
+            val sizeBytes = finalFile.length()
+            dao.upsert(
+                SessionEntity(
+                    conversationId = conversationId,
+                    modelId = key.modelId,
+                    filePath = finalFile.absolutePath,
+                    nCtx = key.nCtx,
+                    kvCacheType = key.kvCacheType.name,
+                    backend = key.backend,
+                    tokenCount = tokenCount,
+                    sizeBytes = sizeBytes,
+                    createdAt = existingBeforeSave?.createdAt ?: now,
+                    lastAccessedAt = now,
+                ),
+            )
+            evictLocked(SessionStoragePolicy.evictionPlan(dao.allSessions(), justWritten = conversationId))
+            SaveResult.Saved(tokenCount, sizeBytes)
+        }
     }
 
     /**
@@ -193,6 +287,7 @@ class SessionRepository(
      * [restoreOnEngine], not after.
      */
     suspend fun restore(conversationId: String, key: SessionModelKey): RestoreResult {
+        val epochAtStart = purgeEpoch.get()
         val entity = dao.getByConversation(conversationId) ?: return RestoreResult.NotFound
 
         if (entity.modelId != key.modelId || entity.nCtx != key.nCtx || entity.kvCacheType != key.kvCacheType.name) {
@@ -212,26 +307,85 @@ class SessionRepository(
         }
 
         if (!restored) {
-            file.delete()
-            dao.delete(conversationId)
+            commitMutex.withLock {
+                file.delete()
+                dao.delete(conversationId)
+            }
             return RestoreResult.Failed
         }
 
-        dao.upsert(entity.copy(lastAccessedAt = System.currentTimeMillis()))
+        commitMutex.withLock {
+            // A [purgeAll] that landed while the engine was reading the file wins: the restore
+            // itself did happen (the state is in RAM, the conversation resumes), but the user
+            // asked for an empty sessions directory, and re-writing this row would put a session
+            // back in the table pointing at a file that is no longer there.
+            if (purgeEpoch.get() == epochAtStart) {
+                dao.upsert(entity.copy(lastAccessedAt = System.currentTimeMillis()))
+            }
+        }
         return RestoreResult.Restored(entity.tokenCount)
     }
 
     /** Deletes [conversationId]'s session (file + row), if any. No-op if it doesn't exist. */
     suspend fun delete(conversationId: String) {
-        val entity = dao.getByConversation(conversationId) ?: return
-        File(entity.filePath).delete()
-        dao.delete(conversationId)
+        commitMutex.withLock {
+            val entity = dao.getByConversation(conversationId) ?: return@withLock
+            File(entity.filePath).delete()
+            dao.delete(conversationId)
+        }
     }
 
-    /** Deletes every persisted session (file + row). */
-    suspend fun purgeAll() {
-        dao.allSessions().forEach { File(it.filePath).delete() }
+    /**
+     * Deletes every persisted session — every row, every file each row points at, and every
+     * *orphan* state file left in the sessions directory by a save that died between its rename
+     * and its DB write. Settings > Storage > Clear (TEN-38) is the only caller.
+     *
+     * Deliberately **not** a `deleteRecursively` on the directory: it removes exactly the two file
+     * shapes this class creates (`<id>.llamastate` and its `.tmp`), leaves the directory itself in
+     * place, and never touches anything else that might one day share the path.
+     *
+     * ### What it does to a generation in flight
+     *
+     * Nothing, on purpose. A session file is a frozen copy of a KV cache, not the cache itself:
+     * the resident model and whatever is decoding against it live in RAM and are untouched, so a
+     * reply keeps streaming through a purge and the conversation on screen keeps its context.
+     * What the user loses is the ability to *resume* those conversations after a model swap or a
+     * restart — which is exactly what they asked to reclaim the disk of.
+     *
+     * The reverse direction is the one that needs care, and it is handled by [commitMutex] +
+     * [purgeEpoch] rather than by making the two operations wait for each other: a [save] already
+     * in flight (the app backgrounding, `onBeforeModelSwap`, a conversation switch) completes its
+     * state dump, finds the epoch bumped, and resolves to [SaveResult.Discarded] — its temp file
+     * deleted, no row written. Without that, a purge would race the tail of a save and leave
+     * either a row whose file was just deleted or, worse, a multi-hundred-MB file no row points at
+     * and no eviction path will ever find. Session persistence is not disabled by a purge: the
+     * *next* save trigger after it writes a session again, and that is intended — Clear frees the
+     * disk now, it does not turn the feature off.
+     */
+    suspend fun purgeAll(): PurgeReport = commitMutex.withLock {
+        purgeEpoch.incrementAndGet()
+
+        val rows = dao.allSessions()
+        var freedBytes = 0L
+        for (row in rows) {
+            freedBytes += deleteAndMeasure(File(row.filePath))
+        }
         dao.deleteAll()
+
+        // Every row is gone, so anything still matching this class's own naming under
+        // `sessions/` is by definition unreferenced.
+        var orphanFileCount = 0
+        for (file in sessionsDir.listFiles().orEmpty()) {
+            if (!file.isFile) continue
+            if (!file.name.endsWith(STATE_SUFFIX) && !file.name.endsWith(TEMP_SUFFIX)) continue
+            val bytes = deleteAndMeasure(file)
+            if (!file.exists()) {
+                orphanFileCount++
+                freedBytes += bytes
+            }
+        }
+
+        PurgeReport(sessionCount = rows.size, orphanFileCount = orphanFileCount, freedBytes = freedBytes)
     }
 
     /**
@@ -246,25 +400,31 @@ class SessionRepository(
      * start.
      */
     suspend fun pruneToStoragePolicy() {
-        val all = dao.allSessions()
-        val mostRecent = all.maxByOrNull { it.lastAccessedAt } ?: return
-        evict(SessionStoragePolicy.evictionPlan(all, justWritten = mostRecent.conversationId))
+        commitMutex.withLock {
+            val all = dao.allSessions()
+            val mostRecent = all.maxByOrNull { it.lastAccessedAt } ?: return@withLock
+            evictLocked(SessionStoragePolicy.evictionPlan(all, justWritten = mostRecent.conversationId))
+        }
     }
 
-    private suspend fun enforceStoragePolicy(justWritten: String) {
-        evict(SessionStoragePolicy.evictionPlan(dao.allSessions(), justWritten))
-    }
-
-    private suspend fun evict(conversationIds: List<String>) {
+    /** Caller must hold [commitMutex]. */
+    private suspend fun evictLocked(conversationIds: List<String>) {
         for (conversationId in conversationIds) {
             dao.getByConversation(conversationId)?.let { File(it.filePath).delete() }
             dao.delete(conversationId)
         }
     }
 
-    private fun finalPathFor(conversationId: String) = File(sessionsDir, "$conversationId.llamastate")
+    /** Bytes [file] held if the delete removed it, `0` if it was already gone or survived. */
+    private fun deleteAndMeasure(file: File): Long {
+        if (!file.isFile) return 0
+        val length = file.length()
+        return if (file.delete()) length else 0
+    }
 
-    private fun tempPathFor(conversationId: String) = File(sessionsDir, "$conversationId.llamastate.tmp")
+    private fun finalPathFor(conversationId: String) = File(sessionsDir, "$conversationId$STATE_SUFFIX")
+
+    private fun tempPathFor(conversationId: String) = File(sessionsDir, "$conversationId$TEMP_SUFFIX")
 
     private fun moveIntoPlace(temp: File, final: File): Boolean {
         if (temp.renameTo(final)) return true
@@ -275,5 +435,13 @@ class SessionRepository(
         return runCatching { temp.copyTo(final, overwrite = true) }
             .onSuccess { temp.delete() }
             .isSuccess
+    }
+
+    private companion object {
+        /** Suffix of a committed state file — also what [purgeAll]'s orphan sweep matches on. */
+        const val STATE_SUFFIX = ".llamastate"
+
+        /** Suffix of an in-progress state dump, before [moveIntoPlace] renames it. */
+        const val TEMP_SUFFIX = ".llamastate.tmp"
     }
 }

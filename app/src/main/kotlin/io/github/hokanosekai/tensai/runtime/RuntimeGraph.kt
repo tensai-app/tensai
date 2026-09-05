@@ -4,6 +4,7 @@ import android.content.Context
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
@@ -106,6 +107,21 @@ object RuntimeGraph {
 
     /** Backend the user picked in onboarding/settings — see [BackendPreference.resolve]. */
     val backendRepository: BackendRepository by lazy { BackendRepository(appContext) }
+
+    /** Language the app renders in, independently of the system's — see [LanguageRepository]. */
+    val languageRepository: LanguageRepository by lazy { LanguageRepository(appContext) }
+
+    /**
+     * The installed package's own `versionName`, for Settings > About (TEN-38) — read from the
+     * platform rather than written out in Kotlin, so it is the version that is actually installed
+     * and it cannot drift from `build.gradle.kts`. Empty if the package manager won't answer,
+     * which it always does for one's own package.
+     */
+    val appVersionName: String by lazy {
+        runCatching {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
 
     /** First-run bookkeeping — see [OnboardingRepository] and `OnboardingGate`. */
     val onboardingRepository: OnboardingRepository by lazy { OnboardingRepository(appContext) }

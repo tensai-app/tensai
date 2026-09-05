@@ -397,6 +397,11 @@ class ChatViewModel(
      *   failed save aborts the switch and this conversation falls back to a normal re-prefill
      *   instead, keeping the outgoing conversation's in-memory state exactly as it was (never
      *   restoring over it, never silently discarding anything the user generated).
+     *   [io.github.hokanosekai.tensai.data.session.SaveResult.Discarded] (TEN-38: the user cleared
+     *   saved sessions from Settings while this save was running) does not permit it either, and
+     *   for the same reason — nothing was written, so nothing may be restored over. The switch
+     *   falling back to a re-prefill is the correct outcome there too: after a purge there is no
+     *   session left to restore into this conversation anyway.
      *
      * Guarded to only run this last case when [ActiveSessionTracker.current]'s recorded
      * [SessionModelKey] matches this conversation's own (via [resolveSessionKey]): a different key
@@ -423,7 +428,7 @@ class ChatViewModel(
         val saveResult = sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)
         val outgoingStateIsSafe = when (saveResult) {
             is SaveResult.Saved, is SaveResult.Unchanged, SaveResult.NothingToSave -> true
-            is SaveResult.Failed -> false
+            is SaveResult.Failed, SaveResult.Discarded -> false
         }
         if (!outgoingStateIsSafe) return
 

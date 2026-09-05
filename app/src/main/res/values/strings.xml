@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-     Home's copy (TEN-37). Every user-facing string on this screen lives here rather than in the
-     composable so the "localised suggestions" the ticket asks for are actually translatable —
-     TEN-41 adds the other locales, this file is what it will translate.
+     Home's copy (TEN-37) and Settings' (TEN-38). Every user-facing string on these screens lives
+     here rather than in the composable so the "localised suggestions" the ticket asks for are
+     actually translatable — TEN-41 adds the other locales, this file is what it will translate.
+
+     Anything with a value in it uses a positional placeholder (%1$s) and never string
+     concatenation onto a translated prefix: concatenation freezes English word order into every
+     translation, and the languages this app will be translated into do not all put the number
+     last.
 -->
 <resources>
 
@@ -24,5 +29,82 @@
     <!-- %1$s is a model's display name. -->
     <string name="home_pill_load_model">Load %1$s to start…</string>
     <string name="home_pill_no_model">Import a model to start</string>
+
+    <!-- ==================== Settings (TEN-38) ==================== -->
+
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_group_inference">Inference</string>
+    <string name="settings_group_storage">Storage</string>
+    <string name="settings_group_about">About</string>
+
+    <!-- Appearance > theme. One entry per io.github.hokanosekai.tensai.ui.theme.ThemeMode. -->
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_system_subtitle">Follows your phone\'s day/night setting</string>
+    <string name="settings_theme_dark">Calm Night</string>
+    <string name="settings_theme_dark_subtitle">Dark, always</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_light_subtitle">Light, always</string>
+
+    <!-- Appearance > language. One entry per io.github.hokanosekai.tensai.data.AppLanguage. -->
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">System</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_french">Français</string>
+
+    <!-- Inference > backend. One entry per io.github.hokanosekai.tensai.data.BackendPreference. -->
+    <string name="settings_backend">Default backend</string>
+    <string name="settings_backend_auto">Auto</string>
+    <string name="settings_backend_auto_subtitle">Recommended — picks CPU or GPU per model</string>
+    <string name="settings_backend_cpu">CPU</string>
+    <string name="settings_backend_cpu_subtitle">Fastest for most dense models on this class of phone</string>
+    <string name="settings_backend_gpu">Vulkan</string>
+    <string name="settings_backend_gpu_subtitle">GPU offload, when the device has it</string>
+
+    <!-- Inference > read-only rows. See io.github.hokanosekai.tensai.ui.screens.settings.InferenceFacts. -->
+    <string name="settings_context_size">Context size</string>
+    <!-- %1$d is a token count. -->
+    <string name="settings_context_size_value">%1$d tokens</string>
+    <string name="settings_kv_cache">KV cache type</string>
+    <!-- %1$s is a cache precision (f16, q8_0…), %2$s who chose it (settings_inference_chosen_auto). -->
+    <string name="settings_kv_cache_value">%1$s · %2$s</string>
+    <string name="settings_inference_chosen_auto">auto</string>
+    <string name="settings_inference_unknown">—</string>
+    <!-- %1$s is a model\'s display name. -->
+    <string name="settings_inference_in_use">In use by %1$s</string>
+    <string name="settings_inference_planned">Planned for %1$s — chosen per load from free memory</string>
+    <string name="settings_inference_no_model">No model loaded and none on disk</string>
+
+    <!-- Storage. -->
+    <string name="settings_storage_models">Models</string>
+    <!-- %1$s is the size the models take, %2$s the size of the volume they sit on. -->
+    <string name="settings_storage_models_usage">%1$s of %2$s</string>
+    <string name="settings_storage_manage_models">Manage models</string>
+    <string name="settings_storage_sessions">Saved sessions</string>
+    <!--
+         %1$s is a total size, %2$d how many sessions make it up. A plural, not a string: this app
+         keeps at most two sessions (see SessionStoragePolicy), so "1 session" is a case the user
+         hits constantly, and languages that inflect it differently are not this file's to guess.
+    -->
+    <plurals name="settings_storage_sessions_usage">
+        <item quantity="one">%1$s across %2$d session</item>
+        <item quantity="other">%1$s across %2$d sessions</item>
+    </plurals>
+    <string name="settings_storage_sessions_empty">Nothing saved</string>
+    <string name="settings_storage_sessions_explainer">Saved sessions let a conversation resume without re-reading its whole history. Clearing them frees space; the conversations themselves stay.</string>
+    <string name="settings_storage_clear">Clear</string>
+    <string name="settings_storage_clear_title">Clear saved sessions?</string>
+    <string name="settings_storage_clear_body">This deletes every saved conversation state from this device. Your conversations and models are untouched, and a reply being generated right now keeps going — it just has to re-read its history the next time it is reopened.</string>
+    <string name="settings_storage_clear_confirm">Clear</string>
+    <string name="settings_storage_clear_cancel">Cancel</string>
+    <!-- %1$s is the amount of space that came back. -->
+    <string name="settings_storage_cleared">Cleared — %1$s freed</string>
+    <string name="settings_storage_cleared_nothing">Nothing to clear</string>
+
+    <!-- About. -->
+    <string name="settings_version">Version</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <!-- %1$s is a license name (MIT, Apache 2.0…), %2$s the copyright holder. -->
+    <string name="settings_license_line">%1$s · %2$s</string>
 
 </resources>

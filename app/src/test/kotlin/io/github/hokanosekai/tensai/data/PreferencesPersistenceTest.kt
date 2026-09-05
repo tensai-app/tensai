@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -74,6 +75,16 @@ class PreferencesPersistenceTest {
     }
 
     @Test
+    fun theLanguagePickedInSettingsComesBackAfterARestart() = runBlocking {
+        val file = File(dir, "language.preferences_pb")
+
+        withStore(file) { LanguageRepository(it).setLanguage(AppLanguage.French) }
+        val restored = withStore(file) { LanguageRepository(it).language.first() }
+
+        assertEquals(AppLanguage.French, restored)
+    }
+
+    @Test
     fun anUntouchedInstallReadsTheDocumentedDefaults() = runBlocking {
         assertEquals(ThemeMode.System, withStore(File(dir, "t.preferences_pb")) { ThemeRepository(it).themeMode.first() })
         assertEquals(
@@ -81,6 +92,19 @@ class PreferencesPersistenceTest {
             withStore(File(dir, "b.preferences_pb")) { BackendRepository(it).preference.first() },
         )
         assertEquals(false, withStore(File(dir, "o.preferences_pb")) { OnboardingRepository(it).skipped.first() })
+        assertEquals(
+            AppLanguage.System,
+            withStore(File(dir, "l.preferences_pb")) { LanguageRepository(it).language.first() },
+        )
+    }
+
+    @Test
+    fun onlySystemDefersToTheDevicesOwnLocaleList() {
+        // The one thing [AppLanguage] promises beyond round-tripping: System overrides nothing,
+        // rather than quietly meaning English.
+        assertNull(AppLanguage.System.localeTag)
+        assertEquals("en", AppLanguage.English.localeTag)
+        assertEquals("fr", AppLanguage.French.localeTag)
     }
 
     @Test

@@ -329,8 +329,16 @@ private fun PreferencesStep(
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Text(text = "How should it run?", style = MaterialTheme.typography.headlineSmall)
-        // No "you can change this later" here on purpose: the Settings screen is still a
-        // placeholder in V1, so these two choices are only re-offered by another first run.
+        Text(
+            text = "You can change both later, in Settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        // Both choices write to the same stores Settings reads and writes (TEN-38's
+        // `SettingsViewModel` takes the very same [ThemeRepository]/[BackendRepository] this step
+        // does, through `RuntimeGraph`) — there is one answer per preference in this app, not one
+        // per screen that offers it.
         Text(text = "Backend", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 24.dp))
         ChoiceCard(
             title = "Auto",

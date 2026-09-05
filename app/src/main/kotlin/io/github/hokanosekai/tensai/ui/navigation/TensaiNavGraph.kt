@@ -11,13 +11,13 @@ import androidx.navigation.navArgument
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreenPlaceholder
-import io.github.hokanosekai.tensai.ui.screens.SettingsScreenPlaceholder
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
+import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
 
 /**
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
@@ -151,7 +151,12 @@ fun TensaiNavGraph(
         }
 
         composable(TensaiDestination.Settings.route) {
-            SettingsScreenPlaceholder()
+            SettingsScreen(
+                // Pushed, not popped-to: Settings stays on the stack so back from the models list
+                // returns to the group the user left, rather than wherever they entered Settings
+                // from.
+                onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+            )
         }
 
         composable(TensaiDestination.Server.route) {

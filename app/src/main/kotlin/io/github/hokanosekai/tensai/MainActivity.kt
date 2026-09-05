@@ -4,11 +4,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
+import io.github.hokanosekai.tensai.data.AppLanguage
+import io.github.hokanosekai.tensai.data.withAppLanguage
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.navigation.TensaiShell
@@ -22,6 +27,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private val themeRepository by lazy { RuntimeGraph.themeRepository }
+
+    private val languageRepository by lazy { RuntimeGraph.languageRepository }
 
     /** Null until the first-run check below resolves — the splash screen stays up until then. */
     private val onboardingEntryState = mutableStateOf<OnboardingEntry?>(null)
@@ -41,10 +48,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val themeMode by themeRepository.themeMode.collectAsState(initial = ThemeMode.System)
+            val language by languageRepository.language.collectAsState(initial = AppLanguage.System)
             val onboardingEntry = onboardingEntryState.value
-            TensaiTheme(themeMode = themeMode) {
-                if (onboardingEntry != null) {
-                    TensaiShell(onboardingEntry = onboardingEntry)
+
+            // Both preferences are applied the same way and for the same reason: they are read
+            // from their store at composition, so writing one from Settings (TEN-38) re-renders
+            // the app under it immediately, with no restart and no recreate. The language one
+            // goes through `LocalContext` because that is what `stringResource` resolves against
+            // — see [withAppLanguage] for why it wraps rather than replaces the context.
+            val localizedContext = remember(language, this) { withAppLanguage(language) }
+
+            CompositionLocalProvider(LocalContext provides localizedContext) {
+                TensaiTheme(themeMode = themeMode) {
+                    if (onboardingEntry != null) {
+                        TensaiShell(onboardingEntry = onboardingEntry)
+                    }
                 }
             }
         }
