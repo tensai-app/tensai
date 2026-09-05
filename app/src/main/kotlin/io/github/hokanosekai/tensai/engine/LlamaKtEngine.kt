@@ -20,8 +20,10 @@ package io.github.hokanosekai.tensai.engine
  * @param kvFullElementsPerToken K+V cache elements one context token occupies
  *   across the layers whose cache is sized by `n_ctx`, summed the way
  *   llama.cpp allocates it (per-layer KV head count × head dimension) rather
- *   than assumed from [embeddingLength]. **0 means the GGUF header didn't
- *   yield a usable attention shape** — see
+ *   than assumed from [embeddingLength], with the V half charged at the
+ *   largest any layer needs because that is what llama.cpp allocates when the
+ *   V cache is transposed, i.e. whenever flash attention is off. **0 means the
+ *   GGUF header didn't yield a usable attention shape** — see
  *   [io.github.hokanosekai.tensai.data.models.KvCacheSize] for the fallback.
  * @param kvSwaElementsPerToken same, for sliding-window layers, whose cache is
  *   capped at [slidingWindow] rather than growing with `n_ctx`. 0 when the

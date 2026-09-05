@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.compat
 import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
+import io.github.hokanosekai.tensai.engine.KvCacheType
 import java.util.Locale
 
 /** Traffic-light verdict for whether a [ModelEntity] is a good idea to load on this device. */
@@ -55,9 +56,6 @@ data class Compatibility(
  *   GPU offload wins when a Vulkan device is available.
  */
 object CompatibilityChecker {
-
-    /** f16 KV cache (the engine's default, [io.github.hokanosekai.tensai.engine.KvCacheType.F16]). */
-    private const val KV_BYTES_PER_ELEMENT_F16 = 2L
 
     /**
      * Context length assumed for the KV-cache estimate — matches
@@ -133,8 +131,13 @@ object CompatibilityChecker {
      * before TEN-18, or a header that didn't yield one).
      */
     private fun kvCacheBytes(model: ModelEntity): Long {
-        val plannedCtx = minOf(model.contextLength, PLANNED_CTX_TOKENS)
-        return KvCacheSize.bytesAt(model, plannedCtx, KV_BYTES_PER_ELEMENT_F16)
+        // A header with no context_length key records 0, which isn't a context anything will be
+        // loaded at — the engine turns a non-positive n_ctx into 4096 (tensai_jni.cpp), which is
+        // PLANNED_CTX_TOKENS. Taking the min with 0 would report a model as needing no KV cache
+        // at all. Same reasoning as LoadPolicy.trainedContextOf.
+        val trainedCtx = if (model.contextLength > 0) model.contextLength else PLANNED_CTX_TOKENS
+        val plannedCtx = minOf(trainedCtx, PLANNED_CTX_TOKENS)
+        return KvCacheSize.bytesAt(model, plannedCtx, KvCacheType.F16)
     }
 
     private fun isLikelySlow(model: ModelEntity): Boolean {

@@ -31,11 +31,12 @@ object LoadPolicy {
      */
     const val CTX_LATENCY_CAP = 4096
 
-    /** Never request less than this — a degenerate context isn't useful even on the tightest device. */
+    /**
+     * Never request less than this — a degenerate context isn't useful even on the tightest device,
+     * and llama.cpp rounds `n_ctx` up to 256 cells anyway, so anything below it costs the same as
+     * it (see [KvCacheSize]).
+     */
     private const val MIN_CTX_TOKENS = 256
-
-    private const val KV_BYTES_PER_ELEMENT_F16 = 2L
-    private const val KV_BYTES_PER_ELEMENT_Q8_0 = 1L
 
     /**
      * Same compute-buffer/graph-overhead allowance
@@ -47,10 +48,11 @@ object LoadPolicy {
      * Computes the [LoadPlan] to load [model] on [profile].
      *
      * 1. `wanted` is the context we'd like, independent of RAM: the model's trained max
-     *    ([ModelEntity.contextLength]), capped at [CTX_LATENCY_CAP].
+     *    ([ModelEntity.contextLength]), capped at [CTX_LATENCY_CAP] and floored at
+     *    [MIN_CTX_TOKENS].
      * 2. If `wanted` fits in the RAM left after weights + [OVERHEAD_BYTES] at F16 precision, use
      *    it as-is with [KvCacheType.F16].
-     * 3. Otherwise, try [KvCacheType.Q8_0] (half the bytes/token of F16) at the same `wanted` — if
+     * 3. Otherwise, try [KvCacheType.Q8_0] (~53% of the bytes/token of F16) at the same `wanted` — if
      *    that fits, use it: trading KV precision at the context the user could plausibly want
      *    beats silently shrinking the context instead.
      * 4. If even Q8_0 can't fit `wanted`, fall back to whatever context Q8_0 *does* fit (never
@@ -62,14 +64,14 @@ object LoadPolicy {
      * its KDoc for why every uncertainty resolves upwards.
      */
     fun compute(model: ModelEntity, profile: DeviceProfile): LoadPlan {
-        val wanted = minOf(model.contextLength, CTX_LATENCY_CAP.toLong())
+        val wanted = trainedContextOf(model).coerceIn(MIN_CTX_TOKENS.toLong(), CTX_LATENCY_CAP.toLong())
         val availableForKv = (profile.availableRamBytes - model.sizeBytes - OVERHEAD_BYTES).coerceAtLeast(0)
 
-        if (KvCacheSize.bytesAt(model, wanted, KV_BYTES_PER_ELEMENT_F16) <= availableForKv) {
+        if (KvCacheSize.bytesAt(model, wanted, KvCacheType.F16) <= availableForKv) {
             return LoadPlan(wanted.toInt(), KvCacheType.F16)
         }
 
-        val ctxFaisableQ8 = KvCacheSize.maxCtxFitting(model, availableForKv, KV_BYTES_PER_ELEMENT_Q8_0, wanted)
+        val ctxFaisableQ8 = KvCacheSize.maxCtxFitting(model, availableForKv, KvCacheType.Q8_0, wanted)
         if (wanted <= ctxFaisableQ8) {
             return LoadPlan(wanted.toInt(), KvCacheType.Q8_0)
         }
@@ -77,4 +79,17 @@ object LoadPolicy {
         val reduced = ctxFaisableQ8.coerceAtLeast(MIN_CTX_TOKENS.toLong())
         return LoadPlan(reduced.toInt(), KvCacheType.Q8_0)
     }
+
+    /**
+     * [ModelEntity.contextLength] when the header actually yielded one, [CTX_LATENCY_CAP]
+     * otherwise.
+     *
+     * A model whose GGUF has no `context_length` key records 0, and 0 is not a context the engine
+     * will honour: `tensai_jni.cpp` turns a non-positive `n_ctx` into 4096 at load time. Passing
+     * the 0 through would budget for an empty cache and then load a 4096-cell one — the exact
+     * under-estimate this policy exists to avoid — so the unknown case is planned as the same
+     * 4096 the engine is going to use.
+     */
+    private fun trainedContextOf(model: ModelEntity): Long =
+        if (model.contextLength > 0) model.contextLength else CTX_LATENCY_CAP.toLong()
 }
