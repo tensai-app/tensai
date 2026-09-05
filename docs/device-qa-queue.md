@@ -14,7 +14,7 @@ Dernière mise à jour : 2026-09-05.
 
 - **Jamais** `./gradlew connectedDebugAndroidTest` ni `connectedCheck`. AGP
   désinstalle l'app en nettoyage et efface les modèles, plusieurs Go.
-  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §8).
+  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §9).
 - **Jamais** `adb reboot`, `adb shell reboot`, `adb shell su`, `adb uninstall`,
   `pm clear`. Un builder a déjà redémarré le téléphone de l'utilisateur.
 - Installer avec `adb install -r`, qui préserve la base et les modèles.
@@ -242,7 +242,35 @@ un état null), mais une frame parasite ne se voit qu'à l'oeil.
 
 ---
 
-## 7. TEN-68 — les 350 s après une longue génération
+## 7. TEN-37 — l'écran d'accueil
+
+La machine à états de la pill, les bandes de salutation et l'envoi depuis
+l'accueil sont couverts sans device. Ne pas les refaire.
+
+**Ce qui reste est l'acceptation littérale du ticket** : conformité au prototype
+HomeScreen, **dark et light**. Salutation en Figtree large, filigrane 天 à 8 %
+d'opacité décalé à droite et non interactif, quatre chips de suggestion.
+
+Les trois faces de la pill sont à voir en vrai, chacune dans les deux thèmes :
+- modèle chargé, champ normal
+- modèle existant non chargé, « Load X to start… » avec le point lavande, et le
+  tap qui mène bien au chargement de ce modèle-là
+- aucun modèle, CTA qui mène à Models
+
+**Le cas à provoquer**, parce qu'il ne se produit jamais seul : importer deux
+modèles, supprimer le fichier du plus récent depuis les réglages système, et
+vérifier que la pill propose **le second** au lieu d'abandonner ou de proposer le
+mort. La logique est testée, la manipulation réelle ne l'est pas.
+
+Et : charger un modèle puis supprimer son fichier pendant qu'il est résident. La
+pill doit rester fonctionnelle — le modèle est en RAM et peut répondre.
+
+**Non couvert non plus** : que le filigrane soit bien non interactif, c'est-à-dire
+qu'un tap dessus traverse jusqu'à ce qui est dessous.
+
+---
+
+## 8. TEN-68 — les 350 s après une longue génération
 
 Observé **une fois**, jamais reproduit sur la tentative suivante à volume
 identique. Restore de 2879 tokens rendu en 780 ms, puis 350 758 ms de TTFT.
@@ -257,7 +285,7 @@ s'effondre et où.
 
 ---
 
-## 8. Tests instrumentés
+## 9. Tests instrumentés
 
 **Toujours sous wrapper hôte**, et traiter le code de sortie **124 comme un échec** :
 
@@ -280,7 +308,7 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 9. TEN-43 — QA device pass V1
+## 10. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
