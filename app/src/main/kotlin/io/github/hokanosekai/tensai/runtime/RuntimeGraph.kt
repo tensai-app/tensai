@@ -45,9 +45,16 @@ object RuntimeGraph {
         // `InferenceQueue.saveSession` — this hook already runs *inside* the queue's own mutex (see
         // `InferenceQueue.onBeforeModelSwap`'s KDoc), so routing through the queue's own
         // mutex-protected entry point would deadlock. Any failure is swallowed: this hook's
-        // exceptions propagate up through `loadModel`/`unloadModel` and would abort the swap
-        // (leaving the *old* model still resident) — a session save failing must never block
-        // loading the next model.
+        // exceptions propagate up through `loadModel`/`unloadModel` and would fail the call for
+        // the caller — a session save failing must never block loading the next model.
+        //
+        // Since TEN-74 a throw no longer keeps the old model resident: the release happens either
+        // way and only the *call* fails, so the cost of letting one escape is a load the user has
+        // to retry, not a wedged queue. The `runCatching` stays anyway, for that reason and
+        // because it is the difference between a lost session save and a visible failure.
+        //
+        // Note it does not cover the whole body: `ActiveSessionTracker.current.value` and
+        // `clear()` run outside it. Neither throws today.
         inferenceQueue.onBeforeModelSwap = {
             val snapshot = ActiveSessionTracker.current.value
             ActiveSessionTracker.clear()

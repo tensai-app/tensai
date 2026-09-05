@@ -15,14 +15,19 @@ import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.GgufInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -37,6 +42,12 @@ import org.junit.Test
  * fix, doubling load time. [InferenceQueue.generate]'s existing busy-rejection is covered too, as
  * a fast regression check for the same "no second concurrent generation" contract `ChatViewModel`
  * relies on.
+ *
+ * Covers TEN-74 too — the three independent links that took a throwing [InferenceQueue.onBeforeModelSwap]
+ * all the way to a queue spinning a core flat out: the unload that left [QueueState.ModelReady]
+ * over a freed-but-never-released model, the [InferenceQueue.generate] rejection that skipped its
+ * own cleanup, and the retry loops that spun on the result. Each is pinned on its own, and the
+ * three are pinned in conjunction.
  */
 class InferenceQueueTest {
 
@@ -262,12 +273,204 @@ class InferenceQueueTest {
         assertEquals(false, queue.restoreSession("/sessions/a.state"))
     }
 
+    /**
+     * TEN-74, first link. The hook is documented as being allowed to throw, and its exception
+     * still propagates — but it must not take the model's last reference with it (several GB of
+     * native memory nothing can free any more) nor leave [InferenceQueue.state] advertising a
+     * model that is already gone.
+     */
+    @Test
+    fun unloadModelFreesTheModelAndSettlesToIdleEvenWhenTheSwapHookThrows() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        queue.onBeforeModelSwap = { throw RuntimeException("hook failed") }
+
+        val thrown = runCatching { queue.unloadModel() }.exceptionOrNull()
+
+        assertTrue("expected the hook's exception to reach the caller, got $thrown", thrown is RuntimeException)
+        assertEquals("the model must be freed even when the hook throws", 1, engine.freeCount)
+        assertEquals(QueueState.Idle, queue.state.value)
+    }
+
+    /** The same guarantee on the swap path, where the hook also runs. */
+    @Test
+    fun loadModelFreesThePreviousModelAndSettlesToIdleEvenWhenTheSwapHookThrows() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        queue.onBeforeModelSwap = { throw RuntimeException("hook failed") }
+
+        val thrown = runCatching { queue.loadModel(ModelLoadConfig(path = "/models/b.gguf")) }.exceptionOrNull()
+
+        assertTrue("expected the hook's exception to reach the caller, got $thrown", thrown is RuntimeException)
+        assertEquals(QueueState.Idle, queue.state.value)
+        assertEquals(1, engine.freeCount)
+    }
+
+    /**
+     * Same leak as the two tests above, through a door that is much easier to open than a throwing
+     * hook: a cancelled caller. A `viewModelScope` cleared while a swap is in flight is an ordinary
+     * Android lifecycle event, not a programming error.
+     *
+     * [LoadedModel.free] suspends — `LlamaKtEngineImpl` routes it through its own dispatcher — so
+     * once the calling coroutine is cancelled, an unguarded `free()` throws at its first suspension
+     * point having freed nothing, and the `runCatching` around it files that away as just another
+     * failed release. [FakeLoadedModel.free] suspends here for exactly that reason; with a
+     * non-suspending fake this test cannot fail, whatever the queue does.
+     */
+    @Test
+    fun aCancelledUnloadStillFreesTheModel() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        val entered = CompletableDeferred<Unit>()
+        // Suspends inside the release, holding it open long enough to be cancelled mid-flight.
+        queue.onBeforeModelSwap = {
+            entered.complete(Unit)
+            delay(10_000)
+        }
+
+        val unload = launch { queue.unloadModel() }
+        entered.await()
+        unload.cancelAndJoin()
+
+        assertEquals("a cancelled release must still release", 1, engine.freeCount)
+        assertEquals(QueueState.Idle, queue.state.value)
+    }
+
+    /**
+     * TEN-74, second link, pinned on its own. A [InferenceQueue.generate] that claims the queue
+     * and then finds nothing loaded must still hand it back; leaving [QueueState.Generating]
+     * behind with no generation running is what every later load/unload then wedges on.
+     */
+    @Test
+    fun aGenerateThatFindsNothingLoadedDoesNotLeaveTheQueueGenerating() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        breakLoadedModelInvariant(queue)
+
+        val events = queue.generate(newRequest()).toList()
+
+        val rejected = events.singleOrNull() as? DecodeEvent.Error
+        assertTrue(
+            "expected a single Error(QueueBusyException) event, got $events",
+            rejected != null && rejected.cause is QueueBusyException,
+        )
+        assertFalse(
+            "queue stayed Generating after a rejected generation: ${queue.state.value}",
+            queue.state.value is QueueState.Generating,
+        )
+    }
+
+    /**
+     * TEN-74, third link, pinned on its own: a [QueueState.Generating] with no live generation
+     * behind it must fail the call, not spin. Bounded by [assertReturnsWithin], not `withTimeout` —
+     * see its KDoc for why.
+     */
+    @Test
+    fun loadAndUnloadFailFastRatherThanSpinWhenGeneratingHasNoJobBehindIt() {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        runBlocking { queue.loadModel(ModelLoadConfig(path = "/models/a.gguf")) }
+        wedgeOnGenerating(queue)
+
+        val unloadError = assertReturnsWithin(WEDGE_TIMEOUT_MS) { queue.unloadModel() }
+        assertTrue("expected unloadModel to fail loudly, got $unloadError", unloadError is IllegalStateException)
+
+        val loadError = assertReturnsWithin(WEDGE_TIMEOUT_MS) { queue.loadModel(ModelLoadConfig(path = "/models/b.gguf")) }
+        assertTrue("expected loadModel to fail loudly, got $loadError", loadError is IllegalStateException)
+    }
+
+    /**
+     * TEN-74 end to end, through the three links in the order they chain: a throwing hook breaks
+     * the invariant, a generation turns the break into a stuck [QueueState.Generating], and the
+     * next load/unload spins on it forever. Nothing here reaches into the queue's internals — this
+     * is the whole bug as a caller can trigger it.
+     */
+    @Test
+    fun aThrowingSwapHookDoesNotWedgeEveryLaterLoadAndUnload() {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        runBlocking {
+            queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+            queue.onBeforeModelSwap = { throw RuntimeException("hook failed") }
+            runCatching { queue.unloadModel() }
+            queue.generate(newRequest()).toList()
+        }
+
+        assertNull(assertReturnsWithin(WEDGE_TIMEOUT_MS) { queue.unloadModel() })
+        assertNull(assertReturnsWithin(WEDGE_TIMEOUT_MS) { queue.loadModel(ModelLoadConfig(path = "/models/b.gguf")) })
+        assertTrue("expected the queue to be usable again, got ${queue.state.value}", queue.state.value is QueueState.ModelReady)
+    }
+
+    /**
+     * Runs [block] in its own daemon thread and fails the test if it has not returned within
+     * [timeoutMs], handing back whatever it threw (or `null`).
+     *
+     * A thread-level bound rather than `withTimeout` on purpose: the retry loops this guards
+     * ([InferenceQueue.loadModel]/[InferenceQueue.unloadModel]) spin *without ever reaching a
+     * cancellable suspension point* once the queue is wedged, so a coroutine timeout would never
+     * be delivered and the build would hang on this test instead of failing it. The abandoned
+     * thread is a daemon, so it cannot hold the JVM open past the run — and it only survives the
+     * call at all when the test is already failing.
+     */
+    private fun assertReturnsWithin(timeoutMs: Long, block: suspend () -> Unit): Throwable? {
+        var thrown: Throwable? = null
+        val thread = Thread { thrown = runCatching { runBlocking { block() } }.exceptionOrNull() }
+        thread.isDaemon = true
+        thread.start()
+        thread.join(timeoutMs)
+        assertFalse("call did not return within ${timeoutMs}ms — the queue is spinning", thread.isAlive)
+        return thrown
+    }
+
+    /**
+     * Puts [queue] in the state TEN-74's first link used to leave behind: [QueueState.ModelReady]
+     * still published, every loaded-model field already cleared.
+     *
+     * Written straight onto the fields, because no supported path produces this any more — that is
+     * the point of the fix. Driving it through a throwing hook instead would make this test pass
+     * for the wrong reason the moment that first link is fixed, and stop pinning the second one at
+     * all. Defence in depth is only worth having if it is tested in depth.
+     */
+    private fun breakLoadedModelInvariant(queue: InferenceQueue) {
+        setPrivateField(queue, "loadedModel", null)
+        setPrivateField(queue, "loadedInfo", null)
+        setPrivateField(queue, "loadedConfig", null)
+    }
+
+    /**
+     * Publishes [QueueState.Generating] over [queue] with no job behind it — the wedge that used
+     * to make its retry loops spin. Same white-box rationale as [breakLoadedModelInvariant].
+     */
+    private fun wedgeOnGenerating(queue: InferenceQueue) {
+        val info = queue.state.value.residentModel!!
+        setPrivateField(queue, "activeGenerationJob", null)
+        @Suppress("UNCHECKED_CAST")
+        val state = readPrivateField(queue, "_state") as MutableStateFlow<QueueState>
+        state.value = QueueState.Generating(info)
+    }
+
+    private fun setPrivateField(queue: InferenceQueue, name: String, value: Any?) {
+        InferenceQueue::class.java.getDeclaredField(name).apply { isAccessible = true }.set(queue, value)
+    }
+
+    private fun readPrivateField(queue: InferenceQueue, name: String): Any =
+        InferenceQueue::class.java.getDeclaredField(name).apply { isAccessible = true }.get(queue)!!
+
     /** Tracks how many times [loadModel] actually reached the engine — the thing TEN-50's fix avoids doubling. */
     private class FakeEngine(
         private val loadDelayMs: Long = 0L,
         private val decodeGate: CompletableDeferred<Unit>? = null,
     ) : InferenceEngine {
         var loadCallCount = 0
+            private set
+
+        /** How many models this engine handed out have been released — TEN-74's leak check. */
+        var freeCount = 0
             private set
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel {
@@ -281,6 +484,7 @@ class InferenceQueueTest {
                     kvCacheType = config.kvCacheType,
                 ),
                 decodeGate,
+                onFree = { freeCount++ },
             )
         }
     }
@@ -288,6 +492,7 @@ class InferenceQueueTest {
     private class FakeLoadedModel(
         override val metadata: LoadedModelInfo,
         private val decodeGate: CompletableDeferred<Unit>?,
+        private val onFree: () -> Unit = {},
     ) : LoadedModel {
         override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
             decodeGate?.await()
@@ -296,7 +501,13 @@ class InferenceQueueTest {
 
         override suspend fun tokenize(text: String): Int = 0
 
-        override suspend fun free() = Unit
+        override suspend fun free() {
+            // Suspends like the real one (`LlamaKtEngineImpl.free` is `withContext(dispatcher)`), so a
+            // cancelled caller reaching here throws before doing the work unless the queue guards
+            // it. A non-suspending fake silently passes `aCancelledUnloadStillFreesTheModel`.
+            yield()
+            onFree()
+        }
     }
 
     /** A [LlamaKtEngine] fake — covers [InferenceQueue.saveSession]/[InferenceQueue.restoreSession], which need the sub-interface [FakeEngine] deliberately doesn't implement. */
@@ -335,5 +546,13 @@ class InferenceQueueTest {
 
         override suspend fun readMetadata(path: String): GgufInfo =
             throw UnsupportedOperationException("not needed by these tests")
+    }
+
+    private companion object {
+        /**
+         * Bound on a load/unload that a TEN-74 wedge would never let return. Generous on purpose:
+         * it is only ever waited out on a test that is already failing.
+         */
+        const val WEDGE_TIMEOUT_MS = 5_000L
     }
 }
