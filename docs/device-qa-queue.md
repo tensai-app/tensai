@@ -14,7 +14,7 @@ Dernière mise à jour : 2026-09-05.
 
 - **Jamais** `./gradlew connectedDebugAndroidTest` ni `connectedCheck`. AGP
   désinstalle l'app en nettoyage et efface les modèles, plusieurs Go.
-  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §5).
+  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §6).
 - **Jamais** `adb reboot`, `adb shell reboot`, `adb shell su`, `adb uninstall`,
   `pm clear`. Un builder a déjà redémarré le téléphone de l'utilisateur.
 - Installer avec `adb install -r`, qui préserve la base et les modèles.
@@ -76,7 +76,7 @@ loadModel: ... n_ctx=????  kv_cache=????
 | Attendu | Verdict |
 |---|---|
 | `n_ctx` nettement > 256 | le ticket est livré |
-| `n_ctx` toujours 256 | le ticket n'a rien réglé malgré 128 tests verts |
+| `n_ctx` toujours 256 | le ticket n'a rien réglé, quel que soit le nombre de tests unitaires verts |
 
 Puis contrôle de non-régression : charger Qwen3-1.7B, `n_ctx` doit rester **4096**
 en **F16**.
@@ -147,7 +147,47 @@ n'est pas prouvé sur une panne réelle.
 
 ---
 
-## 4. TEN-68 — les 350 s après une longue génération
+## 4. TEN-69 — le split de budget sur un modèle à channels
+
+La moitié comptable est démontrée en test unitaire : la réponse récupère le budget
+que le raisonnement n'a pas dépensé, et le test rejoue au token près la ligne
+device de 1027 tokens. Rien à revérifier là.
+
+Ce qui reste tient entièrement au device.
+
+**D'abord la question préalable, qui peut annuler le reste.** Charger Gemma-4 et
+lire si un `ReasoningBudget` est seulement construit :
+
+```
+nativeReadGgufMetadata: {... "supports_thinking": ??? ...}
+```
+
+`ChatViewModel.generateReply` gate le split sur cette valeur. Si elle est fausse
+pour gpt-oss ou Gemma, il n'y a ni budget ni split, et TEN-69 ne concerne pas ces
+modèles du tout. Sur Gemma-4 elle valait `true` au 2026-09-04, mais gpt-oss n'a
+jamais été testé et aucun modèle de cette famille n'est importé.
+
+**Ensuite le comportement.** Génération longue sur Gemma-4, et vérifier que la
+phase bascule bien du raisonnement à la réponse alors que le modèle n'émet jamais
+`</think>`. Le signe en base : `stopReason = ResponseBudgetExhausted` plutôt que
+`ReasoningBudgetExhausted`, avec `thinking` peuplé et `content` non vide.
+
+Si c'est `ReasoningBudgetExhausted` avec une réponse vide, le pilotage par
+`DecodeEvent.Parsed` ne fonctionne pas sur ce format et le ticket n'est pas livré.
+
+**Deux choses déduites par lecture, jamais observées** : que `Parsed` arrive avec
+`content` vide pendant le canal analysis puis non vide au canal final, et l'ordre
+des deux callbacks (`emit` puis `emit_parse` dans la même itération du JNI). Un
+ordre inverse ferait basculer la phase un token plus tôt, sans conséquence
+budgétaire.
+
+**Et une borne jamais atteinte** : qu'une réponse aille effectivement jusqu'à 2048
+tokens. TEN-65 peut clipper `nPredict` sous le total quand le contexte est serré,
+ce qui n'a pas été mesuré.
+
+---
+
+## 5. TEN-68 — les 350 s après une longue génération
 
 Observé **une fois**, jamais reproduit sur la tentative suivante à volume
 identique. Restore de 2879 tokens rendu en 780 ms, puis 350 758 ms de TTFT.
@@ -162,7 +202,7 @@ s'effondre et où.
 
 ---
 
-## 5. Tests instrumentés
+## 6. Tests instrumentés
 
 **Toujours sous wrapper hôte**, et traiter le code de sortie **124 comme un échec** :
 
@@ -185,7 +225,7 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 6. TEN-43 — QA device pass V1
+## 7. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
