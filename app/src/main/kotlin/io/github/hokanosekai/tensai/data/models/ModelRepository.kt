@@ -14,17 +14,36 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-/** A model with the same source name and size has already been imported. */
-class DuplicateModelException(message: String) : Exception(message)
+/**
+ * Every way [ModelRepository.importModel] can refuse or abandon an import.
+ *
+ * These carry **structured fields**, and their [Throwable.message] exists for a stack trace, not
+ * for a screen (TEN-39). The UI classifies them into an
+ * [io.github.hokanosekai.tensai.ui.screens.models.ImportFailure] and writes its own sentence from
+ * `strings.xml`; nothing renders `e.message`. That rule is what keeps a `java.io.IOException`'s own
+ * words — which is exactly what [ModelImportException] used to splice into its message — out of an
+ * error card the user is meant to act on.
+ */
+sealed class ModelImportFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-/** The source file could not be copied into app storage. */
-class ModelImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
+/** A model with the same source name and size has already been imported. */
+class DuplicateModelException(val fileName: String) :
+    ModelImportFailure("\"$fileName\" is already imported")
+
+/** The source file could not be copied into app storage — [cause] is the underlying I/O failure. */
+class ModelImportException(val fileName: String, cause: Throwable? = null) :
+    ModelImportFailure("failed to copy \"$fileName\"", cause)
 
 /** The copied file's GGUF header could not be read — likely not a valid GGUF file. */
-class ModelMetadataException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class ModelMetadataException(val fileName: String, cause: Throwable? = null) :
+    ModelImportFailure("could not read GGUF metadata for \"$fileName\"", cause)
 
 /** Not enough free space on device storage to hold the model being imported. */
-class InsufficientStorageException(message: String) : Exception(message)
+class InsufficientStorageException(
+    val fileName: String,
+    val neededBytes: Long,
+    val freeBytes: Long,
+) : ModelImportFailure("\"$fileName\" needs $neededBytes bytes, $freeBytes free")
 
 /** [ModelRepository.deleteModel] was called for a model that is currently loaded. */
 class ModelInUseException(message: String) : Exception(message)
@@ -88,15 +107,12 @@ class ModelRepository(
         if (sourceSize != null) {
             val duplicate = models.first().any { it.fileName == sourceName && it.sizeBytes == sourceSize }
             if (duplicate) {
-                throw DuplicateModelException("\"$sourceName\" is already imported")
+                throw DuplicateModelException(sourceName)
             }
 
             val freeBytes = StatFs(modelsDir.absolutePath).availableBytes
             if (freeBytes < sourceSize) {
-                throw InsufficientStorageException(
-                    "Not enough free storage to import \"$sourceName\" " +
-                        "(${formatBytes(sourceSize)} needed, ${formatBytes(freeBytes)} free)",
-                )
+                throw InsufficientStorageException(sourceName, neededBytes = sourceSize, freeBytes = freeBytes)
             }
         }
 
@@ -105,7 +121,7 @@ class ModelRepository(
             copyToFile(uri, destFile, sourceSize, onProgress)
         } catch (e: IOException) {
             destFile.delete()
-            throw ModelImportException("Failed to copy \"$sourceName\": ${e.message}", e)
+            throw ModelImportException(sourceName, e)
         }
 
         // Covers content providers that don't report a size upfront (checked pre-copy above).
@@ -113,7 +129,7 @@ class ModelRepository(
             val duplicate = models.first().any { it.fileName == sourceName && it.sizeBytes == copiedBytes }
             if (duplicate) {
                 destFile.delete()
-                throw DuplicateModelException("\"$sourceName\" is already imported")
+                throw DuplicateModelException(sourceName)
             }
         }
 
@@ -121,10 +137,7 @@ class ModelRepository(
             readMetadata(destFile.absolutePath)
         } catch (e: Exception) {
             destFile.delete()
-            throw ModelMetadataException(
-                "Could not read GGUF metadata for \"$sourceName\" — is it a valid GGUF file?",
-                e,
-            )
+            throw ModelMetadataException(sourceName, e)
         }
 
         val entity = ModelEntity(
@@ -246,13 +259,6 @@ class ModelRepository(
         }
         onProgress(1f)
         return copied
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-        if (gb >= 1.0) return "%.1f GB".format(gb)
-        val mb = bytes / (1024.0 * 1024.0)
-        return "%.0f MB".format(mb)
     }
 
     private companion object {

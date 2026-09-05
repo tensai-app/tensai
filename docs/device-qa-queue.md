@@ -130,7 +130,11 @@ dont le template casse), et gpt-oss/harmony (aucun modèle de cette famille).
 
 ## 3. TEN-52 — le chemin `Failed`
 
-L'arrêt volontaire est vérifié : `stopReason` null, aucun chip, thinking conservé.
+L'arrêt volontaire est vérifié, mais **le comportement attendu a changé avec
+TEN-39** : `stopReason` vaut désormais `Cancelled` et non plus null, et la rangée
+porte un chip gris « stopped ». Le thinking reste conservé. Une vérification faite
+avant TEN-39 est donc à refaire.
+
 Ce qui manque est une **vraie** erreur de décode mi-stream, qui demanderait de
 casser le moteur exprès.
 
@@ -360,7 +364,59 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 11. TEN-43 — QA device pass V1
+## 11. TEN-39 — les six états, et surtout les deux qu'on ne peut pas provoquer
+
+La logique est unitaire (seuil de stockage, chiffres du feu rouge, absence de
+jargon : 272 tests verts). Ce qui reste tient en deux états qu'aucun test ne peut
+mettre en scène, et en une lecture de base.
+
+**Le seuil de stockage (état 2).** Le prédicat est couvert sur ses bords, mais
+personne n'a vu la bannière. Elle exige un vrai `StatFs` sous le seuil, donc un
+téléphone réellement plein. Protocole le moins destructeur : lire d'abord
+
+```sql
+SELECT displayName, sizeBytes FROM models;
+```
+
+puis comparer à l'espace libre réel (`adb shell df /data`). La bannière doit
+apparaître ssi `libre < moyenne(tailles sur disque)`. Remplir le disque avec un
+fichier factice sous `run-as` plutôt qu'avec un vrai modèle — plus rapide à
+défaire. **Ne pas** supprimer de modèle pour provoquer l'état.
+
+**L'échec d'import (état 3).** Le plus simple à déclencher honnêtement : lancer un
+import depuis un provider distant (Drive) et couper le réseau en cours de copie —
+c'est le `ModelImportException` réel. Attendu : carte rouge, « Import didn't
+finish », **aucun** mot de l'`IOException` sous-jacente, « Try again » qui rouvre
+le sélecteur, et le fichier partiel supprimé (vérifier
+`run-as … ls files/models/`).
+
+**L'OOM au chargement (état 5) reste hors d'atteinte fiable.** `OutOfMemoryException`
+ne se lève que sur un OOM de *heap JVM* au passage JNI ; un OOM natif tue le
+process. Charger un modèle trop gros produit donc en pratique soit un kill, soit
+le `GenericFailed`. Le dialogue « Not enough memory » n'a jamais été vu, et il
+n'est pas prouvé qu'il soit atteignable sur ce device. **À trancher plutôt qu'à
+tester** : si le chemin est inatteignable, c'est le dialogue `GenericFailed` qui
+doit porter le message d'OOM.
+
+**Le chip « stopped » (état 6).** Voir §3 : le comportement a changé, une
+vérification antérieure ne vaut plus. Contrôle en base après un stop :
+
+```sql
+SELECT content, stopReason, tokensGenerated FROM messages ORDER BY createdAt DESC LIMIT 1;
+```
+
+Attendu `stopReason = 'Cancelled'`, `tokensGenerated` null, contenu partiel intact.
+Vérifier aussi le cas limite couvert unitairement mais jamais vu en vrai : taper
+stop **juste après** la fin d'une génération doit laisser `Complete`, pas
+`Cancelled`.
+
+**Régression à surveiller** : les lignes écrites avant TEN-39 par un stop ont
+`stopReason = NULL` et resteront sans chip. C'est voulu (ne pas deviner), mais si
+la base de test en contient, elles ressembleront à des réponses complètes.
+
+---
+
+## 12. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
@@ -370,7 +426,8 @@ Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
 Pour mémoire, afin de ne pas bloquer par erreur : TEN-71, TEN-69 (le cas
 Qwen3-sans-raisonnement est unitaire), TEN-66, TEN-53, TEN-54, TEN-70, la phase 4
-(TEN-35 à 40) et la phase 5 hors TEN-43/44.
+(TEN-35 à 40 — mais voir §11, TEN-39 laisse deux états invérifiables sans device)
+et la phase 5 hors TEN-43/44.
 
 **TEN-42 (CI/CD) monte en priorité** tant qu'il n'y a pas de device : un build et
 des tests automatisés à chaque commit sont le seul filet qui reste.

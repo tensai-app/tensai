@@ -94,7 +94,7 @@ fun ModelDetailScreen(
                     ) {
                         CompatDot(compatibility.verdict)
                         Text(
-                            text = compatibility.label,
+                            text = compatLabel(compatibility.verdict),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -126,7 +126,7 @@ fun ModelDetailScreen(
                         MetadataRow("File size", formatFileSize(model.sizeBytes))
                         MetadataRow("Thinking mode", if (model.supportsThinking) "Supported" else "Not supported")
                         MetadataRow("Recommended backend", compatibility.recommendedBackend.name)
-                        WrappingMetadataRow("Estimated memory", compatibility.explanation)
+                        WrappingMetadataRow("Estimated memory", compatExplanation(compatibility))
                     }
 
                     Button(
@@ -212,7 +212,7 @@ private fun MetadataRow(label: String, value: String, modifier: Modifier = Modif
 
 /**
  * Like [MetadataRow], but stacks [value] below [label] instead of side-by-side — for values too
- * long to share a line at any reasonable width, e.g. [io.github.hokanosekai.tensai.compat.Compatibility.explanation].
+ * long to share a line at any reasonable width, e.g. [compatExplanation]'s sentence.
  */
 @Composable
 private fun WrappingMetadataRow(label: String, value: String, modifier: Modifier = Modifier) {

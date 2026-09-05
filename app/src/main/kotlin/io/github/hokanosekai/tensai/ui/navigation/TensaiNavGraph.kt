@@ -111,6 +111,9 @@ fun TensaiNavGraph(
             ModelsScreen(
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
                 onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                // Pushed, not popped-to, mirroring how Settings pushes Models: back from Settings
+                // returns to the list the user was looking at when the banner sent them there.
+                onNavigateToStorage = { navController.navigate(TensaiDestination.Settings.route) },
             )
         }
 

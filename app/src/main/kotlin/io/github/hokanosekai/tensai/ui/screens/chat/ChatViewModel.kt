@@ -38,13 +38,36 @@ import kotlinx.coroutines.withContext
 private const val StreamPersistIntervalMs = 100L
 
 /**
+ * How an assistant reply's generation ended, as far as the *reader* is concerned — see
+ * [ChatMessageUi.ending].
+ *
+ * One field with three values, not two booleans, and that is the point: a reply cannot both have
+ * broken and have been stopped, so the type says so and no chip row has to be trusted to enforce
+ * it. TEN-52 introduced the failure case as a `failed: Boolean`; TEN-39 adds the third and folds
+ * both into this.
+ */
+enum class ReplyEnding {
+    /**
+     * Nothing to report. The model ended its own turn, or the reply is still streaming — both look
+     * identical here, and both are correctly silent: a partial reply on screen right now needs no
+     * label, the cursor is the label.
+     */
+    Normal,
+
+    /** [StopReason.Failed] — generation ended on a [DecodeEvent.Error] (TEN-52). */
+    Failed,
+
+    /** [StopReason.Cancelled] — the user tapped stop (TEN-39). See [ChatViewModel.stop]. */
+    Stopped,
+}
+
+/**
  * UI-facing view of a persisted [MessageEntity] — `null` for system/tool messages, which have
  * nothing to render in V1 (see [toUi]).
  *
- * @param failed whether generation ended on a [DecodeEvent.Error] ([StopReason.Failed], TEN-52).
- *   Orthogonal to [stats], not part of it: a failed decode reports no stats at all, so this is the
- *   only trace of it, and it is what lets the chat show a reply cut short by a failure differently
- *   from one the user stopped (which also has no stats, and nothing wrong with it).
+ * @param ending how generation ended, when that is worth saying — see [ReplyEnding]. Orthogonal to
+ *   [stats], not part of it: neither a failed nor a stopped decode reports stats at all, so this is
+ *   the only trace either one leaves.
  */
 data class ChatMessageUi(
     val id: String,
@@ -52,7 +75,7 @@ data class ChatMessageUi(
     val content: String,
     val thinking: String?,
     val stats: MessageStatsUi?,
-    val failed: Boolean,
+    val ending: ReplyEnding,
 )
 
 /**
@@ -117,7 +140,17 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
         content = content,
         thinking = thinking,
         stats = stats,
-        failed = stopReason == StopReason.Failed.name,
+        // Read off the recorded reason, never inferred from what is missing. A row still streaming
+        // has no stats and no reason either, so "absence means the user stopped it" would label
+        // every reply in flight as stopped — which is exactly why TEN-39 records Cancelled instead
+        // of continuing to treat stopping as the absence of the other two outcomes. Rows written
+        // before that (a stopped reply from an older build) stay Normal: the reason was not
+        // recorded, and guessing is worse than staying quiet, same call TEN-60 made for truncation.
+        ending = when (stopReason) {
+            StopReason.Failed.name -> ReplyEnding.Failed
+            StopReason.Cancelled.name -> ReplyEnding.Stopped
+            else -> ReplyEnding.Normal
+        },
     )
 }
 
@@ -134,6 +167,22 @@ sealed class ChatError {
      * this is the only trace of it the user sees.
      */
     data object ContextWindowFull : ChatError()
+
+    /**
+     * A generation broke before producing a single token, so there is no partial reply to hang
+     * [StopReason.Failed] on and nothing was kept (TEN-64). Structurally the same situation as
+     * [ContextWindowFull] — an attempt that left no turn behind — and reported the same way, as a
+     * dismissible banner with a retry, for the same reason: silence would leave the user staring at
+     * a chat that simply did not answer.
+     *
+     * This replaces TEN-52's other answer to the same case, which was to persist
+     * `"Error: " + the exception's message` as the reply's body (TEN-39). That put a JNI failure
+     * string — `llama_decode failed`, and worse — in a message bubble, permanently, in the middle
+     * of a conversation, and then replayed it into every later prompt as if the assistant had said
+     * it. The failure is worth reporting; the engine's wording of it is not, and the history is not
+     * the place to keep it.
+     */
+    data object GenerationFailed : ChatError()
 }
 
 /**
@@ -144,10 +193,11 @@ sealed class ChatError {
  * later prompt via [ChatRepository.toEngineMessages] for nothing, and would show as a blank bubble
  * with no explanation.
  *
- * Does not special-case [ChatError] — an empty reply that came from a genuine engine error is given
- * the failure's own message as its content before it gets here (see [ChatViewModel.streamInto],
- * which asks this same question to decide that), so it never reaches here with both fields empty in
- * the first place.
+ * Does not special-case a failure, and no longer needs to. TEN-52 used to hand an empty failed turn
+ * the exception's own message so it would pass this check and survive; TEN-39 lets it be deleted
+ * like any other empty turn and reports the failure as a [ChatError.GenerationFailed] banner
+ * instead. The user still hears about it — they just don't get a JNI error string permanently
+ * lodged in their conversation, and replayed into every prompt after it.
  */
 internal fun hasPersistableContent(content: String, thinking: String?): Boolean =
     content.isNotEmpty() || !thinking.isNullOrEmpty()
@@ -271,14 +321,48 @@ class ChatViewModel(
     }
 
     /**
+     * Set by [stop] and read by [streamInto]'s `finally` to record [StopReason.Cancelled].
+     *
+     * `@Volatile` because the two run on different threads: `stop()` is called from the UI thread,
+     * the `finally` from [scope] ([kotlinx.coroutines.Dispatchers.Default]). Cleared at the top of
+     * every [streamInto], so a flag left over from a previous turn cannot mislabel the next one.
+     *
+     * This is what makes "the user stopped it" a *fact* rather than an inference. It cannot be
+     * confused with any other cancellation because nothing else sets it: leaving the chat screen
+     * doesn't cancel a generation at all (it runs on [scope], see this class's KDoc), and the
+     * notification's stop action goes through
+     * [io.github.hokanosekai.tensai.runtime.InferenceService], whose cancel is not routed here — a
+     * generation stopped from the notification therefore stays unlabelled rather than being
+     * labelled wrongly, which is the safe direction to be incomplete in.
+     */
+    @Volatile
+    private var stopRequested = false
+
+    /**
      * Stops the active generation, if any. The partial reply streamed so far is left exactly as
      * is — see [streamInto]'s `finally`, which persists whatever was accumulated regardless of how
-     * generation ended. No explicit "stopped" flag: stopped is the *absence* of both of the other
-     * two outcomes, i.e. no stats (only [DecodeEvent.Done] sets them) and no stop reason (only
-     * [DecodeEvent.Error] sets one without stats, as [StopReason.Failed]). Deliberately silent in
-     * the UI: the user knows they tapped stop, so there is nothing to tell them.
+     * generation ended, now with [StopReason.Cancelled] recorded against it.
+     *
+     * **This reverses TEN-52's deliberate silence here** ("the user knows they tapped stop, so
+     * there is nothing to tell them"), and the reasoning it reverses is right about the moment and
+     * wrong about the row. In the second the button is pressed there is indeed nothing to say. But
+     * the row outlives that second: reopened a week later, or scrolled past twenty turns up, a
+     * stopped reply was byte-for-byte a complete short answer — no stats, no reason, no mark — and
+     * the reader had no way to tell "the model said this" from "the model was saying this when I
+     * cut it off". That is the same class of confusion TEN-52 itself fixed for failures, with the
+     * user rather than the engine as the cause. It also matters beyond the reading: a truncated
+     * reply is replayed into every later prompt by [ChatRepository.toEngineMessages] as if it were
+     * a finished one, and the chip is what tells the user why the model keeps building on half a
+     * sentence.
+     *
+     * The chip cannot collide with TEN-52's "generation failed" one: both come from the single
+     * [ChatMessageUi.ending] field, so the row renders exactly one of them, and `failed` still wins
+     * when a decode manages to both error and be stopped (see the `finally` below).
      */
-    fun stop() = inferenceQueue.cancelActive()
+    fun stop() {
+        stopRequested = true
+        inferenceQueue.cancelActive()
+    }
 
     /**
      * Drops the last assistant reply (if the conversation's last message is one — read fresh from
@@ -461,19 +545,19 @@ class ChatViewModel(
      *
      * A generation has exactly three ways to end, and the persisted row has to tell them apart
      * (TEN-52): it finished (the engine's own [StopReason], carried by [DecodeEvent.Done]'s stats),
-     * the user stopped it (no stats, no stop reason), or it failed ([StopReason.Failed], and no
-     * stats, since [DecodeEvent.Error] carries none). Only [failed] tells the last two apart: a
-     * [DecodeEvent.Error] arriving after the first token used to leave the row indistinguishable
-     * from a stopped one, so a real engine failure was persisted as if the model had simply been
-     * interrupted on purpose, and the user was shown a truncated answer with no hint anything had
-     * gone wrong.
+     * the user stopped it ([StopReason.Cancelled], TEN-39), or it failed ([StopReason.Failed], and
+     * no stats, since [DecodeEvent.Error] carries none). A [DecodeEvent.Error] arriving after the
+     * first token used to leave the row indistinguishable from a stopped one, so a real engine
+     * failure was persisted as if the model had simply been interrupted on purpose; and a stopped
+     * one used to be recorded as nothing at all, which a still-streaming row also looks like.
+     * All three are now written down.
      */
     private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
         val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
-        var failureMessage: String? = null
         var failed = false
         var lastPersistAt = 0L
+        stopRequested = false
         try {
             inferenceQueue.generate(request).collect { event ->
                 when (event) {
@@ -498,33 +582,33 @@ class ChatViewModel(
                         }
                     }
                     is DecodeEvent.Done -> stats = event.stats
-                    is DecodeEvent.Error -> {
-                        failed = true
-                        failureMessage = event.cause.message ?: "generation failed"
-                    }
+                    // The cause is deliberately not kept. Nothing downstream is allowed to show it
+                    // (TEN-39), so holding on to it would only be an invitation to.
+                    is DecodeEvent.Error -> failed = true
                 }
             }
         } finally {
             parser.finish()
-            // A failure that produced nothing at all would be dropped by the [hasPersistableContent]
-            // check below (TEN-64), leaving the user with no turn and no explanation, so the
-            // exception's own message becomes the reply instead. Only then: mid-stream, the partial
-            // reply *is* the message and [StopReason.Failed] carries the failure, so overwriting
-            // what the model did manage to write with an exception string would say less, not more.
-            // Decided here rather than when the event arrived because the splitter can still be
-            // holding text back at that point, and this asks it the same question the check below
-            // will.
-            val content = if (failed && !hasPersistableContent(parser.content, parser.thinking)) {
-                "Error: $failureMessage"
-            } else {
-                parser.content
+            val content = parser.content
+            val kept = hasPersistableContent(content, parser.thinking)
+
+            // See the KDoc's three outcomes, in priority order.
+            //
+            // `failed` wins over everything, for the case a misbehaving engine emits both terminal
+            // events, or the user happens to tap stop on a decode that was already breaking: "it
+            // broke" is the more actionable of the two, and the more surprising.
+            //
+            // A stop only counts while there is no `stats`: tapping stop a heartbeat after
+            // DecodeEvent.Done has landed cancels a generation that already finished, and that
+            // reply is complete — labelling it "stopped" would be a lie the user could catch by
+            // reading it.
+            val stopReason = when {
+                failed -> StopReason.Failed
+                stopRequested && stats == null -> StopReason.Cancelled
+                else -> stats?.stopReason
             }
-            // See the KDoc's three outcomes. `failed` wins over the stats' own reason rather than
-            // the other way round, for the case a misbehaving engine emits both terminal events:
-            // "it broke" is the more actionable of the two, and the more surprising.
-            val stopReason = if (failed) StopReason.Failed else stats?.stopReason
             withContext(NonCancellable) {
-                if (hasPersistableContent(content, parser.thinking)) {
+                if (kept) {
                     chatRepository.updateAssistantMessage(
                         assistantId,
                         content = content,
@@ -533,16 +617,26 @@ class ChatViewModel(
                         stopReason = stopReason,
                     )
                 } else {
-                    // TEN-64: nothing worth keeping — see hasPersistableContent's KDoc.
+                    // TEN-64: nothing worth keeping — see hasPersistableContent's KDoc. Including a
+                    // failure that produced nothing: TEN-52 used to keep those by writing the
+                    // exception's message into the body, which is what the banner below replaces.
                     chatRepository.deleteMessage(assistantId)
                 }
             }
 
-            // TEN-65: llama.cpp produced literally nothing because the prompt alone left no room to
-            // generate into — that's not a message to leave silently absent, it's a state the user
-            // needs to act on (see ChatError.ContextWindowFull's KDoc).
+            // Two ways to end a turn with nothing to show for it, both of which the user has to
+            // hear about because no bubble was left behind to say it for them:
+            //
+            // - TEN-65: llama.cpp produced literally nothing because the prompt alone left no room
+            //   to generate into (see ChatError.ContextWindowFull).
+            // - TEN-39: the decode broke before its first token (see ChatError.GenerationFailed).
+            //
+            // A failure that *did* produce text needs no banner — the reply is on screen carrying
+            // its own "generation failed" chip, and a banner on top would say the same thing twice.
             if (stats?.stopReason == StopReason.ContextBudgetExhausted) {
                 _error.value = ChatError.ContextWindowFull
+            } else if (failed && !kept) {
+                _error.value = ChatError.GenerationFailed
             }
         }
     }

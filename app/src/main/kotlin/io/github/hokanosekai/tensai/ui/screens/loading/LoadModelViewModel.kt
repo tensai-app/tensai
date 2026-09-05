@@ -57,8 +57,16 @@ sealed class LoadUiState {
     /** Load failed with [OutOfMemoryException] — see the "Not enough memory" dialog. */
     data class OomFailed(val model: ModelEntity) : LoadUiState()
 
-    /** Load failed with anything else. */
-    data class GenericFailed(val model: ModelEntity, val message: String) : LoadUiState()
+    /**
+     * Load failed with anything else, classified into a [LoadFailure] (TEN-39).
+     *
+     * Used to carry the exception's own `message`, which the dialog printed verbatim: the strings
+     * reaching it come off the JNI boundary and read like `llama_model_load: error loading model:
+     * check_tensor_dims: tensor 'token_embd.weight' has wrong shape`. Nothing a person can act on,
+     * and precisely the "no technical jargon in an error state" this ticket rules out. The
+     * throwable is not kept at all — see [LoadFailure] for why classifying beats carrying.
+     */
+    data class GenericFailed(val model: ModelEntity, val failure: LoadFailure) : LoadUiState()
 }
 
 /**
@@ -153,7 +161,7 @@ class LoadModelViewModel(
             } catch (_: OutOfMemoryException) {
                 _state.value = LoadUiState.OomFailed(model)
             } catch (e: Exception) {
-                _state.value = LoadUiState.GenericFailed(model, e.message ?: "Load failed")
+                _state.value = LoadUiState.GenericFailed(model, LoadFailure.of(e))
             } finally {
                 progressJob.cancel()
             }

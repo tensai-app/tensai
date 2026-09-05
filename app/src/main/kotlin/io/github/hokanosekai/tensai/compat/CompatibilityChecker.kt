@@ -4,7 +4,6 @@ import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.engine.KvCacheType
-import java.util.Locale
 
 /** Traffic-light verdict for whether a [ModelEntity] is a good idea to load on this device. */
 enum class Verdict {
@@ -21,8 +20,21 @@ enum class Verdict {
 /**
  * Result of [CompatibilityChecker.check].
  *
- * @param label short, human-readable verdict ("Runs well", "Tight fit", "Won't fit").
- * @param explanation one-line, numbers-first justification, e.g. "needs ~4.1 GB, you have 8.0 GB".
+ * Carries figures, not sentences. The label and the "needs ~X GB, your phone has Y GB" line used
+ * to be formatted here; they are user-facing copy and now live in `strings.xml`, rendered by
+ * `ModelFormatting`'s `compatLabel`/`compatExplanation` (TEN-39). The point is not only that they
+ * are translatable: it is that there is exactly **one** place a screen can get those two numbers
+ * from, so nothing can quietly grow a second estimate that disagrees with the verdict shown next
+ * to it.
+ *
+ * @param estimatedBytes what this model is expected to cost to load: weights + KV cache at
+ *   [CompatibilityChecker]'s planned context (through [KvCacheSize], the one KV formula in the
+ *   app) + compute-buffer overhead. This is the number the verdict is decided from, and the same
+ *   one the UI prints.
+ * @param deviceRamBytes [DeviceProfile.totalRamBytes] — total physical RAM, not what happens to be
+ *   free right now. The comparison the user is shown is against the phone they own, which does not
+ *   change while they read it; [DeviceProfile.availableRamBytes] only feeds the
+ *   [Verdict.TightFit] judgement.
  * @param recommendedBackend backend this model's architecture is expected to run best on for
  *   *this* device (see [CompatibilityChecker]'s per-architecture table) — a hint for the loader's
  *   default, not a guarantee; the user can still override it ("load anyway" is a UI decision, not
@@ -30,8 +42,8 @@ enum class Verdict {
  */
 data class Compatibility(
     val verdict: Verdict,
-    val label: String,
-    val explanation: String,
+    val estimatedBytes: Long,
+    val deviceRamBytes: Long,
     val recommendedBackend: BackendHint,
 )
 
@@ -73,8 +85,6 @@ object CompatibilityChecker {
     /** Reserved for the OS and the rest of the running system — not available to the model. */
     private const val SYSTEM_RAM_MARGIN_BYTES = 1_536L * 1024 * 1024
 
-    private const val BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0
-
     /**
      * Dense models at or above this size sit at or below the ~2 tok/s usable floor on this device
      * class per the measured table (Phi-4-mini, 3.8B: 1.7-2.3 tok/s; Qwen2.5-7B, 7B: 0.2 tok/s),
@@ -108,19 +118,10 @@ object CompatibilityChecker {
             else -> Verdict.RunsWell
         }
 
-        // Locale.US, not the device locale: this is a fixed "1.2" not "1,2" regardless of where
-        // the app runs — matches how ModelFormatting's formatFileSize/formatParamCount read too.
-        val explanation = String.format(
-            Locale.US,
-            "needs ~%.1f GB, you have %.1f GB",
-            estimatedBytes / BYTES_PER_GB,
-            profile.totalRamBytes / BYTES_PER_GB,
-        )
-
         return Compatibility(
             verdict = verdict,
-            label = labelFor(verdict),
-            explanation = explanation,
+            estimatedBytes = estimatedBytes,
+            deviceRamBytes = profile.totalRamBytes,
             recommendedBackend = recommendedBackend(model.architecture, profile.hasVulkan),
         )
     }
@@ -156,11 +157,5 @@ object CompatibilityChecker {
             DENSE_ARCH_MARKERS.any { arch.contains(it) } -> BackendHint.Cpu
             else -> BackendHint.Auto
         }
-    }
-
-    private fun labelFor(verdict: Verdict): String = when (verdict) {
-        Verdict.RunsWell -> "Runs well"
-        Verdict.TightFit -> "Tight fit"
-        Verdict.WontFit -> "Won't fit"
     }
 }

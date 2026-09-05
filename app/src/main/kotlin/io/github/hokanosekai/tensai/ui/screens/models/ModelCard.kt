@@ -19,13 +19,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
@@ -45,6 +49,14 @@ import java.io.File
  * model" action is replaced by "Remove", since there's nothing left to load. The delete icon
  * (top-right) always fires [onDeleteClick] with the file's current existence, letting the caller
  * decide whether a confirmation is warranted — see `ModelsScreen`'s handling of it.
+ *
+ * A [Verdict.WontFit] model gets the third treatment (TEN-39): the red dot keeps its label, the
+ * figures behind it are spelled out underneath ("needs ~6.2 GB, your phone has 8.0 GB" — from
+ * [compatExplanation], the one place those numbers become words), and the filled "Load model"
+ * button steps down to a quiet text action. Not disabled: the estimate is an estimate, and the
+ * user is allowed to disagree with it. Tapping it still lands on `LoadingScreen`'s own
+ * [io.github.hokanosekai.tensai.ui.screens.loading.LoadUiState.Blocked] confirmation, which is
+ * deliberate — the card only declines to *recommend* the load, the dialog is what actually asks.
  */
 @Composable
 internal fun ModelCard(
@@ -56,6 +68,9 @@ internal fun ModelCard(
     modifier: Modifier = Modifier,
 ) {
     val fileExists = rememberFileExists(model.filePath)
+    // One check per card, shared by the badge row and the action below it — the two must never
+    // reach different conclusions about the same model.
+    val compatibility = if (fileExists) modelCompatibility(model) else null
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -103,10 +118,24 @@ internal fun ModelCard(
             ) {
                 MonoBadge(model.quantLabel)
                 MonoBadge(formatFileSize(model.sizeBytes))
-                if (fileExists) CompatIndicator(model) else MissingFileBadge()
+                if (compatibility != null) CompatIndicator(compatibility) else MissingFileBadge()
             }
 
-            if (fileExists) {
+            if (compatibility?.verdict == Verdict.WontFit) {
+                Text(
+                    text = compatExplanation(compatibility),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                TextButton(
+                    onClick = onLoadClick,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Text(stringResource(R.string.model_compat_load_anyway))
+                }
+            } else if (fileExists) {
                 Button(onClick = onLoadClick, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Text("Load model")
                 }
@@ -169,14 +198,20 @@ private fun MonoBadge(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Dot + short label for [model]'s [CompatibilityChecker] verdict on this device. */
+/**
+ * Dot + short label for a [CompatibilityChecker] verdict on this device.
+ *
+ * Takes the [Compatibility] rather than the model it came from (TEN-39): callers that also show
+ * the explanation next to it — [ModelCard], the onboarding's import step — would otherwise run the
+ * check twice against a [io.github.hokanosekai.tensai.compat.DeviceProfile] read at two different
+ * instants, and `availableRamBytes` moves between them. One check, one verdict, one sentence.
+ */
 @Composable
-internal fun CompatIndicator(model: ModelEntity, modifier: Modifier = Modifier) {
-    val compatibility = modelCompatibility(model)
+internal fun CompatIndicator(compatibility: Compatibility, modifier: Modifier = Modifier) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
         CompatDot(compatibility.verdict)
         Text(
-            text = compatibility.label,
+            text = compatLabel(compatibility.verdict),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

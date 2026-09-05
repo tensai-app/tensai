@@ -44,7 +44,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
@@ -137,6 +139,16 @@ fun ChatScreen(
         }
         if (error is ChatError.ContextWindowFull) {
             ContextWindowFullBanner(onDismiss = viewModel::clearError, modifier = Modifier.fillMaxWidth())
+        }
+        if (error is ChatError.GenerationFailed) {
+            GenerationFailedBanner(
+                onRetry = {
+                    viewModel.clearError()
+                    viewModel.regenerate()
+                },
+                onDismiss = viewModel::clearError,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         ChatToolbarRow(
             showThinkingToggle = supportsThinking,
@@ -296,6 +308,39 @@ private fun ContextWindowFullBanner(onDismiss: () -> Unit, modifier: Modifier = 
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onDismiss) { Text("Dismiss") }
+        }
+    }
+}
+
+/**
+ * Shown when [ChatViewModel.error] holds [ChatError.GenerationFailed] (TEN-39) — a decode that
+ * broke before its first token, so no turn was kept for it (see [ChatViewModel.streamInto]).
+ *
+ * Same treatment as [ContextWindowFullBanner], because it is the same situation: an attempt that
+ * left nothing behind to explain itself. What it deliberately does *not* do is say why, in the
+ * engine's words — see [ChatError.GenerationFailed] for what that used to look like in a message
+ * bubble. "Try again" is the honest action: the failures that reach here (a decode aborted by
+ * memory pressure, a backend hiccup) are usually not repeatable, and regenerating from the same
+ * history is one tap.
+ */
+@Composable
+private fun GenerationFailedBanner(
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(color = MaterialTheme.tensaiTints.error12, modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.chat_generation_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_generation_failed_dismiss)) }
+            TextButton(onClick = onRetry) { Text(stringResource(R.string.chat_generation_failed_retry)) }
         }
     }
 }

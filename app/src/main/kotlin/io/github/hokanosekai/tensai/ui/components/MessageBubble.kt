@@ -18,9 +18,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatMessageUi
 import io.github.hokanosekai.tensai.ui.screens.chat.MessageStatsUi
+import io.github.hokanosekai.tensai.ui.screens.chat.ReplyEnding
 import io.github.hokanosekai.tensai.ui.screens.chat.TruncationReason
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
@@ -30,8 +34,8 @@ import java.util.Locale
  * A single turn in the chat. Per the design: a user message is a `surface-variant` bubble
  * right-aligned; an assistant reply is a [ThinkingBlock] (if [ChatMessageUi.thinking] is present)
  * followed by [ChatMessageUi.content] rendered as [MarkdownText], full width, no bubble — with a
- * mono stats chip (or a [FailedChip], if generation broke) and, for the last one, a regenerate
- * action, once it's finished.
+ * mono stats chip (or an [EndingChip], if generation broke or was stopped) and, for the last one, a
+ * regenerate action, once it's finished.
  *
  * A user message is drawn as plain [Text], not [MarkdownText] — nothing the user typed should be
  * reinterpreted as markdown.
@@ -82,14 +86,27 @@ fun MessageBubble(
                 )
             }
 
-            if (message.stats != null || message.failed || onRegenerate != null) {
+            if (message.stats != null || message.ending != ReplyEnding.Normal || onRegenerate != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 8.dp),
                 ) {
                     message.stats?.let { StatsChip(it) }
-                    if (message.failed) FailedChip()
+                    // Exhaustive over one field, so the row can only ever carry one of these —
+                    // "generation failed" and "stopped" answer the same question and cannot both
+                    // be the answer. See ReplyEnding.
+                    when (message.ending) {
+                        ReplyEnding.Normal -> Unit
+                        ReplyEnding.Failed -> EndingChip(
+                            text = stringResource(R.string.chat_reply_failed),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        ReplyEnding.Stopped -> EndingChip(
+                            text = stringResource(R.string.chat_reply_stopped),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     onRegenerate?.let { regenerate ->
                         IconButton(onClick = regenerate, modifier = Modifier.size(28.dp)) {
                             Icon(
@@ -107,23 +124,27 @@ fun MessageBubble(
 }
 
 /**
- * Marks a reply whose generation ended on an engine error (TEN-52). Sits in the same row, with the
- * same mono chip shape and the same error colour as [StatsChip]'s "cut off" suffixes: a reply that
- * broke and a reply that hit its budget are the same kind of news for the reader, and the
- * regenerate action they both want is the very next thing in the row.
+ * Marks *how* a reply's generation ended, when that is worth a word — "generation failed" (TEN-52)
+ * or "stopped" (TEN-39). Sits in the same row as [StatsChip], with the same mono chip shape, so a
+ * reply that broke, one that was cut short and one that hit its budget all read the same way, and
+ * the regenerate action all three want is the very next thing in the row.
  *
- * Its own chip rather than a [MessageStatsUi.truncation] case because a failed decode reports no
- * stats to hang a suffix on. When a reply failed before producing anything at all, the exception's
- * own text is the message body (see `ChatViewModel.streamInto`) and this chip labels it.
+ * Its own chip rather than a [MessageStatsUi.truncation] suffix because neither a failed nor a
+ * stopped decode reports stats to hang a suffix on.
+ *
+ * [color] is the whole difference between the two: a failure is `error`, a stop is
+ * `onSurfaceVariant`. Stopping is not a fault and must not be dressed as one — the user did it on
+ * purpose. The chip is there so that they can still tell, later, that this particular reply was
+ * theirs to cut short rather than the model's to end.
  */
 @Composable
-private fun FailedChip(modifier: Modifier = Modifier) {
+private fun EndingChip(text: String, color: Color, modifier: Modifier = Modifier) {
     Surface(shape = TensaiShapes.small, color = MaterialTheme.colorScheme.surface, modifier = modifier) {
         Text(
-            text = "generation failed",
+            text = text,
             fontFamily = TensaiMono,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.error,
+            color = color,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }

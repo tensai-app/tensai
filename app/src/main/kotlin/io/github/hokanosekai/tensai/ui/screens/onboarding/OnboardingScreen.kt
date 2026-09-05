@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,22 +41,22 @@ import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
-import io.github.hokanosekai.tensai.data.models.DuplicateModelException
-import io.github.hokanosekai.tensai.data.models.InsufficientStorageException
 import io.github.hokanosekai.tensai.data.models.ModelEntity
-import io.github.hokanosekai.tensai.data.models.ModelImportException
-import io.github.hokanosekai.tensai.data.models.ModelMetadataException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.screens.models.CompatIndicator
 import io.github.hokanosekai.tensai.ui.screens.models.GgufMimeTypes
+import io.github.hokanosekai.tensai.ui.screens.models.ImportFailure
+import io.github.hokanosekai.tensai.ui.screens.models.compatExplanation
 import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
+import io.github.hokanosekai.tensai.ui.screens.models.importFailureBody
 import io.github.hokanosekai.tensai.ui.screens.models.modelCompatibility
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -105,6 +106,7 @@ fun OnboardingScreen(
     var step by remember { mutableStateOf(startStep) }
     var imported by remember { mutableStateOf<ModelEntity?>(null) }
     var importProgress by remember { mutableStateOf<Float?>(null) }
+    var importFailure by remember { mutableStateOf<ImportFailure?>(null) }
 
     val backend by backendRepository.preference.collectAsState(initial = BackendPreference.Auto)
     val theme by themeRepository.themeMode.collectAsState(initial = ThemeMode.System)
@@ -118,18 +120,30 @@ fun OnboardingScreen(
             importProgress = 0f
             try {
                 imported = modelRepository.importModel(uri) { progress -> importProgress = progress }
-            } catch (e: DuplicateModelException) {
-                snackbarHostState.showSnackbar(e.message ?: "This model is already imported.")
-            } catch (e: InsufficientStorageException) {
-                snackbarHostState.showSnackbar(e.message ?: "Not enough free storage.")
-            } catch (e: ModelMetadataException) {
-                snackbarHostState.showSnackbar(e.message ?: "Could not read this file's metadata.")
-            } catch (e: ModelImportException) {
-                snackbarHostState.showSnackbar(e.message ?: "Import failed.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Same classify-don't-read rule as ModelsScreen's import (TEN-39): this is the
+                // *first* import a user ever attempts, so it is the one most likely to fail, and
+                // the least useful moment to answer with an IOException's own wording. Kept as a
+                // snackbar rather than promoted to ModelsScreen's card — the wizard step already
+                // owns the retry affordance ("Choose a GGUF file" is right there, unchanged), so a
+                // card would add a second one.
+                importFailure = ImportFailure.of(e)
             } finally {
                 importProgress = null
             }
         }
+    }
+
+    // Resolved in composition (stringResource needs it) and shown from an effect, since
+    // showSnackbar suspends. Cleared once shown, so the same failure twice in a row is announced
+    // twice rather than swallowed as an unchanged key.
+    val importFailureMessage = importFailure?.let { importFailureBody(it) }
+    LaunchedEffect(importFailureMessage) {
+        val message = importFailureMessage ?: return@LaunchedEffect
+        importFailure = null
+        snackbarHostState.showSnackbar(message)
     }
 
     fun skip() {
@@ -294,9 +308,12 @@ private fun ImportStep(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
                     )
-                    CompatIndicator(imported, modifier = Modifier.padding(top = 10.dp))
+                    // One check for both rows — see CompatIndicator's KDoc for why this is read
+                    // once rather than twice.
+                    val compatibility = modelCompatibility(imported)
+                    CompatIndicator(compatibility, modifier = Modifier.padding(top = 10.dp))
                     Text(
-                        text = modelCompatibility(imported).explanation,
+                        text = compatExplanation(compatibility),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),

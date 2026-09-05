@@ -16,6 +16,7 @@ import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.GgufInfo
+import io.github.hokanosekai.tensai.engine.InferenceException
 import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
@@ -26,6 +27,7 @@ import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
@@ -284,16 +286,22 @@ class ChatViewModelTest {
         assertEquals(TOKENS_PER_TURN, reply.tokensGenerated)
 
         val ui = viewModel.messages.first().last()
-        assertFalse("a reply that finished is not a failed one", ui.failed)
+        assertEquals("a reply that finished carries no ending chip at all", ReplyEnding.Normal, ui.ending)
     }
 
     /**
-     * TEN-52, second outcome: the user tapped stop. The partial reply stays, and nothing is
-     * recorded about how it ended — there is nothing to tell the user that they don't already
-     * know, and it must not read as a failure.
+     * TEN-52's second outcome, as TEN-39 changed it: the user tapped stop. The partial reply stays
+     * — that part is unchanged — but the row now records [StopReason.Cancelled] where it used to
+     * record nothing.
+     *
+     * **Behaviour change, deliberate.** This test previously asserted `stopReason` was `null` and
+     * that the UI showed nothing. `null` was indistinguishable from a reply still streaming and
+     * from a complete short answer read back later, so a stopped reply was silently identical to
+     * one the model had finished. It must still not read as a *failure*, and that is what the last
+     * assertion pins.
      */
     @Test
-    fun aGenerationTheUserStopsKeepsItsPartialReplyAndRecordsNoStopReason() = runBlocking {
+    fun aGenerationTheUserStopsKeepsItsPartialReplyAndRecordsThatItWasStopped() = runBlocking {
         loadFakeModel()
         engine.scriptedEvents = listOf(DecodeEvent.Token("half an answer"))
         engine.hangBeforeTerminal = true
@@ -312,10 +320,41 @@ class ChatViewModelTest {
         val reply = chatRepository.observeMessages(conversation).first().last()
         assertEquals("half an answer", reply.content)
         assertNull("a stopped reply never finished, so it has no stats", reply.tokensGenerated)
-        assertNull("stopping is not a stop reason: it is the absence of one", reply.stopReason)
+        assertEquals(
+            "stopping is recorded, not inferred from three nulls — see StopReason.Cancelled",
+            StopReason.Cancelled.name,
+            reply.stopReason,
+        )
 
         val ui = viewModel.messages.first().last()
-        assertFalse("stopping on purpose must not be shown as a failure", ui.failed)
+        assertEquals(
+            "stopping on purpose is its own ending, and must never be the failure one",
+            ReplyEnding.Stopped,
+            ui.ending,
+        )
+    }
+
+    /**
+     * The reason [ChatViewModel.stop]'s flag is not enough on its own (TEN-39): a stop landing just
+     * after the engine's own terminal event cancels a generation that has already finished. The
+     * reply is complete and reads as complete, so it must keep the engine's stop reason and its
+     * stats rather than be relabelled "stopped" — a label the reader could catch out by simply
+     * reading the sentence it ends.
+     */
+    @Test
+    fun stoppingAfterTheReplyAlreadyFinishedLeavesItAFinishedReply() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        // The generation is over by now; this is the late tap.
+        viewModel.stop()
+
+        assertEquals(StopReason.Complete.name, reply.stopReason)
+        assertEquals(TOKENS_PER_TURN, reply.tokensGenerated)
+        assertEquals(ReplyEnding.Normal, viewModel.messages.first().last().ending)
     }
 
     /**
@@ -342,37 +381,50 @@ class ChatViewModelTest {
         assertNull("a failed decode reports no stats", reply.tokensGenerated)
 
         val ui = viewModel.messages.first().last()
-        assertTrue("the failure has to reach the UI, not just the row", ui.failed)
+        assertEquals("the failure has to reach the UI, not just the row", ReplyEnding.Failed, ui.ending)
         assertNull("no stats chip for a decode that never finished", ui.stats)
+        assertNull("a reply that survived needs no banner — its own chip says it", viewModel.error.value)
     }
 
     /**
-     * TEN-64's guarantee, re-checked now that a failure is also recorded as a stop reason: an error
-     * *before* the first token leaves nothing to keep, so the exception's own text becomes the
-     * message body rather than the turn being dropped as empty.
+     * An error *before* the first token leaves nothing worth keeping, so TEN-64 drops the turn —
+     * and TEN-39 reports the failure as a [ChatError.GenerationFailed] banner instead.
+     *
+     * **Behaviour change, deliberate.** This test previously asserted the reply's content was
+     * `"Error: model gone"` — the exception's own message, promoted to the body of a chat bubble
+     * and persisted there forever. That is a stack-trace sentence in a message bubble, and it was
+     * also replayed into every later prompt by `toEngineMessages` as if the assistant had said it.
+     * The user still hears that the generation failed; they hear it in the app's words, once, from
+     * something they can dismiss.
      */
     @Test
-    fun anErrorBeforeTheFirstTokenStillCarriesItsMessageAsTheReply() = runBlocking {
+    fun anErrorBeforeTheFirstTokenKeepsNoTurnAndRaisesTheFailureBanner() = runBlocking {
         loadFakeModel()
         engine.scriptedEvents = listOf(DecodeEvent.Error(RuntimeException("model gone")))
         val conversation = chatRepository.createConversation(modelId = null)
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        withTimeout(5_000) {
+            while (viewModel.error.value == null) delay(10)
+        }
 
-        assertEquals("Error: model gone", reply.content)
-        assertEquals(StopReason.Failed.name, reply.stopReason)
+        assertEquals(ChatError.GenerationFailed, viewModel.error.value)
+        val messages = chatRepository.observeMessages(conversation).first()
+        assertEquals("the empty assistant turn is dropped, not filled in", 1, messages.size)
+        assertEquals("user", messages.single().role)
     }
 
     /**
-     * The same guarantee for a reply that opened and closed an empty `<think>` block before
-     * failing: the splitter reports an empty (not absent) reasoning, which is still nothing worth
-     * keeping by [hasPersistableContent]'s own reckoning, so this must take the failure message
-     * rather than be dropped as an empty turn.
+     * The same, for a reply that opened and closed an empty `<think>` block before failing: the
+     * splitter reports an empty (not absent) reasoning, which is still nothing worth keeping by
+     * [hasPersistableContent]'s own reckoning, so the turn goes and the banner comes up.
+     *
+     * **Behaviour change, deliberate** — same one as the test above, which this one mirrors through
+     * the splitter rather than around it.
      */
     @Test
-    fun anErrorAfterAnEmptyThinkBlockStillCarriesItsMessageAsTheReply() = runBlocking {
+    fun anErrorAfterAnEmptyThinkBlockAlsoKeepsNoTurn() = runBlocking {
         loadFakeModel()
         engine.scriptedEvents = listOf(
             DecodeEvent.Token("<think></think>"),
@@ -382,10 +434,63 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
+        withTimeout(5_000) {
+            while (viewModel.error.value == null) delay(10)
+        }
+
+        assertEquals(ChatError.GenerationFailed, viewModel.error.value)
+        assertEquals(1, chatRepository.observeMessages(conversation).first().size)
+    }
+
+    /**
+     * The acceptance criterion this ticket is most able to prove, taken through the whole chat
+     * path: **no state the user can reach carries the exception's own words**.
+     *
+     * The cause below is a real-shaped JNI failure — a native function name, a return code, and a
+     * stack frame. Before TEN-39 the first two of these assertions failed: `streamInto` wrote
+     * `"Error: " + cause.message` into the message body whenever the decode produced nothing, so
+     * every one of those tokens ended up on screen and in the database.
+     *
+     * Checked two ways. The [TechnicalJargon] sweep runs over the text a reader actually sees — the
+     * message bodies and their reasoning — which is where the leak used to be. The
+     * distinctive-token sweep then runs over the *whole* `ChatMessageUi` list and the surfaced
+     * error, so a future field that starts carrying the throwable through fails this too, even
+     * though nothing renders that field yet.
+     */
+    @Test
+    fun noJargonFromAFailedDecodeReachesTheUserAnywhere() = runBlocking {
+        loadFakeModel()
+        val jargon = "llama_decode failed: rc=-1 at com.tensai.llamakt.LlamaEngine.decode(LlamaEngine.kt:214)"
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("here is the "),
+            DecodeEvent.Error(InferenceException(jargon)),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
         val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
 
-        assertEquals("Error: out of memory", reply.content)
-        assertEquals(StopReason.Failed.name, reply.stopReason)
+        assertEquals("the partial reply survives, unchanged", "here is the ", reply.content)
+
+        val messages = viewModel.messages.first()
+        val readableText = messages.joinToString(" ") { it.content + " " + it.thinking.orEmpty() }
+        assertEquals(
+            "nothing a reader sees may come from the exception",
+            emptyList<String>(),
+            TechnicalJargon.offendersIn(readableText),
+        )
+
+        // Not TechnicalJargon here: a data class's toString() renders absent fields as `null`,
+        // which the JVM-null rule would flag as a false positive. These are the exception's own
+        // distinctive fragments instead — none of them may appear on any field, rendered or not.
+        val everything = messages.toString() + " " + viewModel.error.value
+        listOf("llama_decode", "rc=-1", "LlamaEngine", "InferenceException").forEach { fragment ->
+            assertFalse(
+                "\"$fragment\" survived from the exception into $everything",
+                everything.contains(fragment),
+            )
+        }
     }
 
     /**

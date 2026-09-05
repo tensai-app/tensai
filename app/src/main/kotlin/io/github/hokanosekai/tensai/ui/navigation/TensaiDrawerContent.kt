@@ -34,8 +34,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.QueueState
@@ -195,7 +197,14 @@ fun TensaiDrawerContent(
     }
 }
 
-/** "Recents" empty state — no conversation created yet. */
+/**
+ * "Recents" empty state (TEN-39, state 1) — no conversation created yet.
+ *
+ * Reached by exactly one real event: a library with no conversation rows in it, which is a blank
+ * install and also every install whose last chat was deleted. The glyph is at 0.3 alpha and the
+ * line is a `bodyMedium` in `onSurfaceVariant` — deliberately quieter than the "New chat" item
+ * above it, which is the thing to do about it.
+ */
 @Composable
 private fun EmptyRecentsState(modifier: Modifier = Modifier) {
     Column(
@@ -206,7 +215,7 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier) {
     ) {
         KanjiGlyph(size = 40.dp, modifier = Modifier.alpha(0.3f))
         Text(
-            text = "No chats yet",
+            text = stringResource(R.string.drawer_recents_empty),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),

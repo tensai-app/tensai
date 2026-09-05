@@ -107,4 +107,65 @@
     <!-- %1$s is a license name (MIT, Apache 2.0…), %2$s the copyright holder. -->
     <string name="settings_license_line">%1$s · %2$s</string>
 
+    <!-- ==================== Empty states and errors (TEN-39) ==================== -->
+
+    <!--
+         Everything below is what the user reads when something is missing or has gone wrong. One
+         rule governs the lot: no string here may contain an exception class name, a stack frame,
+         a package name or the raw text of a Throwable. `NoTechnicalJargonTest` enforces it by
+         reading this very file, so a jargon-carrying string added here fails the build rather than
+         reaching a screen.
+    -->
+
+    <!-- Drawer > Recents, before the first conversation exists. -->
+    <string name="drawer_recents_empty">No chats yet</string>
+
+    <!-- Compatibility traffic light. One label per io.github.hokanosekai.tensai.compat.Verdict. -->
+    <string name="model_compat_runs_well">Runs well</string>
+    <string name="model_compat_tight_fit">Tight fit</string>
+    <string name="model_compat_wont_fit">Won\'t fit</string>
+    <!--
+         %1$s is the memory this model needs, %2$s what the phone has — both already formatted as
+         sizes. The two numbers come from Compatibility.estimatedBytes/deviceRamBytes and nowhere
+         else, so the sentence can never disagree with the dot next to it.
+    -->
+    <string name="model_compat_explanation">needs ~%1$s, your phone has %2$s</string>
+    <!-- Deliberately quiet: it overrides a red light, so it must not read like the obvious action. -->
+    <string name="model_compat_load_anyway">Load anyway</string>
+
+    <!-- Models > storage pressure banner. See io.github.hokanosekai.tensai.ui.screens.models.StoragePressure. -->
+    <string name="models_storage_low_title">Storage is nearly full</string>
+    <!-- %1$s is the free space left, %2$s the average size of the models already on the phone. -->
+    <string name="models_storage_low_body">Only %1$s left, and the models here take %2$s each on average.</string>
+    <string name="models_storage_free_up">Free up space</string>
+
+    <!-- Models > import failure card. One body per io.github.hokanosekai.tensai.ui.screens.models.ImportFailure. -->
+    <string name="import_failed_title">Import didn\'t finish</string>
+    <!-- %1$s is the file's name. -->
+    <string name="import_failed_already_imported">%1$s is already in your models.</string>
+    <!-- %1$s is the size the file needs, %2$s the free space there was. -->
+    <string name="import_failed_no_space">This file needs %1$s and there is %2$s free. Remove a model and try again.</string>
+    <!-- %1$s is the file's name. -->
+    <string name="import_failed_not_a_model">%1$s isn\'t a GGUF model file, or the copy came out damaged.</string>
+    <!-- %1$s is the file's name. -->
+    <string name="import_failed_copy_interrupted">Copying %1$s stopped before it finished. Nothing was kept.</string>
+    <string name="import_failed_unknown">The import stopped before it finished. Nothing was kept.</string>
+    <string name="import_failed_retry">Try again</string>
+    <string name="import_failed_dismiss">Dismiss</string>
+
+    <!-- Loading > failure dialogs. See io.github.hokanosekai.tensai.ui.screens.loading.LoadFailure. -->
+    <string name="load_failed_title">Couldn\'t load this model</string>
+    <string name="load_failed_unreadable">This file couldn\'t be read as a model. Re-importing it usually fixes that.</string>
+    <string name="load_failed_busy">Something else was still using the model. Give it a moment and try again.</string>
+    <string name="load_failed_unknown">Loading stopped before it finished.</string>
+
+    <!-- Chat > a reply that produced nothing at all before breaking. See ChatError.GenerationFailed. -->
+    <string name="chat_generation_failed">That reply didn\'t come through. Try again?</string>
+    <string name="chat_generation_failed_retry">Try again</string>
+    <string name="chat_generation_failed_dismiss">Dismiss</string>
+
+    <!-- Chat > per-reply chips. Mutually exclusive: see ChatMessageUi.ending. -->
+    <string name="chat_reply_failed">generation failed</string>
+    <string name="chat_reply_stopped">stopped</string>
+
 </resources>

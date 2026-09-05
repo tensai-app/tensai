@@ -19,10 +19,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.compat.Compatibility
+import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.runtime.rememberNotificationPermissionRequester
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
+import io.github.hokanosekai.tensai.ui.screens.models.compatExplanation
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import java.util.Locale
 
@@ -73,7 +78,7 @@ fun LoadingScreen(
 
             is LoadUiState.Blocked -> BlockedDialog(
                 model = state.model,
-                explanation = state.compatibility.explanation,
+                compatibility = state.compatibility,
                 onLoadAnyway = viewModel::loadAnyway,
                 onSeeSmallerModels = onSeeSmallerModels,
             )
@@ -93,7 +98,7 @@ fun LoadingScreen(
             )
 
             is LoadUiState.GenericFailed -> GenericFailDialog(
-                message = state.message,
+                failure = state.failure,
                 onRetry = viewModel::retry,
                 onRetryOnCpu = viewModel::retryOnCpu,
                 onClose = onBack,
@@ -160,19 +165,25 @@ private fun FileMissingDialog(model: ModelEntity, onClose: () -> Unit) {
     )
 }
 
+/**
+ * The [Verdict.WontFit] confirmation (TEN-39, state 4 — the model card's own red light is the
+ * other half). Its numbers come from [compatExplanation], the same one sentence the card printed a
+ * tap earlier, off the same [Compatibility] instance the block was decided from — so the figure
+ * that stopped the load and the figure shown for it cannot disagree.
+ */
 @Composable
 private fun BlockedDialog(
     model: ModelEntity,
-    explanation: String,
+    compatibility: Compatibility,
     onLoadAnyway: () -> Unit,
     onSeeSmallerModels: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onSeeSmallerModels,
         title = { Text("\"${model.displayName}\" probably won't fit") },
-        text = { Text(explanation) },
+        text = { Text(compatExplanation(compatibility)) },
         confirmButton = {
-            TextButton(onClick = onLoadAnyway) { Text("Load anyway") }
+            TextButton(onClick = onLoadAnyway) { Text(stringResource(R.string.model_compat_load_anyway)) }
         },
         dismissButton = {
             TextButton(onClick = onSeeSmallerModels) { Text("See smaller models") }
@@ -195,17 +206,31 @@ private fun OomDialog(model: ModelEntity, onSeeSmallerModels: () -> Unit, onClos
     )
 }
 
+/**
+ * Every load failure that isn't out-of-memory. The body is chosen by [LoadFailure] — see
+ * [LoadUiState.GenericFailed] for what used to be printed here instead.
+ */
 @Composable
 private fun GenericFailDialog(
-    message: String,
+    failure: LoadFailure,
     onRetry: () -> Unit,
     onRetryOnCpu: () -> Unit,
     onClose: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("Couldn't load this model") },
-        text = { Text(message) },
+        title = { Text(stringResource(R.string.load_failed_title)) },
+        text = {
+            Text(
+                stringResource(
+                    when (failure) {
+                        LoadFailure.UnreadableModel -> R.string.load_failed_unreadable
+                        LoadFailure.EngineBusy -> R.string.load_failed_busy
+                        LoadFailure.Unknown -> R.string.load_failed_unknown
+                    },
+                ),
+            )
+        },
         confirmButton = {
             TextButton(onClick = onRetry) { Text("Retry") }
         },

@@ -1,7 +1,10 @@
 package io.github.hokanosekai.tensai.compat
 
+import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
+import io.github.hokanosekai.tensai.engine.KvCacheType
+import io.github.hokanosekai.tensai.ui.screens.models.formatGigabytes
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -146,8 +149,23 @@ class CompatibilityCheckerTest {
         assertEquals(BackendHint.Auto, result.recommendedBackend)
     }
 
+    /**
+     * The figures the traffic light's sentence is printed from (TEN-39).
+     *
+     * **Behaviour change, deliberate.** This used to assert on a preformatted
+     * `"needs ~1.0 GB, you have 8.0 GB"` string built inside [CompatibilityChecker]. The sentence
+     * moved to `strings.xml` (rendered by `ModelFormatting.compatExplanation`) and the checker now
+     * exposes the two numbers instead — so it asserts the numbers, which is the part that could
+     * actually be wrong.
+     *
+     * The estimate is checked against [KvCacheSize] rather than against a literal on purpose. A
+     * literal would pass just as happily if someone reintroduced a second KV formula here that
+     * happened to agree on this one model; this fails unless the checker really is going through
+     * the app's single KV-cache implementation, which is what TEN-18 established and what this
+     * ticket was asked not to undo.
+     */
     @Test
-    fun explanationReportsGigabytes() {
+    fun theEstimateIsWeightsPlusTheAppsOwnKvCacheFigurePlusOverhead() {
         val model = model(
             architecture = "qwen2",
             paramCount = 494_000_000,
@@ -159,7 +177,45 @@ class CompatibilityCheckerTest {
 
         val result = CompatibilityChecker.check(model, dimensity900_8gb)
 
-        assertEquals("needs ~1.0 GB, you have 8.0 GB", result.explanation)
+        // 4096 is CompatibilityChecker's planned context, F16 its planned cache type; both are
+        // private, so they are restated here — if either changes, this test is meant to notice.
+        val kvCacheBytes = KvCacheSize.bytesAt(model, nCtx = 4096, kvCacheType = KvCacheType.F16)
+        val overheadBytes = 300L * 1024 * 1024
+
+        assertEquals(
+            "the estimate must be the model's weights, the app's own KV-cache figure and the " +
+                "compute-buffer allowance — nothing recomputed on the side",
+            model.sizeBytes + kvCacheBytes + overheadBytes,
+            result.estimatedBytes,
+        )
+        assertEquals(
+            "the phone's side of the comparison is total RAM, not what happens to be free",
+            dimensity900_8gb.totalRamBytes,
+            result.deviceRamBytes,
+        )
+    }
+
+    /**
+     * And those same figures, run through the one formatter the screens use, give the ticket's
+     * sentence. `compatExplanation` is a three-line `stringResource` pass-through over these two
+     * calls and does no arithmetic of its own, so this is the whole of the number path from GGUF
+     * header to pixel that can be checked without a device.
+     */
+    @Test
+    fun theFiguresPrintAsTheSentenceTheTicketAsksFor() {
+        val model = model(
+            architecture = "qwen2",
+            paramCount = 494_000_000,
+            contextLength = 32_768,
+            embeddingLength = 896,
+            blockCount = 24,
+            sizeBytes = 380_000_000,
+        )
+
+        val result = CompatibilityChecker.check(model, dimensity900_8gb)
+
+        assertEquals("1.0 GB", formatGigabytes(result.estimatedBytes))
+        assertEquals("8.0 GB", formatGigabytes(result.deviceRamBytes))
     }
 
     private fun model(

@@ -268,6 +268,21 @@ enum class StopReason {
      * finish.
      */
     Failed,
+
+    /**
+     * The user tapped stop (TEN-39). Never reported in [DecodeStats], and never emitted by an
+     * engine, for the same reason as [Failed]: a cancelled decode produces no terminal event at
+     * all, so there is nothing for an engine to put a reason on. This exists because "stopped" was
+     * previously recorded as the *absence* of both other outcomes — no stats, no stop reason — and
+     * absence is also what a reply still streaming looks like, and what a row written before this
+     * value existed looks like. Recording it makes a stopped reply a fact the chat can read back a
+     * week later instead of a guess it has to make from three nulls.
+     *
+     * The app layer sets it, in [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.stop]'s
+     * name — see that method for why the flag it reads cannot be confused with any other kind of
+     * cancellation.
+     */
+    Cancelled,
 }
 
 /**
