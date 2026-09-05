@@ -104,6 +104,23 @@ class ThinkingStreamParserTest {
         assertEquals("reasoning", parser.thinking)
     }
 
+    /**
+     * Pins what the parser does once the pair has closed: nothing is a tag any more, so a second
+     * `<think>` is text like any other. Only the *first* pair is a pair (see the class KDoc),
+     * which is why `process()`'s state transition has no case for "a tag matched while already
+     * past the think": it can't be reached, and this is the input that would reach it.
+     */
+    @Test
+    fun aSecondThinkPairAfterTheFirstOneClosedIsPlainContent() {
+        val parser = ThinkingStreamParser()
+
+        parser.accept("<think>first</think>answer <think>second</think> tail")
+        parser.finish()
+
+        assertEquals("answer <think>second</think> tail", parser.content)
+        assertEquals("first", parser.thinking)
+    }
+
     @Test
     fun textAfterClosingTagAlsoFragmentedIsStillRoutedToContent() {
         val parser = ThinkingStreamParser()

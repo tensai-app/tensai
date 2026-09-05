@@ -65,13 +65,23 @@ class ThinkingStreamParser {
             if (idx >= 0) {
                 sinkFor(state).append(pending, 0, idx)
                 pending.delete(0, idx + tag.length)
+                // Only BeforeThink and InThink can be here: [tagFor] returns null for AfterThink,
+                // which the `?: run { … return }` above has already turned into an early exit. So
+                // this is "opened the think, or closed it", not a transition table.
+                //
+                // Kept as an exhaustive `when` over a dead arm rather than collapsed to an
+                // if/else: [tagFor] and [sinkFor] would already fail to compile on a fourth
+                // [State], so the build breaking is not what is at stake — *which* build breaks
+                // is. An if/else would route a new state silently onto AfterThink here while the
+                // other two `when`s demanded an answer, so the transition would be decided by
+                // omission. This way the compiler asks in all three places.
                 state = when (state) {
                     State.BeforeThink -> {
                         thinkOpened = true
                         State.InThink
                     }
                     State.InThink -> State.AfterThink
-                    State.AfterThink -> State.AfterThink
+                    State.AfterThink -> error("unreachable: tagFor returns null for AfterThink")
                 }
             } else {
                 val heldBack = longestSuffixThatIsTagPrefix(pending, tag)

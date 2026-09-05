@@ -292,6 +292,12 @@ class LlamaKtEngineImpl : LlamaKtEngine {
                             } else {
                                 budgetTracker!!.currentPhaseStopReason()
                             }
+                        // Reached on a cancellation too, and deliberately: `awaitClose`'s
+                        // interrupt() unblocks completion() rather than throwing, so the normal
+                        // path runs to here with the channel already closed and this `trySend`
+                        // silently fails. That is the intended outcome (a cancelled decode owes its
+                        // collector no terminal event), and it is why this is `trySend` and not
+                        // `send`. Not dead code: it is the one place a completed decode reports.
                         trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs, stopReason)))
                     }
                 } catch (e: CancellationException) {

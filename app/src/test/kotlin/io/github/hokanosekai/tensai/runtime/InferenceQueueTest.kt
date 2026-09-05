@@ -154,6 +154,44 @@ class InferenceQueueTest {
         assertTrue(queue.state.value is QueueState.ModelReady)
     }
 
+    /**
+     * The "Stop" contract, without a device: [InferenceQueue.cancelActive] must actually stop the
+     * decode, and the queue must settle back to [QueueState.ModelReady] rather than stay stuck
+     * mid-generation. The gate here never completes, so nothing but the cancel can end it.
+     *
+     * `androidTest`'s `cancelActiveFromOutside` covers the same contract against a real model;
+     * this one runs in milliseconds and covers the cleanup path (the `NonCancellable` finally) on
+     * every build.
+     *
+     * **It does not pin TEN-54's ordering fix, and cannot.** Measured: with
+     * [InferenceQueue]'s two swapped write pairs reverted and this test left alone, it still
+     * passes. `runBlocking` confines everything to one thread, and the begin step's two writes
+     * (job, then state) have no suspension point between them, so the window where `state` reads
+     * `Generating` with no job behind it is unobservable from here — as it would be from any
+     * single-threaded test. Pinning it would take a reader racing on another thread against two
+     * adjacent volatile writes, which would fail to observe the bug nearly every run: a test that
+     * is green for the wrong reason is worse than an honest gap. The ordering rests on the
+     * `@Volatile` argument written on [InferenceQueue]'s field instead.
+     */
+    @Test
+    fun cancelActiveStopsAGenerationAndSettlesBackToModelReady() = runBlocking {
+        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        val collectJob = launch { queue.generate(newRequest()).collect { } }
+        withTimeout(2_000) {
+            while (queue.state.value !is QueueState.Generating) delay(5)
+        }
+
+        queue.cancelActive()
+
+        // join() already implies the `NonCancellable` finally has run to completion, so the state
+        // is settled by the time this returns — no second polling loop needed.
+        withTimeout(2_000) { collectJob.join() }
+        assertTrue(queue.state.value is QueueState.ModelReady)
+    }
+
     @Test
     fun saveSessionReturnsNegativeOneWhenNoModelIsLoaded() = runBlocking {
         val queue = InferenceQueue(FakeEngine())

@@ -81,10 +81,19 @@ class DeviceProfiler(context: Context) {
         // A fresh, unloaded LlamaEngine is enough: availableBackends() is documented as static
         // (doesn't require a model to be loaded), so this never touches the shared engine
         // instance RuntimeGraph.inferenceQueue runs on.
+        //
+        // free()'d in a finally even though an engine that was never load()ed holds no native
+        // handle today (llama.kt only allocates one in load(), and nativeFree(0) returns
+        // immediately): this instance is created here and belongs to nobody else, so it is
+        // released here. That keeps the question of who owns the engine's lifetime (TEN-66's
+        // question, and it is about the *shared* instance) out of this function entirely.
+        val engine = LlamaEngine()
         val backends = try {
-            LlamaEngine().availableBackends()
+            engine.availableBackends()
         } catch (_: Exception) {
             emptyList()
+        } finally {
+            runCatching { engine.free() }
         }
         val hasVulkan = backends.any { it.description.equals("Vulkan", ignoreCase = true) }
         val hasOpenCl = backends.any { it.description.equals("OpenCL", ignoreCase = true) }

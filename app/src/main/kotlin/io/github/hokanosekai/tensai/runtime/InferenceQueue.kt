@@ -151,6 +151,19 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * any. Written only under [mutex] (in [generate]'s begin/end steps);
      * read without the lock in [cancelActive] since cancelling a job is
      * safe to call redundantly or on an already-completed job.
+     *
+     * Set *before* [state] goes to [QueueState.Generating] and cleared *after* it leaves it, so
+     * anyone who sees `Generating` sees a job to cancel (see [generate]). The reverse slack (a job
+     * still set while [state] already reads [QueueState.ModelReady]) is harmless: cancelling a
+     * generation that has already left its decode loop changes nothing. (Not "already produced its
+     * terminal event" — a *cancelled* decode produces none, by design; see [LlamaKtEngineImpl]'s
+     * `trySend(DecodeEvent.Done)`.)
+     *
+     * That ordering only means anything because this is `@Volatile` and `MutableStateFlow.value` is
+     * itself a volatile write: two volatile writes are not reordered, so a reader that sees
+     * `Generating` is guaranteed to see the job. Dropping `@Volatile` would silently undo the whole
+     * fix, and no test in this repo would fail (see [InferenceQueueTest] — the ordering window is
+     * not reachable from a single-threaded `runBlocking`, so it is unpinned by construction).
      */
     @Volatile
     private var activeGenerationJob: Job? = null
@@ -287,8 +300,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
         val model = mutex.withLock {
             val current = _state.value
             if (current is QueueState.ModelReady) {
-                _state.value = QueueState.Generating(current.info)
+                // Job first, state second, and the order matters: everything that offers a "stop"
+                // (`ChatScreen`'s button, `InferenceService`'s notification action) decides
+                // whether to offer it from [state] alone, then calls [cancelActive], which reads
+                // this field without the lock. Publishing `Generating` first would leave a window,
+                // however narrow, where a stop is offered against a job that isn't there yet, and
+                // [cancelActive] would silently do nothing.
                 activeGenerationJob = coroutineContext[Job]
+                _state.value = QueueState.Generating(current.info)
                 loadedModel
             } else {
                 null
@@ -313,8 +332,12 @@ class InferenceQueue(private val engine: InferenceEngine) {
             // the collector), so it can't itself be interrupted mid-cleanup.
             withContext(NonCancellable) {
                 mutex.withLock {
-                    activeGenerationJob = null
+                    // Mirror of the begin step's ordering: leave `Generating` first, drop the job
+                    // second, so [state] is never `Generating` with nothing behind it. A
+                    // [cancelActive] landing in between cancels a job that is already inside this
+                    // very (NonCancellable) cleanup: a no-op, not a torn teardown.
                     _state.value = loadedInfo?.let { QueueState.ModelReady(it) } ?: QueueState.Idle
+                    activeGenerationJob = null
                 }
             }
         }

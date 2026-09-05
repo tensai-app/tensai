@@ -97,8 +97,9 @@ class InferenceService : Service() {
     }
 
     /**
-     * Without `POST_NOTIFICATIONS` granted (API 33+, not yet requested at
-     * this point in V1 — see [rememberNotificationPermissionRequester]),
+     * Without `POST_NOTIFICATIONS` granted (API 33+, requested from
+     * `LoadingScreen` via [rememberNotificationPermissionRequester], and
+     * refusable, so this stays a case that happens),
      * this call is a documented no-op: no `SecurityException`, the
      * notification is simply not shown while the foreground service keeps
      * running regardless. Safe to call unconditionally.

@@ -9,6 +9,7 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -94,6 +95,17 @@ class ModelRepository(
         )
     }
 
+    /**
+     * Disk figures for the models volume, re-read on every [models] emission, so an import or a
+     * delete moves the free-space reading with it.
+     *
+     * [flowOn] because the `map` is not the cheap projection it looks like: [StatFs] is a
+     * synchronous `statvfs`, and reading [modelsDir] runs its `mkdirs()`. Both are disk calls, and
+     * both collectors (`ModelsScreen` via `collectAsState`, so on the composition's context, and
+     * [io.github.hokanosekai.tensai.ui.screens.settings.SettingsViewModel]) would otherwise pay
+     * for them on the main thread. No StrictMode policy is installed in this app, so nothing would
+     * have reported it — the symptom would only ever have been a stall on a slow volume.
+     */
     fun storageUsage(): Flow<StorageUsage> = models.map { list ->
         val stat = StatFs(modelsDir.absolutePath)
         StorageUsage(
@@ -101,7 +113,7 @@ class ModelRepository(
             freeBytes = stat.availableBytes,
             totalBytes = stat.totalBytes,
         )
-    }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * Copies [uri] into app storage (streaming, so [onProgress] reports real bytes-copied

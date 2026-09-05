@@ -56,8 +56,11 @@ fun LoadingScreen(
     val requestNotificationPermission = rememberNotificationPermissionRequester()
 
     LaunchedEffect(modelId) {
-        // Per the ticket: requested once, right before the first loadModel() call in a session —
-        // not blocking, a refusal just means no persistent notification later.
+        // Per the ticket: right before the loadModel() call rather than at app startup — not
+        // blocking, a refusal just means no persistent notification later. Not once per session
+        // though, despite what TEN-27 asked for: this effect re-fires on every entry to this
+        // screen and the permission helper only suppresses re-asking for those who accepted. See
+        // [rememberNotificationPermissionRequester]'s KDoc and TEN-75.
         requestNotificationPermission()
         viewModel.start()
     }
