@@ -116,7 +116,9 @@ data class ChatMessage(
  *   this concept may ignore it.
  * @param reasoningBudget splits [maxTokens] into a reasoning cap and a response cap, so a verbose
  *   `<think>` block can no longer eat into the answer's share — see [ReasoningBudget]. `null` (the
- *   default) keeps the single, undivided [maxTokens] behaviour.
+ *   default) keeps the single, undivided [maxTokens] behaviour. Built with
+ *   [ReasoningBudget.splitting] its two caps sum to exactly [maxTokens], so "ignored" above means
+ *   "read through the budget instead", not "disagrees with it" (TEN-35).
  */
 data class SamplingConfig(
     val temperature: Float = 0.8f,
@@ -167,7 +169,48 @@ data class ReasoningBudget(
     val reasoningMaxTokens: Int,
     val responseMaxTokens: Int,
     val endMarker: String,
-)
+) {
+    companion object {
+        /**
+         * Smallest total [splitting] will divide. Below 2 the reasoning half rounds down to 0, and
+         * a reasoning cap of 0 stops the decode on its very first token
+         * ([ReasoningBudgetTracker.onToken] compares `>=`) — a generation that can never produce
+         * anything. [io.github.hokanosekai.tensai.data.chat.SamplingRanges.MaxTokens]'s own floor is far above this; this is the backstop
+         * for a caller that doesn't go through it.
+         */
+        private const val MinSplittableTokens = 2
+
+        /**
+         * Divides [maxTokens] into the two caps, so that
+         * `reasoningMaxTokens + responseMaxTokens == maxTokens` **by construction**.
+         *
+         * That equality is load-bearing and used to be a coincidence. [LlamaKtEngineImpl] derives
+         * llama.cpp's `nPredict` from the sum of the two caps, and [ReasoningBudgetTracker] holds
+         * the whole decode to that same sum — so before TEN-35 introduced a user-settable
+         * [SamplingConfig.maxTokens], the two caps were a pair of hardcoded 1024s that happened to
+         * add up to the hardcoded 2048 default. Keeping the caps fixed while letting the user move
+         * [SamplingConfig.maxTokens] would have severed that: asking for 512 tokens would still
+         * have generated up to 2048, and [SamplingConfig.maxTokens] would have been a number the
+         * UI displayed and nothing obeyed.
+         *
+         * So the split is *derived* from the figure the user set, and there is no way to build a
+         * budget that disagrees with it. Half to reasoning (rounded down, so the answer takes the
+         * odd token — the answer is what the user reads), half to the response, which is a floor
+         * and not a ceiling: whatever the reasoning leaves unspent goes to the answer, see this
+         * class's KDoc and TEN-69. At the 2048 default this yields 1024/1024, byte for byte what
+         * TEN-61 and TEN-69 shipped.
+         */
+        fun splitting(maxTokens: Int, endMarker: String): ReasoningBudget {
+            val total = maxTokens.coerceAtLeast(MinSplittableTokens)
+            val reasoning = total / 2
+            return ReasoningBudget(
+                reasoningMaxTokens = reasoning,
+                responseMaxTokens = total - reasoning,
+                endMarker = endMarker,
+            )
+        }
+    }
+}
 
 /**
  * Why a decode stopped, reported in [DecodeStats.stopReason].

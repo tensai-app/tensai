@@ -5,6 +5,7 @@ import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -18,7 +19,9 @@ import io.github.hokanosekai.tensai.engine.GgufInfo
 import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
+import io.github.hokanosekai.tensai.engine.MessageRole
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
+import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
@@ -106,7 +109,7 @@ class ChatViewModelTest {
         scope = this,
     )
 
-    private suspend fun loadFakeModel() {
+    private suspend fun loadFakeModel(supportsThinking: Boolean = false) {
         inferenceQueue.loadModel(ModelLoadConfig(path = "/models/fake.gguf", nCtx = NCTX))
         modelDao.insert(
             ModelEntity(
@@ -121,7 +124,7 @@ class ChatViewModelTest {
                 contextLength = NCTX.toLong(),
                 embeddingLength = 1L,
                 blockCount = 1L,
-                supportsThinking = false,
+                supportsThinking = supportsThinking,
                 importedAt = 0L,
             ),
         )
@@ -385,6 +388,184 @@ class ChatViewModelTest {
         assertEquals(StopReason.Failed.name, reply.stopReason)
     }
 
+    /**
+     * TEN-35's acceptance criterion, as far as it can be taken without a device: a conversation
+     * carrying a sampling override produces a [DecodeRequest] built from that override, not from
+     * the defaults. Everything downstream of here — llama.cpp actually honouring the temperature —
+     * is the engine's contract, not this layer's.
+     */
+    @Test
+    fun aConversationsSamplingOverrideIsWhatReachesTheDecode() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        val custom = SamplingConfig(
+            temperature = 0.1f,
+            topP = 0.5f,
+            topK = 3,
+            minP = 0.2f,
+            stopSequences = listOf("\nUser:", "END"),
+            maxTokens = 256,
+        )
+        chatRepository.setSampling(conversation, custom)
+
+        newViewModel(conversation).send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        val sampling = engine.lastRequest!!.sampling
+        assertEquals(0.1f, sampling.temperature, 1e-6f)
+        assertEquals(0.5f, sampling.topP, 1e-6f)
+        assertEquals(3, sampling.topK)
+        assertEquals(0.2f, sampling.minP, 1e-6f)
+        assertEquals(listOf("\nUser:", "END"), sampling.stopSequences)
+        assertEquals(256, sampling.maxTokens)
+    }
+
+    /**
+     * The other half of "applied to the next decode, without reloading the model": a change saved
+     * between two turns takes effect on the second one. The request is rebuilt from a fresh read of
+     * the conversation row each turn, so nothing has to be invalidated for this to hold — this test
+     * is what says so.
+     */
+    @Test
+    fun aSamplingChangeBetweenTwoTurnsAppliesToTheSecondOne() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("first")
+        waitForAssistantReply(conversation, expectedCount = 2)
+        assertEquals(
+            "an untouched conversation generates on the defaults",
+            SamplingConfig().temperature,
+            engine.lastRequest!!.sampling.temperature,
+            1e-6f,
+        )
+
+        chatRepository.setSampling(conversation, SamplingConfig(temperature = 0.05f, stopSequences = listOf("STOP")))
+        viewModel.send("second")
+        waitForAssistantReply(conversation, expectedCount = 4)
+
+        assertEquals(0.05f, engine.lastRequest!!.sampling.temperature, 1e-6f)
+        assertEquals(listOf("STOP"), engine.lastRequest!!.sampling.stopSequences)
+    }
+
+    /** Resetting drops the override for good — the next decode is back on the defaults. */
+    @Test
+    fun resettingTheSamplingPutsTheNextDecodeBackOnTheDefaults() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setSampling(conversation, SamplingConfig(temperature = 0.05f, maxTokens = 128))
+        val viewModel = newViewModel(conversation)
+
+        chatRepository.resetSampling(conversation)
+        viewModel.send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        assertEquals(SamplingConfig().temperature, engine.lastRequest!!.sampling.temperature, 1e-6f)
+        assertEquals(SamplingConfig().maxTokens, engine.lastRequest!!.sampling.maxTokens)
+        assertNull("reset stores no blob at all, not an encoded copy of the defaults", chatDao.getConversation(conversation)!!.samplingJson)
+    }
+
+    /**
+     * TEN-35's hazard, end to end. A user-set `maxTokens` has to reach the reasoning split too:
+     * were the split left at its old hardcoded 1024/1024, this decode would have generated up to
+     * 2048 tokens while the user believed they had asked for 300. See
+     * `ReasoningBudgetSplittingTest` for the invariant on its own.
+     */
+    @Test
+    fun aCustomMaxTokensIsWhatTheReasoningBudgetIsSplitFrom() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setSampling(conversation, SamplingConfig(maxTokens = 300))
+
+        newViewModel(conversation).send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        val sampling = engine.lastRequest!!.sampling
+        val budget = sampling.reasoningBudget!!
+        assertEquals(300, sampling.maxTokens)
+        assertEquals(
+            "the caps must sum to the max-tokens the user set — this sum is llama.cpp's nPredict",
+            300,
+            budget.reasoningMaxTokens + budget.responseMaxTokens,
+        )
+        assertEquals(ThinkingStreamParser.CloseTag, budget.endMarker)
+    }
+
+    /**
+     * The same conversation with thinking off gets no split at all, and `maxTokens` is then the
+     * single undivided cap llama.cpp is given directly — the pre-TEN-61 path, which the override
+     * must reach just as well.
+     */
+    @Test
+    fun withThinkingOffTheCustomMaxTokensIsTheUndividedCap() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setSampling(conversation, SamplingConfig(maxTokens = 300))
+        chatRepository.setEnableThinking(conversation, enabled = false)
+
+        newViewModel(conversation).send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        val sampling = engine.lastRequest!!.sampling
+        assertNull("no split without thinking", sampling.reasoningBudget)
+        assertEquals(300, sampling.maxTokens)
+        assertFalse(sampling.enableThinking)
+    }
+
+    /**
+     * `enableThinking` lives in its own column and is deliberately absent from the sampling blob
+     * (see `SamplingJson`), so the request is recombined from two rows. This pins that the column
+     * wins over the blob's default rather than the other way round.
+     */
+    @Test
+    fun theThinkingColumnAndTheSamplingBlobAreRecombinedIntoOneRequest() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setSampling(conversation, SamplingConfig(temperature = 0.05f, enableThinking = false))
+        chatRepository.setEnableThinking(conversation, enabled = true)
+
+        newViewModel(conversation).send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        val sampling = engine.lastRequest!!.sampling
+        assertEquals("the blob still carries the knobs", 0.05f, sampling.temperature, 1e-6f)
+        assertTrue("the column decides thinking, and the blob never stored it", sampling.enableThinking)
+    }
+
+    /**
+     * A blob no version of the app could have written — the state a persisted setting ends up in
+     * after a bad migration or a partial restore. The conversation must still generate, on the
+     * defaults, rather than take the chat screen down with it.
+     */
+    @Test
+    fun aCorruptedSamplingBlobStillGeneratesOnTheDefaults() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatDao.updateConversation(chatDao.getConversation(conversation)!!.copy(samplingJson = "{\"temperature\":0.4,"))
+
+        newViewModel(conversation).send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+
+        assertEquals("hi", reply.content)
+        assertEquals(SamplingConfig().temperature, engine.lastRequest!!.sampling.temperature, 1e-6f)
+    }
+
+    /** The system prompt is edited from the same sheet, and has to reach the prompt as a system message. */
+    @Test
+    fun aSystemPromptSetForTheConversationIsPrependedToTheDecodesMessages() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setSystemPrompt(conversation, "You answer in haiku.")
+
+        newViewModel(conversation).send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2)
+
+        val first = engine.lastRequest!!.messages.first()
+        assertEquals(MessageRole.System, first.role)
+        assertEquals("You answer in haiku.", first.content)
+    }
+
     /** In-memory [ChatDao] fake — no Room/Android needed, same convention as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeChatDao : ChatDao {
         private val conversations = mutableMapOf<String, ConversationEntity>()
@@ -548,6 +729,9 @@ class ChatViewModelTest {
         var scriptedEvents: List<DecodeEvent>? = null
         var hangBeforeTerminal = false
 
+        /** The last [DecodeRequest] handed to [LoadedModel.decode] — TEN-35 asserts on its sampling. */
+        var lastRequest: DecodeRequest? = null
+
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             override val metadata = LoadedModelInfo(
                 name = MODEL_NAME,
@@ -557,6 +741,7 @@ class ChatViewModelTest {
             )
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
+                lastRequest = request
                 val scripted = scriptedEvents
                 (scripted ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
                 usedCells += TOKENS_PER_TURN

@@ -15,7 +15,9 @@ import androidx.room.PrimaryKey
  *   started against, or `null` if no model was loaded at creation time. Not a hard foreign key —
  *   the model can be deleted later while the conversation (and its history) remains.
  * @param samplingJson serialized [io.github.hokanosekai.tensai.engine.SamplingConfig] override for
- *   this conversation, or `null` to use the app default — reserved for TEN-35, unset in V1.
+ *   this conversation, or `null` to use the defaults (TEN-35). Read and written only through
+ *   [SamplingJson], which owns the format and, crucially, the guarantee that reading it back never
+ *   throws — see its KDoc.
  * @param systemPrompt system prompt prepended to every generation for this conversation (see
  *   [ChatRepository.toEngineMessages]), or `null` for none.
  * @param enableThinking whether [io.github.hokanosekai.tensai.engine.SamplingConfig.enableThinking]

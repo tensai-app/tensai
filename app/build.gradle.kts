@@ -77,6 +77,13 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    // SamplingJson uses org.json, which lives in the Android framework and is therefore a stub
+    // that throws in JVM unit tests. This is the real implementation, test-only: it puts a
+    // working org.json ahead of the mockable android.jar on the unit-test classpath, so the
+    // persistence format's round trip and its tolerance of malformed input can be tested
+    // without a device (TEN-35). Nothing ships with it — on device the framework's own copy is
+    // what runs.
+    testImplementation(libs.org.json)
 
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)

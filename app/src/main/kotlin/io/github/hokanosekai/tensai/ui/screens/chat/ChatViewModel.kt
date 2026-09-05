@@ -4,6 +4,7 @@ import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter
+import io.github.hokanosekai.tensai.data.chat.SamplingJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.session.SaveResult
@@ -35,16 +36,6 @@ import kotlinx.coroutines.withContext
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
-
-/**
- * [ReasoningBudget]'s two halves, applied when thinking is actually active for a generation — see
- * [ChatViewModel.generateReply]. They sum to [SamplingConfig]'s existing `maxTokens` default of
- * 2048 (TEN-60): TEN-61 redistributes that budget, it does not raise it — the model still has to
- * fit inside the 4096-token [io.github.hokanosekai.tensai.runtime.LoadPolicy] context alongside the
- * prompt.
- */
-private const val ReasoningMaxTokens = 1024
-private const val ResponseMaxTokens = 1024
 
 /**
  * UI-facing view of a persisted [MessageEntity] — `null` for system/tool messages, which have
@@ -220,6 +211,34 @@ class ChatViewModel(
         scope.launch { chatRepository.setEnableThinking(conversationId, enabled) }
     }
 
+    /**
+     * This conversation's sampling override, decoded from [ConversationEntity.samplingJson]
+     * (TEN-35) — [SamplingConfig]'s defaults until the row is read, and for a conversation that has
+     * never been customized. `enableThinking`/`reasoningBudget` are *not* meaningful here: both are
+     * resolved at generation time, see [generateReply] and [SamplingJson]'s KDoc.
+     */
+    val sampling: Flow<SamplingConfig> =
+        chatRepository.observeConversation(conversationId).map { SamplingJson.decode(it?.samplingJson) }
+
+    /** This conversation's [ConversationEntity.systemPrompt], empty when unset — see [ChatRepository.setSystemPrompt]. */
+    val systemPrompt: Flow<String> =
+        chatRepository.observeConversation(conversationId).map { it?.systemPrompt.orEmpty() }
+
+    /** Persists [config] for this conversation. Applies to the next [send]/[regenerate] — see [ChatRepository.setSampling]. */
+    fun setSampling(config: SamplingConfig) {
+        scope.launch { chatRepository.setSampling(conversationId, config) }
+    }
+
+    /** Drops the sampling override, back to defaults — see [ChatRepository.resetSampling] for why the system prompt is left alone. */
+    fun resetSampling() {
+        scope.launch { chatRepository.resetSampling(conversationId) }
+    }
+
+    /** Persists [prompt] as this conversation's system prompt. Applies to the next [send]/[regenerate]. */
+    fun setSystemPrompt(prompt: String) {
+        scope.launch { chatRepository.setSystemPrompt(conversationId, prompt) }
+    }
+
     /** Latest [send]/[regenerate] failure, consumed by [ChatScreen] via [clearError]. */
     private val _error = MutableStateFlow<ChatError?>(null)
     val error: StateFlow<ChatError?> = _error.asStateFlow()
@@ -304,6 +323,17 @@ class ChatViewModel(
      * alone would split — and needlessly shrink — the budget for a plain model that will never
      * emit [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser.CloseTag] in the first
      * place. [currentModelSupportsThinking] is what actually knows that.
+     *
+     * This is also where TEN-35's per-conversation sampling is read, and it is deliberately read
+     * *here* rather than held in a field: "applies to the next decode, without reloading the model"
+     * is exactly what building the [DecodeRequest] from a fresh row gives, for free. A change saved
+     * while a reply is streaming lands on the turn after it, not on the one in flight.
+     *
+     * The three settings come from three places and are recombined here, each from whichever holds
+     * it: the sampling knobs from [ConversationEntity.samplingJson], `enableThinking` from its own
+     * column, and the reasoning split derived from the knobs' own `maxTokens` via
+     * [ReasoningBudget.splitting] — never stored, so it cannot go stale against the max-tokens the
+     * user actually set.
      */
     private suspend fun generateReply() {
         syncSessionForConversationSwitch()
@@ -314,18 +344,15 @@ class ChatViewModel(
         val assistantId = chatRepository.startAssistantMessage(conversationId)
         val enableThinking = conversation?.enableThinking ?: true
         val thinkingActive = enableThinking && currentModelSupportsThinking.first()
+        val sampling = SamplingJson.decode(conversation?.samplingJson)
         val reasoningBudget = if (thinkingActive) {
-            ReasoningBudget(
-                reasoningMaxTokens = ReasoningMaxTokens,
-                responseMaxTokens = ResponseMaxTokens,
-                endMarker = ThinkingStreamParser.CloseTag,
-            )
+            ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
         } else {
             null
         }
         val request = DecodeRequest(
             messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
-            sampling = SamplingConfig(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
+            sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
         streamInto(assistantId, request)
     }

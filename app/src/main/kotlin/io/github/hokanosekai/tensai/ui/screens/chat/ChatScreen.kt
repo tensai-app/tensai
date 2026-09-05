@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -79,8 +81,13 @@ fun ChatScreen(
     val modelInfo = queueState.residentModel
     val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = false)
     val enableThinking by viewModel.enableThinking.collectAsState(initial = true)
+    // Null until Room's first emission — the settings sheet is seeded from these once and must not
+    // open on placeholder values it would then commit back, see ChatSettingsSheet's KDoc.
+    val sampling by viewModel.sampling.collectAsState(initial = null)
+    val systemPrompt by viewModel.systemPrompt.collectAsState(initial = null)
 
     var input by rememberSaveable { mutableStateOf("") }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -117,13 +124,13 @@ fun ChatScreen(
         if (error is ChatError.ContextWindowFull) {
             ContextWindowFullBanner(onDismiss = viewModel::clearError, modifier = Modifier.fillMaxWidth())
         }
-        if (supportsThinking) {
-            ThinkingToggleRow(
-                enabled = enableThinking,
-                onToggle = viewModel::setEnableThinking,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        ChatToolbarRow(
+            showThinkingToggle = supportsThinking,
+            thinkingEnabled = enableThinking,
+            onToggleThinking = viewModel::setEnableThinking,
+            onOpenSettings = { settingsOpen = true },
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         val currentMessages = messages
         Box(modifier = Modifier.weight(1f)) {
@@ -177,6 +184,22 @@ fun ChatScreen(
             modelLabel = modelInfo?.name?.let(::shortModelLabel) ?: "no model",
             onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),
+        )
+    }
+
+    val currentSampling = sampling
+    val currentSystemPrompt = systemPrompt
+    if (settingsOpen && currentSampling != null && currentSystemPrompt != null) {
+        ChatSettingsSheet(
+            config = currentSampling,
+            systemPrompt = currentSystemPrompt,
+            enableThinking = enableThinking,
+            supportsThinking = supportsThinking,
+            onConfigChange = viewModel::setSampling,
+            onSystemPromptChange = viewModel::setSystemPrompt,
+            onEnableThinkingChange = viewModel::setEnableThinking,
+            onReset = viewModel::resetSampling,
+            onDismiss = { settingsOpen = false },
         )
     }
 }
@@ -264,34 +287,56 @@ private fun ContextWindowFullBanner(onDismiss: () -> Unit, modifier: Modifier = 
 }
 
 /**
- * Enable/disable [io.github.hokanosekai.tensai.engine.SamplingConfig.enableThinking] for this
- * conversation (TEN-33) — only shown when [ChatViewModel.currentModelSupportsThinking] is `true`.
- * Kept as a plain inline row rather than a top-bar action: `TensaiTopBar` is shared chrome for both
+ * The conversation's own controls, above the message list: the thinking toggle (TEN-33) and the
+ * entry point to [ChatSettingsSheet] (TEN-35).
+ *
+ * Kept as a plain inline row rather than top-bar actions: `TensaiTopBar` is shared chrome for both
  * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Home] and
- * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat], and Home has no conversation
- * (nor a loaded-model-supports-thinking concept) to hang a toggle off — wiring one in there would
- * mean threading `ChatViewModel` state up through `TensaiShell` for every route, not just this one.
+ * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat], and Home has neither a
+ * conversation nor a loaded-model-supports-thinking concept to hang either control off — wiring
+ * them in there would mean threading `ChatViewModel` state up through `TensaiShell` for every
+ * route, not just this one.
+ *
+ * @param showThinkingToggle [ChatViewModel.currentModelSupportsThinking] — the switch is hidden
+ *   (not disabled) for a model whose template has no notion of thinking, since there is nothing it
+ *   could do. The settings button stays regardless: every other setting in the sheet applies to
+ *   every model.
  */
 @Composable
-private fun ThinkingToggleRow(enabled: Boolean, onToggle: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+private fun ChatToolbarRow(
+    showThinkingToggle: Boolean,
+    thinkingEnabled: Boolean,
+    onToggleThinking: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.End,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
     ) {
-        Icon(
-            imageVector = Icons.Default.Psychology,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 6.dp),
-        )
-        Text(
-            text = "Thinking",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 8.dp),
-        )
-        Switch(checked = enabled, onCheckedChange = onToggle)
+        if (showThinkingToggle) {
+            Icon(
+                imageVector = Icons.Default.Psychology,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 6.dp),
+            )
+            Text(
+                text = "Thinking",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            Switch(checked = thinkingEnabled, onCheckedChange = onToggleThinking)
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                imageVector = Icons.Default.Tune,
+                contentDescription = "Conversation settings",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

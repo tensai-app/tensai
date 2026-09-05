@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.data.chat
 import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.MessageRole
+import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -105,6 +106,46 @@ class ChatRepository(private val dao: ChatDao) {
     suspend fun setEnableThinking(conversationId: String, enabled: Boolean) {
         val conversation = dao.getConversation(conversationId) ?: return
         dao.updateConversation(conversation.copy(enableThinking = enabled))
+    }
+
+    /**
+     * Persists [config] as [conversationId]'s [ConversationEntity.samplingJson] (TEN-35). Takes
+     * effect on the next generation — nothing reloads the model, the config is read fresh when the
+     * next [io.github.hokanosekai.tensai.engine.DecodeRequest] is built. No-op if the conversation
+     * doesn't exist (e.g. deleted meanwhile).
+     *
+     * Only [SamplingJson]'s own subset is kept: [io.github.hokanosekai.tensai.engine.SamplingConfig.enableThinking]
+     * belongs to [setEnableThinking] and its own column, and `reasoningBudget` is derived, never
+     * stored — see [SamplingJson]'s KDoc.
+     */
+    suspend fun setSampling(conversationId: String, config: SamplingConfig) {
+        val conversation = dao.getConversation(conversationId) ?: return
+        dao.updateConversation(conversation.copy(samplingJson = SamplingJson.encode(config)))
+    }
+
+    /**
+     * Drops [conversationId]'s sampling override, back to [SamplingConfig]'s defaults — stored as
+     * `null` rather than as an encoded copy of the defaults, so a conversation that was never
+     * customized and one that was reset are the same row, and both follow the defaults if those
+     * ever move.
+     *
+     * Deliberately leaves [ConversationEntity.systemPrompt] alone. It is edited in the same sheet,
+     * but it is the one setting here the user *wrote* rather than dialled, and there is no undo: a
+     * button that resets four sliders should not also silently delete a page of prose.
+     */
+    suspend fun resetSampling(conversationId: String) {
+        val conversation = dao.getConversation(conversationId) ?: return
+        dao.updateConversation(conversation.copy(samplingJson = null))
+    }
+
+    /**
+     * Persists [prompt] as [conversationId]'s [ConversationEntity.systemPrompt], normalizing blank
+     * to `null` — [toEngineMessages] treats the two identically, and storing `null` keeps "no
+     * system prompt" a single state rather than two. No-op if the conversation doesn't exist.
+     */
+    suspend fun setSystemPrompt(conversationId: String, prompt: String) {
+        val conversation = dao.getConversation(conversationId) ?: return
+        dao.updateConversation(conversation.copy(systemPrompt = prompt.ifBlank { null }))
     }
 
     /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */
