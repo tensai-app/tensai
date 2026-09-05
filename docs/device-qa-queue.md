@@ -14,7 +14,7 @@ Dernière mise à jour : 2026-09-05.
 
 - **Jamais** `./gradlew connectedDebugAndroidTest` ni `connectedCheck`. AGP
   désinstalle l'app en nettoyage et efface les modèles, plusieurs Go.
-  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §6).
+  Pour l'instrumenté, passer par `am instrument` sous wrapper hôte (voir §7).
 - **Jamais** `adb reboot`, `adb shell reboot`, `adb shell su`, `adb uninstall`,
   `pm clear`. Un builder a déjà redémarré le téléphone de l'utilisateur.
 - Installer avec `adb install -r`, qui préserve la base et les modèles.
@@ -187,7 +187,33 @@ ce qui n'a pas été mesuré.
 
 ---
 
-## 5. TEN-68 — les 350 s après une longue génération
+## 5. TEN-35 — le sheet de réglages de sampling
+
+Tout ce qui est derrière l'écran est couvert en unitaire : les réglages atteignent
+le `DecodeRequest`, l'aller-retour de sérialisation tient stop sequences comprises,
+un blob malformé retombe sur les défauts, et la répartition du budget de
+raisonnement est dérivée de `maxTokens` par construction.
+
+**Ce qui reste est le rendu, et rien d'autre.** Ouvrir le sheet sur une
+conversation et vérifier : les sliders bougent et affichent la valeur, les champs
+mono acceptent la saisie, le bouton de remise aux défauts revient bien à
+`SamplingConfig()`, et le sheet se ferme sans perdre ce qui vient d'être réglé.
+
+**Le test bout en bout qui vaut la peine** : régler la température à 0 et une stop
+sequence sur une conversation, envoyer, et vérifier en base que le tour suivant
+porte bien ces valeurs. C'est l'acceptation littérale du ticket, et le seul moyen
+de confirmer que la persistance survit à un vrai cycle d'app.
+
+**Un point qui ne se voit que sur device** : `org.json` est un stub dans le
+framework Android alors que les tests tournent contre la vraie implémentation.
+`SamplingJson.decode` attrape `JSONException` et rejette NaN après coup, donc un
+parseur plus strict ferait retomber sur les défauts plus souvent, pas planter.
+À confirmer en ouvrant une conversation dont le `samplingJson` a été édité à la
+main avec du JSON limite : elle doit s'ouvrir, jamais crasher.
+
+---
+
+## 6. TEN-68 — les 350 s après une longue génération
 
 Observé **une fois**, jamais reproduit sur la tentative suivante à volume
 identique. Restore de 2879 tokens rendu en 780 ms, puis 350 758 ms de TTFT.
@@ -202,7 +228,7 @@ s'effondre et où.
 
 ---
 
-## 6. Tests instrumentés
+## 7. Tests instrumentés
 
 **Toujours sous wrapper hôte**, et traiter le code de sortie **124 comme un échec** :
 
@@ -225,7 +251,7 @@ timeout 300 adb shell am instrument -w \
 
 ---
 
-## 7. TEN-43 — QA device pass V1
+## 8. TEN-43 — QA device pass V1
 
 Le ticket de QA globale. À faire en dernier, une fois la phase 4 livrée.
 
