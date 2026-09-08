@@ -55,8 +55,11 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  * token throughput, which would be a fabricated number dressed up as a real one), so this shows
  * "Thinking…" while [isActive] and "Reasoning" once it's settled, rather than inventing a duration.
  *
- * @param thinking the reasoning text — rendered plainly (no markdown), matching the DS's body copy
- *   for this block.
+ * @param thinking the reasoning text. Rendered as markdown (TEN-89): models structure what they
+ *   think — numbered steps, bold labels, the occasional `$17 \times 24$` — and TEN-33's choice to
+ *   draw it plainly aged into showing the reader the source. It goes through [MarkdownText] at
+ *   this block's own body copy, with [MarkdownHeadings.Compact] so a `##` in the reasoning cannot
+ *   outweigh the reply underneath it.
  * @param isActive whether the reply this belongs to is still actively streaming its thinking
  *   (drives the header's label and the shimmer) — see `ChatScreen`'s `isThinkingActive` for how
  *   that's derived.
@@ -109,10 +112,11 @@ fun ThinkingBlock(
             }
 
             if (expanded) {
-                Text(
-                    text = thinking,
-                    style = MaterialTheme.typography.bodyMedium,
+                MarkdownText(
+                    markdown = thinking,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    headings = MarkdownHeadings.Compact,
                     modifier = Modifier.padding(start = 40.dp, end = 12.dp, bottom = 12.dp),
                 )
             }

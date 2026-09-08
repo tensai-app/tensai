@@ -37,10 +37,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
@@ -73,10 +76,26 @@ import org.commonmark.parser.Parser
 private val markdownParser: Parser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 
 /**
+ * Which typographic scale block headings are drawn at (TEN-89).
+ *
+ * The rest of the rendering already follows [MarkdownText]'s `style`; headings are the one
+ * construct that used to reach past it into the theme, which is fine for a reply drawn at
+ * `bodyLarge` and wrong inside a card of secondary copy.
+ */
+enum class MarkdownHeadings {
+    /** The theme's own display scale — what an assistant reply's headings look like. */
+    Display,
+
+    /** Derived from the caller's `style`, so a `##` stays inside the block's own scale. */
+    Compact,
+}
+
+/**
  * Renders [markdown] as Compose UI (TEN-33): headings, paragraphs with bold/italic/inline code,
  * fenced/indented code blocks (mono, copy button), bullet/ordered lists, links (opened via
  * [androidx.compose.ui.platform.LocalUriHandler], the default behavior of a [LinkAnnotation.Url]
- * span) and GFM tables (horizontally scrollable).
+ * span) and GFM tables (horizontally scrollable). Inline `$…$` maths are resolved on the way —
+ * see [mathSpans], which decides what is a formula and what is a dollar sign.
  *
  * Backed by [commonmark](https://github.com/commonmark/commonmark-java) rather than a ready-made
  * Compose markdown-renderer library: commonmark is a small, pure-Java parser with no UI opinions
@@ -92,6 +111,10 @@ private val markdownParser: Parser = Parser.builder().extensions(listOf(TablesEx
  * V1 covers exactly the constructs TEN-33 asked for — no blockquotes, images, footnotes,
  * strikethrough, or nested lists beyond one level. Extend [MarkdownBlock]/[appendInlineNodes] if a
  * future ticket needs them.
+ *
+ * @param style the body copy every paragraph, list and table cell is drawn at — and, when
+ *   [headings] is [MarkdownHeadings.Compact], what headings are sized from.
+ * @param headings see [MarkdownHeadings]. [ThinkingBlock] is the one caller that compacts them.
  */
 @Composable
 fun MarkdownText(
@@ -99,40 +122,31 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurface,
     style: TextStyle = MaterialTheme.typography.bodyLarge,
+    headings: MarkdownHeadings = MarkdownHeadings.Display,
 ) {
     val document = remember(markdown) { markdownParser.parse(markdown) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        document.children().forEach { block -> MarkdownBlock(node = block, color = color, style = style) }
+        document.children().forEach { block -> MarkdownBlock(node = block, color = color, style = style, headings = headings) }
     }
 }
 
 @Composable
-private fun MarkdownBlock(node: Node, color: Color, style: TextStyle, modifier: Modifier = Modifier) {
+private fun MarkdownBlock(node: Node, color: Color, style: TextStyle, headings: MarkdownHeadings, modifier: Modifier = Modifier) {
     when (node) {
-        is Heading -> {
-            val headingStyle = when (node.level) {
-                1 -> MaterialTheme.typography.headlineSmall
-                2 -> MaterialTheme.typography.titleLarge
-                else -> MaterialTheme.typography.titleMedium
-            }
-            Text(
-                text = node.inlineAnnotatedString(),
-                style = headingStyle.copy(fontWeight = FontWeight.Bold),
-                color = color,
-                modifier = modifier,
-            )
-        }
+        is Heading -> Text(
+            text = node.inlineAnnotatedString(),
+            style = headingStyle(level = node.level, base = style, headings = headings),
+            color = color,
+            modifier = modifier,
+        )
 
-        is Paragraph -> {
-            val text = node.inlineAnnotatedString()
-            if (text.isNotBlank()) Text(text = text, style = style, color = color, modifier = modifier)
-        }
+        is Paragraph -> MarkdownParagraph(node = node, color = color, style = style, modifier = modifier)
 
         is FencedCodeBlock -> MarkdownCodeBlock(code = node.literal.trimEnd('\n'), modifier = modifier)
         is IndentedCodeBlock -> MarkdownCodeBlock(code = node.literal.trimEnd('\n'), modifier = modifier)
 
-        is BulletList -> MarkdownList(node = node, ordered = false, color = color, style = style, modifier = modifier)
-        is OrderedList -> MarkdownList(node = node, ordered = true, color = color, style = style, modifier = modifier)
+        is BulletList -> MarkdownList(node = node, ordered = false, color = color, style = style, headings = headings, modifier = modifier)
+        is OrderedList -> MarkdownList(node = node, ordered = true, color = color, style = style, headings = headings, modifier = modifier)
 
         is TableBlock -> MarkdownTable(node = node, color = color, style = style, modifier = modifier)
 
@@ -140,12 +154,65 @@ private fun MarkdownBlock(node: Node, color: Color, style: TextStyle, modifier: 
 
         // Any other container (e.g. a block quote) — not one of TEN-33's required constructs, so
         // just fall through to its children rather than dropping the text on the floor.
-        else -> node.children().forEach { MarkdownBlock(it, color, style, modifier) }
+        else -> node.children().forEach { MarkdownBlock(it, color, style, headings, modifier) }
+    }
+}
+
+/**
+ * A paragraph, which is either one display formula on its own lines or ordinary inline copy.
+ *
+ * [displayMathSpans] is asked first and answers `null` for everything that is not the former, so
+ * the common path is unchanged. Shared with [MarkdownList] so a formula inside a list item reads
+ * the same as one at the top level.
+ */
+@Composable
+private fun MarkdownParagraph(node: Node, color: Color, style: TextStyle, modifier: Modifier = Modifier) {
+    val display = displayMathSpans(node)
+    val text = if (display != null) {
+        buildAnnotatedString { appendMathSpans(display) }
+    } else {
+        node.inlineAnnotatedString()
+    }
+    if (text.isNotBlank()) Text(text = text, style = style, color = color, modifier = modifier)
+}
+
+/**
+ * A heading's style. [MarkdownHeadings.Display] is the theme's scale, unchanged since TEN-33.
+ * [MarkdownHeadings.Compact] scales [base] instead — the multipliers are small on purpose: inside
+ * [ThinkingBlock] a `##` is a marker in a wall of reasoning, not a title competing with the reply
+ * underneath it.
+ */
+@Composable
+private fun headingStyle(level: Int, base: TextStyle, headings: MarkdownHeadings): TextStyle = when (headings) {
+    MarkdownHeadings.Display -> when (level) {
+        1 -> MaterialTheme.typography.headlineSmall
+        2 -> MaterialTheme.typography.titleLarge
+        else -> MaterialTheme.typography.titleMedium
+    }.copy(fontWeight = FontWeight.Bold)
+
+    MarkdownHeadings.Compact -> {
+        val scale = when (level) {
+            1 -> 1.15f
+            2 -> 1.08f
+            else -> 1f
+        }
+        base.copy(
+            fontWeight = FontWeight.Bold,
+            fontSize = if (base.fontSize.isSpecified) base.fontSize * scale else base.fontSize,
+            lineHeight = if (base.lineHeight.isSpecified) base.lineHeight * scale else base.lineHeight,
+        )
     }
 }
 
 @Composable
-private fun MarkdownList(node: ListBlock, ordered: Boolean, color: Color, style: TextStyle, modifier: Modifier = Modifier) {
+private fun MarkdownList(
+    node: ListBlock,
+    ordered: Boolean,
+    color: Color,
+    style: TextStyle,
+    headings: MarkdownHeadings,
+    modifier: Modifier = Modifier,
+) {
     val startNumber = (node as? OrderedList)?.markerStartNumber ?: 1
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         node.children().filterIsInstance<ListItem>().forEachIndexed { index, item ->
@@ -159,10 +226,10 @@ private fun MarkdownList(node: ListBlock, ordered: Boolean, color: Color, style:
                 Column(modifier = Modifier.weight(1f)) {
                     item.children().forEach { child ->
                         when (child) {
-                            is Paragraph -> Text(text = child.inlineAnnotatedString(), style = style, color = color)
-                            is BulletList -> MarkdownList(child, ordered = false, color = color, style = style, modifier = Modifier.padding(top = 4.dp))
-                            is OrderedList -> MarkdownList(child, ordered = true, color = color, style = style, modifier = Modifier.padding(top = 4.dp))
-                            else -> MarkdownBlock(child, color, style)
+                            is Paragraph -> MarkdownParagraph(node = child, color = color, style = style)
+                            is BulletList -> MarkdownList(child, ordered = false, color = color, style = style, headings = headings, modifier = Modifier.padding(top = 4.dp))
+                            is OrderedList -> MarkdownList(child, ordered = true, color = color, style = style, headings = headings, modifier = Modifier.padding(top = 4.dp))
+                            else -> MarkdownBlock(child, color, style, headings)
                         }
                     }
                 }
@@ -275,7 +342,7 @@ private fun AnnotatedString.Builder.appendInlineNodes(start: Node?, codeBackgrou
     var node = start
     while (node != null) {
         when (node) {
-            is MarkdownTextNode -> append(node.literal)
+            is MarkdownTextNode -> appendMaths(node.literal)
             is SoftLineBreak -> append(' ')
             is HardLineBreak -> append('\n')
             is Code -> {
@@ -293,6 +360,32 @@ private fun AnnotatedString.Builder.appendInlineNodes(start: Node?, codeBackgrou
             else -> appendInlineNodes(node.firstChild, codeBackground, linkColor)
         }
         node = node.next
+    }
+}
+
+/**
+ * Appends one commonmark text run, with its `$…$` maths drawn rather than spelled (TEN-90). This
+ * is the only place [mathSpans] is called from, which is what keeps `$PATH` in a `bash` block —
+ * a literal on the code node, never a text run — out of its reach.
+ *
+ * Sub/superscripts are a baseline shift at `0.75.em` rather than Unicode's ᵢ/² code points: those
+ * cover barely any of the alphabet (there is no subscript `B`, and `$H_B$` is exactly what the
+ * model writes), and mixing real code points with shifted spans in one line looks like a bug. `em`
+ * keeps them proportional to whatever [MarkdownText]'s `style` is, so they shrink with the rest
+ * inside [ThinkingBlock].
+ */
+private fun AnnotatedString.Builder.appendMaths(literal: String) = appendMathSpans(mathSpans(literal))
+
+/** Draws already-read [spans] — see [appendMaths] for the sub/superscript rationale. */
+private fun AnnotatedString.Builder.appendMathSpans(spans: List<MathSpan>) {
+    for (span in spans) {
+        when (span) {
+            is MathSpan.Plain -> append(span.text)
+            is MathSpan.Subscript ->
+                withStyle(SpanStyle(fontSize = 0.75.em, baselineShift = BaselineShift.Subscript)) { append(span.text) }
+            is MathSpan.Superscript ->
+                withStyle(SpanStyle(fontSize = 0.75.em, baselineShift = BaselineShift.Superscript)) { append(span.text) }
+        }
     }
 }
 
