@@ -82,9 +82,6 @@ object CompatibilityChecker {
     /** Rough allowance for compute buffers/graph overhead beyond weights + KV cache. */
     private const val OVERHEAD_BYTES = 300L * 1024 * 1024
 
-    /** Reserved for the OS and the rest of the running system — not available to the model. */
-    private const val SYSTEM_RAM_MARGIN_BYTES = 1_536L * 1024 * 1024
-
     /**
      * Dense models at or above this size sit at or below the ~2 tok/s usable floor on this device
      * class per the measured table (Phi-4-mini, 3.8B: 1.7-2.3 tok/s; Qwen2.5-7B, 7B: 0.2 tok/s),
@@ -109,7 +106,13 @@ object CompatibilityChecker {
     fun check(model: ModelEntity, profile: DeviceProfile): Compatibility {
         val estimatedBytes = model.sizeBytes + kvCacheBytes(model) + OVERHEAD_BYTES
 
-        val wontFit = estimatedBytes > profile.totalRamBytes - SYSTEM_RAM_MARGIN_BYTES
+        // [DeviceProfile.usableRamBytes], the same basis LoadPolicy budgets its context against —
+        // see that property's KDoc. A verdict decided from one memory reading and a context
+        // planned from another is how a model passed this check and was then planned at 256
+        // tokens (TEN-77).
+        val wontFit = estimatedBytes > profile.usableRamBytes
+        // availableRamBytes only ever softens a verdict here, never decides fit: "the system is
+        // busy right now" is the one question a free-memory reading answers honestly.
         val tightFit = !wontFit && (estimatedBytes > profile.availableRamBytes || isLikelySlow(model))
 
         val verdict = when {

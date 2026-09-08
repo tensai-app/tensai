@@ -26,7 +26,49 @@ data class DeviceProfile(
     val bigCoreCount: Int,
     val hasVulkan: Boolean,
     val hasOpenCl: Boolean,
-)
+) {
+
+    /**
+     * The RAM a model load is budgeted against — [totalRamBytes] less [SYSTEM_RAM_MARGIN_BYTES],
+     * never negative. The single memory basis for both [CompatibilityChecker.check] (does this
+     * model fit at all?) and [io.github.hokanosekai.tensai.runtime.LoadPolicy] (how much context
+     * can we afford?).
+     *
+     * **Not [availableRamBytes], deliberately, and this is the whole of TEN-77.** Three things
+     * measured on the reference device (OPPO CPH2251, Gemma-4-E2B-It, 2.9 GB file, 2026-09-08)
+     * rule `availMem` out as a sizing input:
+     * - It is not reproducible. Two loads of the same model by the same code on the same phone
+     *   planned `n_ctx` 256 and 4096 — a factor of 16, decided by nothing but what else the system
+     *   happened to be holding at that second.
+     * - It does not predict whether the model fits. The load succeeded with `availMem` far below
+     *   the weights' own size, because llama.cpp mmaps them: they are file-backed and evictable,
+     *   so they are not spent out of free RAM at all.
+     * - Budgeting the KV cache against it answers a question nobody asked. At `n_ctx` 256 that
+     *   model's caches measured 0.80 MiB + 1.59 MiB; extrapolated to 4096 the whole thing is
+     *   ~17 MiB, against 2.9 GB of weights. Shrinking the context to protect free RAM gives back
+     *   noise and costs the user the conversation.
+     *
+     * [totalRamBytes] is a constant of the device, so anything derived from this is reproducible
+     * for a given (model, phone) pair — which is what makes a persisted session's `n_ctx` stable
+     * enough to ever match again (see [io.github.hokanosekai.tensai.data.session.SessionModelKey]).
+     *
+     * [availableRamBytes] survives for the one question it does answer honestly: whether the
+     * system is under pressure *right now*, which [CompatibilityChecker] uses to soften a verdict
+     * to [Verdict.TightFit]. It sizes nothing.
+     */
+    val usableRamBytes: Long
+        get() = (totalRamBytes - SYSTEM_RAM_MARGIN_BYTES).coerceAtLeast(0)
+
+    companion object {
+        /**
+         * Reserved for the OS and the rest of the running system — not available to the model.
+         * Lived in [CompatibilityChecker] until TEN-77; it is here because two layers now have to
+         * agree on it, and a private copy each is exactly how a model came to pass the
+         * compatibility check and then be planned at a context the check had ruled out.
+         */
+        const val SYSTEM_RAM_MARGIN_BYTES = 1_536L * 1024 * 1024
+    }
+}
 
 /**
  * Reads [DeviceProfile] facts for the current device.

@@ -4,14 +4,15 @@ import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * The first four cases share one synthetic model shape (embeddingLength=1000, blockCount=20,
- * sizeBytes=1GB, trained contextLength=32k) with no KV shape recorded, and vary only
- * [DeviceProfile.availableRamBytes], so the three [LoadPolicy.compute] branches (cap, Q8_0
- * fallback, RAM-forced reduction) are reachable with hand-checkable arithmetic rather than a real
- * GGUF's numbers. They also pin the pre-TEN-18 behaviour, which is what
+ * sizeBytes=1GB, trained contextLength=32k) with no KV shape recorded, and vary only the KV budget
+ * the device leaves, so the [LoadPolicy.compute] branches (cap, Q8_0 at full context, ladder
+ * reduction, infeasible) are reachable with hand-checkable arithmetic rather than a real GGUF's
+ * numbers. They also pin the pre-TEN-18 behaviour, which is what
  * [io.github.hokanosekai.tensai.data.models.KvCacheSize] still falls back to when a model's shape
  * is unknown.
  *
@@ -19,49 +20,139 @@ import org.junit.Test
  * device (OPPO CPH2251, 2026-09-04), plus one synthetic sliding-window shape that says so, to pin
  * what those shapes buy in planned context. The estimate itself is confronted with the
  * measurements in [io.github.hokanosekai.tensai.data.models.KvCacheSizeTest].
+ *
+ * Every profile below is built by [deviceWithKvBudget], which sets
+ * [DeviceProfile.availableRamBytes] to 0 — a reading no real device reports, and the point:
+ * since TEN-77 nothing in this class may read it.
  */
 class LoadPolicyTest {
 
     @Test
     fun largeRam_capsAtLatencyCeiling_usingF16() {
-        // 8GB available leaves ~6.8GB for KV after weights + overhead — comfortably more than the
-        // ~328MB an F16 KV cache needs at the 4096 cap, so the trained 32k context is capped, not
-        // RAM-reduced.
+        // 8GB of KV budget is comfortably more than the ~328MB an F16 KV cache needs at the 4096
+        // cap, so the trained 32k context is capped, not RAM-reduced.
         val model = model(contextLength = 32_768)
-        val profile = deviceProfile(availableRamBytes = 8L * GB)
+        val profile = deviceWithKvBudget(8L * GB)
 
         val plan = LoadPolicy.compute(model, profile)
 
-        assertEquals(LoadPolicy.CTX_LATENCY_CAP, plan.nCtx)
-        assertEquals(KvCacheType.F16, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
     }
 
     @Test
     fun tightRam_fallsBackToQ8_0AtTheWantedContext() {
-        // availableForKv = 200MB: below the ~328MB F16 needs for 4096 tokens, but above the
-        // ~174MB Q8_0 needs for the same 4096 — so Q8_0 kicks in without reducing the context.
-        // Not 164MB: that figure is elements * 1 byte, the reading this class no longer uses.
+        // 200MB of KV budget: below the ~328MB F16 needs for 4096 tokens, but above the ~174MB
+        // Q8_0 needs for the same 4096 — so Q8_0 kicks in without reducing the context. Not
+        // 164MB: that figure is elements * 1 byte, the reading this class no longer uses.
         val model = model(contextLength = 32_768)
-        val profile = deviceProfile(availableRamBytes = 200_000_000L + model.sizeBytes + OVERHEAD_BYTES)
+        val profile = deviceWithKvBudget(200_000_000L)
 
         val plan = LoadPolicy.compute(model, profile)
 
-        assertEquals(LoadPolicy.CTX_LATENCY_CAP, plan.nCtx)
-        assertEquals(KvCacheType.Q8_0, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.Q8_0), plan)
     }
 
     @Test
     fun veryTightRam_reducesContextEvenAtQ8_0() {
-        // availableForKv = 50MB, against 42 500 bytes per cell at Q8_0 (40 000 elements per token,
-        // 34 bytes per 32 of them): 1176 cells' worth of budget. llama.cpp only ever allocates
-        // whole blocks of 256 cells, so the plan is the 4 blocks that fit, not the 4096 cap.
+        // 50MB of KV budget, against 42 500 bytes per cell at Q8_0 (40 000 elements per token,
+        // 34 bytes per 32 of them): 1176 cells' worth. The ladder's 2048 rung would need 87MB, so
+        // the plan is its 1024 rung — the last one above MIN_USABLE_CTX.
         val model = model(contextLength = 32_768)
-        val profile = deviceProfile(availableRamBytes = 50_000_000L + model.sizeBytes + OVERHEAD_BYTES)
+        val profile = deviceWithKvBudget(50_000_000L)
 
         val plan = LoadPolicy.compute(model, profile)
 
-        assertEquals(1_024, plan.nCtx)
-        assertEquals(KvCacheType.Q8_0, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(1_024, KvCacheType.Q8_0), plan)
+    }
+
+    /**
+     * TEN-77's first promise, and the bug this whole ticket is about: on the reference device the
+     * old policy answered `n_ctx` 256 here and said nothing, so the user got a chat that took a
+     * 31-token prompt, had 225 tokens of budget left to answer in, and returned nothing at all —
+     * no error, no dialog, the model name and "256" in the top bar the only trace.
+     *
+     * 40MB of KV budget doesn't reach the 43.5MB the 1024 rung costs at Q8_0. There is no context
+     * worth loading this model at, and that is now something [LoadPolicy] can say.
+     */
+    @Test
+    fun belowTheUsableFloor_thePlanFailsInsteadOfShrinkingToADegenerateContext() {
+        val model = model(contextLength = 32_768)
+        val profile = deviceWithKvBudget(40_000_000L)
+
+        val plan = LoadPolicy.compute(model, profile)
+
+        assertTrue("expected an Infeasible plan, got $plan", plan is LoadPlan.Infeasible)
+        plan as LoadPlan.Infeasible
+        assertEquals(
+            "the floor is what an explicit \"load anyway\" gets tried with",
+            LoadPlan.Feasible(LoadPolicy.MIN_USABLE_CTX, KvCacheType.Q8_0),
+            plan.floor,
+        )
+        assertEquals(profile.usableRamBytes, plan.budgetBytes)
+        // 1GB of weights + 300MiB of overhead + 43 520 000 bytes of Q8_0 cache at 1024 cells.
+        assertEquals(1_000_000_000L + OVERHEAD_BYTES + 43_520_000L, plan.requiredBytes)
+        assertTrue(
+            "an Infeasible plan has to be over budget, or it isn't one",
+            plan.requiredBytes > plan.budgetBytes,
+        )
+    }
+
+    /**
+     * The same promise, stated as the invariant rather than as one case: sweep the KV budget from
+     * nothing to plenty and no plan ever names a context below [LoadPolicy.MIN_USABLE_CTX]. Either
+     * it is loadable or it is [LoadPlan.Infeasible] — the middle ground is what shipped the mute
+     * chat.
+     */
+    @Test
+    fun noBudgetEverProducesAFeasiblePlanBelowTheUsableFloor() {
+        val model = model(contextLength = 32_768)
+
+        for (budget in 0L..200_000_000L step 1_000_000L) {
+            val plan = LoadPolicy.compute(model, deviceWithKvBudget(budget))
+            if (plan is LoadPlan.Feasible) {
+                assertTrue(
+                    "budget $budget planned n_ctx ${plan.nCtx}, below the usable floor",
+                    plan.nCtx >= LoadPolicy.MIN_USABLE_CTX,
+                )
+            }
+        }
+    }
+
+    /**
+     * TEN-77's second promise. Measured on the reference device: the same model, the same code and
+     * the same phone planned 256 on one load (system log `SCENE_LOW_MEMORY ... availMem=1577`) and
+     * 4096 on the next, purely because free RAM had recovered in between. `n_ctx` is part of
+     * [io.github.hokanosekai.tensai.data.session.SessionModelKey], so every one of those flips
+     * invalidated every persisted session on the device — 466MB of `.llamastate` files that could
+     * never match, against a measured 23.5x time-to-first-token win when they do.
+     *
+     * The plan is now a pure function of the model and the phone's *total* RAM, so free RAM can do
+     * whatever it likes.
+     */
+    @Test
+    fun theSameModelOnTheSamePhonePlansTheSameContextWhateverFreeRamSays() {
+        val model = model(contextLength = 32_768)
+        val totalRamBytes = 8L * GB
+
+        val plans = listOf(0L, 200L * MB, 1_577L * MB, 3L * GB, 6L * GB, 8L * GB).map { availMem ->
+            availMem to LoadPolicy.compute(
+                model,
+                DeviceProfile(
+                    totalRamBytes = totalRamBytes,
+                    availableRamBytes = availMem,
+                    socModel = "test-soc",
+                    bigCoreCount = 4,
+                    hasVulkan = false,
+                    hasOpenCl = false,
+                ),
+            )
+        }
+
+        assertEquals(
+            "free RAM must not reach the plan at all — it did, and it cost every saved session: $plans",
+            1,
+            plans.map { it.second }.distinct().size,
+        )
     }
 
     /**
@@ -72,35 +163,49 @@ class LoadPolicyTest {
     @Test
     fun unknownTrainedContext_plansTheContextTheEngineWillUse() {
         val model = model(contextLength = 0)
-        val profile = deviceProfile(availableRamBytes = 8L * GB)
+        val profile = deviceWithKvBudget(8L * GB)
 
         val plan = LoadPolicy.compute(model, profile)
 
-        assertEquals(LoadPolicy.CTX_LATENCY_CAP, plan.nCtx)
-        assertEquals(KvCacheType.F16, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
     }
 
     /** ...and that stand-in goes through the same RAM budget as a trained one, it isn't a bypass. */
     @Test
     fun unknownTrainedContext_isStillCutToFitRam() {
-        val unknown = model(contextLength = 0)
-        val profile = deviceProfile(availableRamBytes = 50_000_000L + unknown.sizeBytes + OVERHEAD_BYTES)
+        val profile = deviceWithKvBudget(50_000_000L)
 
         assertEquals(
             LoadPolicy.compute(model(contextLength = 4_096), profile),
-            LoadPolicy.compute(unknown, profile),
+            LoadPolicy.compute(model(contextLength = 0), profile),
         )
     }
 
     @Test
     fun trainedContextBelowCap_isNeverExceeded() {
         val model = model(contextLength = 2_048)
-        val profile = deviceProfile(availableRamBytes = 8L * GB)
+        val profile = deviceWithKvBudget(8L * GB)
 
         val plan = LoadPolicy.compute(model, profile)
 
-        assertEquals(2_048, plan.nCtx)
-        assertEquals(KvCacheType.F16, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(2_048, KvCacheType.F16), plan)
+    }
+
+    /**
+     * A trained context that isn't on the ladder is still honoured in full when it fits: the rungs
+     * exist to make a *RAM-forced reduction* reproducible, and a model's own header is already
+     * that. Rounding 1536 down to 1024 here would throw away a third of the context for nothing.
+     */
+    @Test
+    fun aTrainedContextOffTheLadderIsNotRoundedDownWhenItFits() {
+        // F16 at 1536 costs 122 880 000, over the budget; Q8_0 at the same 1536 costs 65 280 000,
+        // under it. So this lands on the Q8_0 branch, where the ladder lives, and still keeps 1536.
+        val model = model(contextLength = 1_536)
+        val profile = deviceWithKvBudget(70_000_000L)
+
+        val plan = LoadPolicy.compute(model, profile)
+
+        assertEquals(LoadPlan.Feasible(1_536, KvCacheType.Q8_0), plan)
     }
 
     /**
@@ -108,22 +213,22 @@ class LoadPolicyTest {
      * query heads, so grouped-query 2:1), no sliding window. `kvFullElementsPerToken` is
      * `28 * 8 * (128 + 128)` = 57 344, half of what `2 * embeddingLength * blockCount` = 114 688
      * assumed — the exact factor the old estimate was off by. Same RAM, and the corrected shape
-     * buys the full 4096 where the old one had to cut the context to fit.
+     * buys the full 4096 where the old one has to cut the context to fit.
      */
     @Test
     fun groupedQueryShape_buysTheContextTheOldEstimateHadToCut() {
-        val availableForKv = 300_000_000L
         val gqa = qwen3(kvFullElementsPerToken = 57_344L)
         val unknownShape = qwen3()
-        val profile = deviceProfile(availableRamBytes = availableForKv + gqa.sizeBytes + OVERHEAD_BYTES)
+        val profile = deviceWithKvBudget(300_000_000L)
 
         // 57 344 * 4096 elements at Q8_0 = 249 561 088 bytes, inside the budget.
-        assertEquals(LoadPolicy.CTX_LATENCY_CAP, LoadPolicy.compute(gqa, profile).nCtx)
-        assertEquals(KvCacheType.Q8_0, LoadPolicy.compute(gqa, profile).kvCacheType)
+        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.Q8_0), LoadPolicy.compute(gqa, profile))
 
         // Same device, same model, shape unknown: 121 856 bytes per cell at Q8_0 leaves room for
-        // 2461 cells, which is 9 whole blocks of 256.
-        assertEquals(2_304, LoadPolicy.compute(unknownShape, profile).nCtx)
+        // 2304 cells. TEN-77 snaps that down to the ladder's 2048 rung rather than planning the
+        // 2304 the binary search reached — 256 tokens given up so that the answer survives the
+        // next change to this app's overhead constant or to the model's recorded KV shape.
+        assertEquals(LoadPlan.Feasible(2_048, KvCacheType.Q8_0), LoadPolicy.compute(unknownShape, profile))
     }
 
     /**
@@ -136,8 +241,8 @@ class LoadPolicyTest {
         val unknownShape = model(contextLength = 32_768)
         val spelledOut = model(contextLength = 32_768, kvFullElementsPerToken = 40_000L)
 
-        for (ram in listOf(8L * GB, 200_000_000L, 50_000_000L)) {
-            val profile = deviceProfile(availableRamBytes = ram + unknownShape.sizeBytes + OVERHEAD_BYTES)
+        for (budget in listOf(8L * GB, 200_000_000L, 50_000_000L, 40_000_000L)) {
+            val profile = deviceWithKvBudget(budget)
             assertEquals(
                 "unknown shape must not plan differently from the estimate it falls back to",
                 LoadPolicy.compute(spelledOut, profile),
@@ -165,12 +270,11 @@ class LoadPolicyTest {
             kvSwaElementsPerToken = 102_400L,
             slidingWindow = 1_024L,
         )
-        val profile = deviceProfile(availableRamBytes = 400_000_000L + gemma.sizeBytes + OVERHEAD_BYTES)
+        val profile = deviceWithKvBudget(400_000_000L)
 
         val plan = LoadPolicy.compute(gemma, profile)
 
-        assertEquals(LoadPolicy.CTX_LATENCY_CAP, plan.nCtx)
-        assertEquals(KvCacheType.F16, plan.kvCacheType)
+        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
     }
 
     /**
@@ -207,9 +311,16 @@ class LoadPolicyTest {
         slidingWindow = slidingWindow,
     )
 
-    private fun deviceProfile(availableRamBytes: Long) = DeviceProfile(
-        totalRamBytes = 8L * GB,
-        availableRamBytes = availableRamBytes,
+    /**
+     * A device whose [DeviceProfile.usableRamBytes] leaves exactly [kvBudgetBytes] for the KV cache
+     * of the 1GB model above, so each test names the one number its arithmetic turns on.
+     *
+     * [DeviceProfile.availableRamBytes] is 0: no device reports that, and any plan that changed
+     * because of it would be reading a field TEN-77 took out of the budget.
+     */
+    private fun deviceWithKvBudget(kvBudgetBytes: Long) = DeviceProfile(
+        totalRamBytes = kvBudgetBytes + 1_000_000_000L + OVERHEAD_BYTES + DeviceProfile.SYSTEM_RAM_MARGIN_BYTES,
+        availableRamBytes = 0,
         socModel = "test-soc",
         bigCoreCount = 4,
         hasVulkan = false,
@@ -217,6 +328,7 @@ class LoadPolicyTest {
     )
 
     private companion object {
+        const val MB = 1024L * 1024
         const val GB = 1024L * 1024 * 1024
         const val OVERHEAD_BYTES = 300L * 1024 * 1024
     }

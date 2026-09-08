@@ -80,7 +80,12 @@ class LoadFlowTest {
 
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val profile = DeviceProfiler(context).profile()
+            // The 400MB test model on any device this suite runs on: a LoadPlan.Infeasible here
+            // would mean the plan itself is the failure, and asserting it is a cleaner report than
+            // loading at its floor and blaming the engine.
             val plan = LoadPolicy.compute(model, profile)
+            assertTrue("expected a feasible plan for the test model, got $plan", plan is LoadPlan.Feasible)
+            plan as LoadPlan.Feasible
 
             val queue = InferenceQueue(engine)
             try {

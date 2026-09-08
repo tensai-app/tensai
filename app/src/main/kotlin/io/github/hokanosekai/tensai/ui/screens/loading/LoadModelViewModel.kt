@@ -11,6 +11,7 @@ import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.OutOfMemoryException
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
+import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -133,16 +134,40 @@ class LoadModelViewModel(
                 return@launch
             }
 
+            // A plan that can't be honoured is a block, not a quiet downgrade (TEN-77): the old
+            // policy answered "256 tokens, good luck" and the screen went straight to a chat that
+            // accepted a prompt and never replied.
+            //
+            // A backstop, and knowingly so. Since TEN-77 both layers budget against the same
+            // DeviceProfile.usableRamBytes, and the checker's own estimate (F16 at up to 4096) is
+            // strictly larger than the floor plan this can fail on (Q8_0 at 1024) — so any model
+            // that reaches here un-overridden has already survived a strictly harder test, and
+            // this branch cannot fire. It stays because that argument is about arithmetic in two
+            // files agreeing, and the cost of them silently drifting apart again is precisely the
+            // bug being fixed. `compatibility` is the right thing to show it with for the same
+            // reason: if the plan is infeasible, that Compatibility says WontFit.
+            //
+            // Never after "Load anyway" — a confirmation that lands back on the dialog it came
+            // from is a dead button. That path loads at `floor` and lets the engine be the one to
+            // refuse, which surfaces as the "Not enough memory" dialog rather than as silence.
             val plan = LoadPolicy.compute(model, profile)
+            if (plan is LoadPlan.Infeasible && !confirmedOverride) {
+                _state.value = LoadUiState.Blocked(model, compatibility)
+                return@launch
+            }
+            val effective = when (plan) {
+                is LoadPlan.Feasible -> plan
+                is LoadPlan.Infeasible -> plan.floor
+            }
             val config = ModelLoadConfig(
                 path = model.filePath,
-                nCtx = plan.nCtx,
+                nCtx = effective.nCtx,
                 // The user's persisted choice wins over the checker's recommendation, and a
                 // manual retry from a failure dialog wins over both — a "Retry on CPU" that
                 // silently loaded on GPU again because a preference said so would be a dead
                 // button. BackendPreference.Auto is exactly "no opinion, use the recommendation".
                 backend = backendOverride ?: backendPreference().resolve(compatibility.recommendedBackend),
-                kvCacheType = plan.kvCacheType,
+                kvCacheType = effective.kvCacheType,
             )
             _state.value = LoadUiState.InProgress(model, 0f)
 

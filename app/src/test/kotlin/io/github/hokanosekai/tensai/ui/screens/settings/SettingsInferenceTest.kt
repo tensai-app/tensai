@@ -4,6 +4,7 @@ import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
+import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,12 +15,15 @@ import org.junit.Test
  * neither exists.
  *
  * The point being defended here is that neither row is a constant. `4096` and `f16` are what a
- * roomy device happens to land on, and a device under memory pressure lands somewhere else — see
- * `theSameLibraryOnATighterDeviceReportsDifferentNumbers`.
+ * roomy device happens to land on, and a smaller device lands somewhere else — see
+ * `theSameLibraryOnAPhoneWithLessRamReportsDifferentNumbers`. Since TEN-77 "smaller" means fewer
+ * gigabytes soldered onto the phone, not less free RAM at this instant: the plan no longer moves
+ * with memory pressure, and `profile` below pins free RAM at a figure low enough that a row still
+ * reading it would show it.
  */
 class SettingsInferenceTest {
 
-    private val roomy = profile(availableRamBytes = 6L * 1024 * 1024 * 1024)
+    private val roomy = profile(totalRamBytes = 8L * 1024 * 1024 * 1024)
 
     @Test
     fun aResidentModelReportsWhatTheEngineActuallyLoadedWith() {
@@ -54,7 +58,7 @@ class SettingsInferenceTest {
             fileExists = { true },
         )
 
-        val expected = LoadPolicy.compute(next, roomy)
+        val expected = LoadPolicy.compute(next, roomy) as LoadPlan.Feasible
         assertEquals(
             InferenceFacts.Planned(modelName = "a", nCtx = expected.nCtx, kvCacheType = expected.kvCacheType),
             facts,
@@ -62,21 +66,23 @@ class SettingsInferenceTest {
     }
 
     @Test
-    fun theSameLibraryOnATighterDeviceReportsDifferentNumbers() {
+    fun theSameLibraryOnAPhoneWithLessRamReportsDifferentNumbers() {
         // The one assertion that would fail if either row were ever hard-coded: same model, same
-        // code path, two devices, two answers.
+        // code path, two phones, two answers. 5408 MiB of total RAM leaves 500 MiB for the KV
+        // cache after the system margin, this model's 3 GB of weights and the 300 MiB overhead —
+        // short of the 672 MiB F16 wants at 4096, past the 357 MiB Q8_0 wants for the same 4096.
         val big = model("big", sizeBytes = 3L * 1024 * 1024 * 1024, contextLength = 4096)
 
         val roomyFacts = SettingsInference.facts(
             resident = null,
             models = listOf(big),
-            profile = profile(availableRamBytes = 8L * 1024 * 1024 * 1024),
+            profile = profile(totalRamBytes = 8L * 1024 * 1024 * 1024),
             fileExists = { true },
         ) as InferenceFacts.Planned
         val tightFacts = SettingsInference.facts(
             resident = null,
             models = listOf(big),
-            profile = profile(availableRamBytes = 3400L * 1024 * 1024),
+            profile = profile(totalRamBytes = 5408L * 1024 * 1024),
             fileExists = { true },
         ) as InferenceFacts.Planned
 
@@ -148,9 +154,14 @@ class SettingsInferenceTest {
         )
     }
 
-    private fun profile(availableRamBytes: Long) = DeviceProfile(
-        totalRamBytes = 8L * 1024 * 1024 * 1024,
-        availableRamBytes = availableRamBytes,
+    /**
+     * Free RAM is pinned at 512 MiB — well under any of these models — so a row that still sized
+     * itself against [DeviceProfile.availableRamBytes] would report a context none of these tests
+     * expect (TEN-77).
+     */
+    private fun profile(totalRamBytes: Long) = DeviceProfile(
+        totalRamBytes = totalRamBytes,
+        availableRamBytes = 512L * 1024 * 1024,
         socModel = "test-soc",
         bigCoreCount = 4,
         hasVulkan = true,
