@@ -155,6 +155,49 @@ class InferenceQueueTest {
         assertEquals(1, engine.loadCallCount)
     }
 
+    /**
+     * TEN-84: the dedup has to be decided *before* the generation is cancelled, or a load that
+     * turns out to be a no-op kills a reply on its way to discovering it was one.
+     *
+     * The old order asked [QueueState.ModelReady], which is false for the whole duration of a
+     * reply (see [residentModel]), so a repeat load — "Load model" tapped on the model already
+     * loaded — fell through to the `Generating` branch, cancelled the reply, joined it, went round
+     * the loop and only then recognized the request as a no-op. `loadCallCount` is 1 either way,
+     * which is exactly why this test asserts on the generation instead: the user paid a reply for
+     * a tap that loaded nothing.
+     */
+    @Test
+    fun aRepeatLoadOfTheResidentModelLeavesTheGenerationInFlightAlone() = runBlocking {
+        val decodeGate = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = decodeGate)
+        val queue = InferenceQueue(engine)
+        val config = ModelLoadConfig(path = "/models/a.gguf")
+        val loaded = queue.loadModel(config)
+        val stopSignal = GenerationStopSignal()
+        val events = mutableListOf<DecodeEvent>()
+
+        val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { events += it } }
+        withTimeout(2_000) {
+            while (queue.state.value !is QueueState.Generating) delay(5)
+        }
+
+        val again = withTimeout(2_000) { queue.loadModel(config) }
+
+        assertEquals("the resident model is what a no-op load hands back", loaded, again)
+        assertEquals("and it issues no second engine load", 1, engine.loadCallCount)
+        assertTrue(
+            "the reply is still streaming — a load that loads nothing has no reason to stop it",
+            queue.state.value is QueueState.Generating,
+        )
+
+        decodeGate.complete(Unit)
+        withTimeout(2_000) { collectJob.join() }
+
+        assertEquals("the reply reached its own terminal event", 1, events.size)
+        assertTrue(events.single() is DecodeEvent.Done)
+        assertFalse("nobody stopped anything", stopSignal.wasRequested)
+    }
+
     @Test
     fun concurrentGenerateCallsRejectTheSecondWithQueueBusy() = runBlocking {
         val decodeGate = CompletableDeferred<Unit>()

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.ensureActive
@@ -35,6 +36,12 @@ import com.tensai.llamakt.SamplingParams as LlamaSamplingParams
  * instance*. This is a stopgap: it does not serialize across multiple
  * engine instances or coordinate with other work — strict, app-wide
  * inference serialization arrives with the `InferenceQueue` (TEN-26).
+ *
+ * "Every such call" means every call that touches the handle. The two that
+ * don't — [readMetadata], a static header read of a *file*, and
+ * [kvShapeVersion], a compile-time constant — stay off [dispatcher] on
+ * purpose: serializing them buys no safety and makes them wait behind
+ * whatever inference is running (TEN-84). Each says so at its own site.
  *
  * **Lifecycle: whoever constructs an engine owns it and must [close] it**
  * (TEN-66). [dispatcher]'s thread belongs to this instance, not to the
@@ -101,10 +108,11 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
     }
 
     /**
-     * Runs [block] on [dispatcher], refusing to dispatch onto a closed one. Every suspending entry
-     * point goes through this rather than calling `withContext(dispatcher)` itself, so the check
-     * cannot be forgotten at one site — and so it happens *before* the dispatch, which is the only
-     * point at which it can still be turned into a clean failure (see [close]).
+     * Runs [block] on [dispatcher], refusing to dispatch onto a closed one. Every entry point that
+     * touches the native handle goes through this rather than calling `withContext(dispatcher)`
+     * itself, so the check cannot be forgotten at one site — and so it happens *before* the
+     * dispatch, which is the only point at which it can still be turned into a clean failure (see
+     * [close]). [readMetadata] touches no handle and does its own [checkOpen] instead; see there.
      *
      * Best-effort against a caller closing the engine concurrently with its own in-flight call:
      * nothing here can close that window, and nothing tries to. The owner is expected not to close
@@ -215,13 +223,36 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         restored
     }
 
-    override suspend fun readMetadata(path: String): GgufInfo = onEngineThread {
-        val meta = try {
-            LlamaEngine.readMetadata(path)
-        } catch (e: Exception) {
-            throw ModelLoadException("Failed to read GGUF metadata for $path: ${e.message}", e)
+    /**
+     * **Not routed through [onEngineThread]** (TEN-84), unlike every other suspending call here.
+     * [LlamaEngine.readMetadata] is `static`: it opens the file at [path], reads its GGUF header
+     * with `no_alloc` and closes it (`nativeReadGgufMetadata` in `tensai_jni.cpp` takes a `jclass`,
+     * not this instance's native handle). It touches no model, no context and no llama.cpp state
+     * of this engine's, so [dispatcher] — which exists to serialize calls that *do* — has nothing
+     * to protect here.
+     *
+     * What it had instead was a queue. [dispatcher] is one thread, and the app shares this engine
+     * between [io.github.hokanosekai.tensai.runtime.InferenceQueue] and `ModelRepository`'s
+     * metadata reads (see `RuntimeGraph`): a header read is milliseconds of I/O, but issued while
+     * a generation is running it waited behind the whole generation — minutes, on a long reply —
+     * and the import screen sat there saying nothing. [Dispatchers.IO] is where a blocking file
+     * read belongs, and it makes the wait proportional to the work again.
+     *
+     * [checkOpen] stays. It is no longer needed for safety (the closed-dispatcher reroute
+     * [onEngineThread]'s KDoc describes cannot happen on [Dispatchers.IO]), but [close]'s contract
+     * is that every suspending call on this engine fails afterwards, and one entry point quietly
+     * carrying on would be a worse surprise than the refusal.
+     */
+    override suspend fun readMetadata(path: String): GgufInfo {
+        checkOpen()
+        return withContext(Dispatchers.IO) {
+            val meta = try {
+                LlamaEngine.readMetadata(path)
+            } catch (e: Exception) {
+                throw ModelLoadException("Failed to read GGUF metadata for $path: ${e.message}", e)
+            }
+            (meta ?: throw ModelLoadException("Not a readable GGUF file: $path")).toGgufInfo()
         }
-        (meta ?: throw ModelLoadException("Not a readable GGUF file: $path")).toGgufInfo()
     }
 
     /**

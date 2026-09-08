@@ -114,11 +114,15 @@ object RuntimeGraph {
     /**
      * Backs both [inferenceQueue] and [ModelRepository]'s GGUF metadata reads (see
      * `LlamaKtEngine.readMetadata`'s KDoc — it's a header-only read of the *file*, not of whatever
-     * this instance currently has loaded, so sharing it here is safe). It does mean a metadata
-     * read made while [inferenceQueue] is mid-load or mid-generate is serialized behind that work
-     * on the engine's single-thread dispatcher rather than running immediately — acceptable for
-     * V1's import flow (no generation is expected to be active while importing a new model), but
-     * worth revisiting if that stops holding.
+     * this instance currently has loaded, so sharing it here is safe).
+     *
+     * Sharing it used to mean a metadata read issued while [inferenceQueue] was mid-load or
+     * mid-generate waited behind that work on the engine's single-thread dispatcher — written down
+     * here as acceptable for V1 on the grounds that nobody imports a model mid-reply. That was
+     * only ever a guess about the user, and the wait it excused was unbounded: a long generation
+     * held an import screen on a spinner for as long as it ran. TEN-84 takes the read off that
+     * dispatcher entirely ([LlamaKtEngineImpl.readMetadata] — it touches no engine state, so the
+     * dispatcher was protecting nothing), and the two consumers no longer contend at all.
      *
      * Never closed, deliberately (TEN-66): this is a process-lifetime singleton, so there is no
      * point at which closing it would be correct — the process exiting is what reclaims its

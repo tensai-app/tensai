@@ -338,7 +338,23 @@ class ChatViewModel(
         scope.launch { chatRepository.setSystemPrompt(conversationId, prompt) }
     }
 
-    /** Latest [send]/[regenerate] failure, consumed by [ChatScreen] via [clearError]. */
+    /**
+     * Latest [send]/[regenerate] failure, consumed by [ChatScreen] via [clearError].
+     *
+     * **Scoped to one generation, and cleared by the next one starting** (TEN-84). Every value
+     * this holds describes a single attempt — "that one broke before its first token", "that one
+     * ran out of window" — so a new attempt makes it stale by definition, and nothing else was
+     * clearing it: only [clearError], i.e. only the user dismissing the banner by hand.
+     *
+     * Left to survive, it does not merely linger. The banner is rendered above the message list
+     * regardless of which turn it came from, so a failure the user ignored sits over a *later*
+     * reply that succeeded, and its Retry button — which reads as "retry the thing that failed" —
+     * calls [regenerate], whose first act is to delete the conversation's last assistant message.
+     * That message is the successful reply. The stale banner ends up destroying the very turn that
+     * proved it obsolete. [ChatError.ContextWindowFull] had the same shape with a slower fuse:
+     * it outlived a reload of the model at a larger context, still telling the user to do the
+     * thing they had just done.
+     */
     private val _error = MutableStateFlow<ChatError?>(null)
     val error: StateFlow<ChatError?> = _error.asStateFlow()
 
@@ -355,6 +371,12 @@ class ChatViewModel(
      * [ChatError.NoModelLoaded]) if no model is loaded; also a no-op if [text] is blank or a
      * generation is already running — `ChatScreen` disables send in both cases, this is just belt
      * and suspenders against a stray call.
+     *
+     * Clears [error] on the way in — see its KDoc. Here rather than deeper in (in [streamInto],
+     * say) so the banner dies with the tap that supersedes it, not several suspension points
+     * later: [generateReply] restores a persisted session before it decodes anything, which is
+     * file I/O, and a generation that breaks before ever reaching the engine must not leave the
+     * previous one's banner up either.
      */
     fun send(text: String) {
         val trimmed = text.trim()
@@ -363,6 +385,7 @@ class ChatViewModel(
             _error.value = ChatError.NoModelLoaded
             return
         }
+        _error.value = null
         generationJob = scope.launch {
             chatRepository.appendUserMessage(conversationId, trimmed)
             generateReply()
@@ -407,6 +430,10 @@ class ChatViewModel(
      * `ChatViewModel` was just recreated, e.g. after navigating away and back) and generates a new
      * one for the same history. A no-op if a generation is already running or no model is loaded
      * (same [ChatError.NoModelLoaded] surfacing as [send]).
+     *
+     * Clears [error] on the way in for the same reason [send] does, and this is the entry point
+     * the failure banner's own Retry button goes through: it is what makes a retry that works
+     * take the banner down with it.
      */
     fun regenerate() {
         if (generationJob?.isActive == true) return
@@ -414,6 +441,7 @@ class ChatViewModel(
             _error.value = ChatError.NoModelLoaded
             return
         }
+        _error.value = null
         generationJob = scope.launch {
             val last = chatRepository.observeMessages(conversationId).first().lastOrNull()
             if (last != null && last.role == "assistant") {

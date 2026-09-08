@@ -264,19 +264,32 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * releasing whatever model is currently loaded first (there is never
      * more than one model resident at a time).
      *
-     * If [config] matches [loadedConfig] and [state] is
-     * [QueueState.ModelReady], this is a no-op returning the already-loaded
-     * [LoadedModelInfo] — no second [engine] load is issued. That covers a
-     * model already loaded *and* one still loading, since the check runs
-     * after acquiring [mutex] and [performLoadLocked] holds it for the whole
-     * load. Without it, a second caller racing the first (see TEN-50) tears
-     * the model down and reloads several GB from scratch.
+     * If [config] matches [loadedConfig] and a model is actually resident,
+     * this is a no-op returning the already-loaded [LoadedModelInfo] — no
+     * second [engine] load is issued. That covers a model already loaded
+     * *and* one still loading, since the check runs after acquiring [mutex]
+     * and [performLoadLocked] holds it for the whole load. Without it, a
+     * second caller racing the first (see TEN-50) tears the model down and
+     * reloads several GB from scratch.
      *
      * If a generation is active, it is cancelled first (per spec: stopping
      * generation takes priority over starting a load) and awaited before the
      * load proceeds, so the previous model is never released while a decode
      * may still be touching it. [onBeforeModelSwap], if installed, runs
      * right before the previous model is freed.
+     *
+     * **The dedup is decided before that, and on the resident model rather
+     * than on [state]** (TEN-84). Matching [QueueState.ModelReady] alone
+     * reads "no model" for the whole duration of a reply (the same blind
+     * spot [residentModel] exists for), so a repeat load requested while one
+     * was streaming fell through to the `Generating` branch: it cancelled
+     * the reply, went round the loop, and only *then* recognized the request
+     * as the no-op it had been all along. The user lost a reply to a tap
+     * that, by this method's own reckoning, asked for nothing — and the load
+     * it appeared to trigger never happened either, so nothing on screen
+     * explained the reply stopping. Deduplicating first costs nothing:
+     * a no-op load has no reason to touch a generation, and a load that
+     * really is a swap still cancels it on the branch below.
      *
      * On failure, the previous model has already been released and [state]
      * falls back cleanly to [QueueState.Idle] — it does not attempt to
@@ -287,8 +300,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
             var pendingJob: Job? = null
             val info = mutex.withLock {
                 val current = _state.value
+                val resident = current.residentModel
                 when {
-                    loadedConfig == config.dedupKey() && current is QueueState.ModelReady -> current.info
+                    loadedConfig == config.dedupKey() && resident != null -> resident
                     current is QueueState.Generating -> {
                         // Someone is generating right now — stop them first (see class KDoc),
                         // then retry once they've fully wound down.

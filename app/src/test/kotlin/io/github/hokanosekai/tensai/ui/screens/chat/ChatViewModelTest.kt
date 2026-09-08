@@ -581,6 +581,101 @@ class ChatViewModelTest {
     }
 
     /**
+     * TEN-84: an error banner describes one generation and has to die with it.
+     *
+     * Nothing cleared [ChatViewModel.error] except the user dismissing it by hand, so a failure
+     * they ignored was still on screen — above a *later* reply that worked. That is worse than
+     * untidy: the banner's Retry calls [ChatViewModel.regenerate], whose first act is to delete
+     * the conversation's last assistant message. The stale banner's one control deletes the
+     * successful reply that made it obsolete.
+     */
+    @Test
+    fun aFailureBannerIsGoneOnceTheNextGenerationSucceeds() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(DecodeEvent.Error(RuntimeException("model gone")))
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        withTimeout(5_000) {
+            while (viewModel.error.value == null) delay(10)
+        }
+        assertEquals(ChatError.GenerationFailed, viewModel.error.value)
+
+        engine.scriptedEvents = null
+        // Sent in a loop rather than once: `send` is a deliberate no-op while the previous
+        // generation's job is still winding down, and the banner is raised on that job's very last
+        // statement — the wait above can return a heartbeat before it completes. The second call
+        // is the no-op, not a second user message: the guard holds until the append has landed.
+        withTimeout(5_000) {
+            while (chatRepository.observeMessages(conversation).first().size < 2) {
+                viewModel.send("try again")
+                delay(10)
+            }
+        }
+        val messages = waitForAssistantReply(conversation, expectedCount = 3)
+
+        assertEquals("assistant", messages.last().role)
+        assertEquals("hi", messages.last().content)
+        assertNull(
+            "the banner belonged to the generation that failed — this one succeeded, and its " +
+                "Retry would have deleted this very reply",
+            viewModel.error.value,
+        )
+    }
+
+    /**
+     * The same rule through the other door (TEN-84). [ChatViewModel.regenerate] is not only the
+     * banner's own Retry — `MessageBubble` puts a regenerate button on the last assistant reply,
+     * and that one does not call `clearError` first. A reply cut off by the context window leaves
+     * a [ChatError.ContextWindowFull] banner *and* a bubble to regenerate from, so it is the one
+     * path where a banner can outlive its generation without the user ever touching it.
+     */
+    @Test
+    fun aContextWindowBannerIsGoneOnceARegeneratedReplySucceeds() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("as far as the window would let me g"),
+            DecodeEvent.Done(
+                DecodeStats(
+                    tokensGenerated = TOKENS_PER_TURN,
+                    tokPerSec = 1f,
+                    ttftMs = 1L,
+                    stopReason = StopReason.ContextBudgetClipped,
+                ),
+            ),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }
+        assertEquals(ChatError.ContextWindowFull, viewModel.error.value)
+
+        engine.scriptedEvents = null
+        // Looped for the same reason as the test above; the redone reply is the default script's
+        // "hi", which is what tells it apart from the clipped one it replaces.
+        withTimeout(5_000) {
+            var last = chatRepository.observeMessages(conversation).first().last()
+            while (last.content != "hi" || last.stopReason == null) {
+                viewModel.regenerate()
+                delay(10)
+                last = chatRepository.observeMessages(conversation).first().last()
+            }
+        }
+
+        assertEquals(
+            "the redone reply replaces the clipped one rather than being appended to it",
+            2,
+            chatRepository.observeMessages(conversation).first().size,
+        )
+        assertNull(
+            "the window banner described the reply that was just thrown away",
+            viewModel.error.value,
+        )
+    }
+
+    /**
      * The acceptance criterion this ticket is most able to prove, taken through the whole chat
      * path: **no state the user can reach carries the exception's own words**.
      *

@@ -13,7 +13,11 @@ enum class Verdict {
     /** Loads, but is close to the RAM budget or expected to generate slowly (~2 tok/s or below). */
     TightFit,
 
-    /** Expected to be killed at load time (OOM on CPU, or hard-killed on GPU — see this file's KDoc). */
+    /**
+     * Expected not to survive a load: thrashed into uselessness on CPU, hard-killed on GPU — two
+     * mechanisms, one RAM ceiling, see this file's KDoc for why the verdict doesn't split by
+     * backend.
+     */
     WontFit,
 }
 
@@ -55,12 +59,24 @@ data class Compatibility(
  * That table is this object's source of truth; re-calibrate the constants below if it changes.
  *
  * Two device-class facts drive every threshold here:
- * - **The practical size ceiling is memory pressure, not OOM, and it is backend-dependent.**
- *   A CPU load mmaps weights (file-backed, evictable) — it survives past its comfortable size but
- *   thrashes (e.g. Qwen2.5-7B Q4 measured at 0.2 tok/s). A GPU load copies weights into
- *   unevictable Vulkan buffers on the same physical (UMA) RAM — it gets hard-killed instead of
- *   thrashing. So the GPU ceiling is *stricter* than the CPU one, and going over it isn't a slow
- *   "tight fit", it's a kill.
+ * - **The practical size ceiling is memory pressure, not OOM.** A CPU load mmaps weights
+ *   (file-backed, evictable) — it survives past its comfortable size but thrashes (e.g.
+ *   Qwen2.5-7B Q4 measured at 0.2 tok/s). A GPU load copies weights into unevictable Vulkan
+ *   buffers on the same physical (UMA) RAM — going over doesn't thrash, it gets hard-killed.
+ *
+ *   Two failure *modes*, one ceiling: [check] prices them the same, against
+ *   [DeviceProfile.usableRamBytes] — the single memory basis it shares with
+ *   [io.github.hokanosekai.tensai.runtime.LoadPolicy] since TEN-77. **This paragraph used to
+ *   claim the GPU ceiling was the stricter of two, and no code here has ever had two** (TEN-84).
+ *   That is left as it is, deliberately, and not implemented as the KDoc used to promise, for
+ *   three reasons: the measured table this object calibrates against holds no GPU OOM figure to
+ *   set a stricter ceiling *from*, and a margin invented here would be exactly the guess the
+ *   "source of truth" sentence above forbids; [recommendedBackend] is a hint the user is free to
+ *   override, so a verdict computed from it would describe a backend the model may not be loaded
+ *   on; and the layer that actually sizes a load, `LoadPolicy`, is backend-blind too — splitting
+ *   the ceiling in one of the two and not the other reopens TEN-77's defect, a model passing the
+ *   check and then being planned against a budget the check had ruled out. Measure the GPU kill
+ *   point on a device that has one, then give both layers the same two ceilings, or neither.
  * - **Backend preference is per-architecture, not a blanket rule.** Dense transformers (llama,
  *   qwen, plain gemma) run fastest on the big CPU cores — Vulkan loses on both prefill and decode
  *   because Mali has no cooperative-matrix path. Gemma 3n/4 and Phi are the exceptions: their
