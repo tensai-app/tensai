@@ -39,7 +39,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
-import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
@@ -60,18 +59,17 @@ fun TensaiDrawerContent(
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier,
     chatRepository: ChatRepository = RuntimeGraph.chatRepository,
-    modelRepository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
     val conversations by chatRepository.observeConversations().collectAsState(initial = null)
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val models by modelRepository.models.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
-    // Same by-displayName caveat as ModelsScreen's `loadedModelName` — see ModelRepository's KDoc.
+    // Straight off the load since TEN-80. Resolving it through the model list by display name gave
+    // the newest row sharing that name, so a new chat opened under the older of two quantisations
+    // was stamped with the other one's id — a wrong answer where this one cannot be wrong.
     // `residentModel`, not `ModelReady` alone: a "New chat" started while a reply is streaming in
     // another conversation would otherwise be created with a null modelId (TEN-76).
-    val loadedModelId = queueState.residentModel?.name
-        ?.let { name -> models.find { it.displayName == name }?.id }
+    val loadedModelId = queueState.residentModel?.modelId
 
     fun startNewChat() {
         scope.launch {

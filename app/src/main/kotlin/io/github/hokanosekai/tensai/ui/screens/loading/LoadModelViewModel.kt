@@ -161,6 +161,12 @@ class LoadModelViewModel(
             }
             val config = ModelLoadConfig(
                 path = model.filePath,
+                // The one place the row's id and the file about to be loaded are both in hand, and
+                // so the only place the two can be tied together (TEN-80). Everything downstream
+                // that has to name the loaded model exactly — the session key above all — reads it
+                // back off `LoadedModelInfo.modelId`; without it the only handle is a GGUF display
+                // name, which two quantisations of one model share.
+                modelId = model.id,
                 nCtx = effective.nCtx,
                 // The user's persisted choice wins over the checker's recommendation, and a
                 // manual retry from a failure dialog wins over both — a "Retry on CPU" that

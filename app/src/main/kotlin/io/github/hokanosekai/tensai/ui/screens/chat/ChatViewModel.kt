@@ -286,19 +286,19 @@ class ChatViewModel(
      * `supportsThinking` flag of its own — that's a GGUF-header concept
      * ([io.github.hokanosekai.tensai.engine.GgufInfo.supportsThinking]), not something the engine's
      * load-time [io.github.hokanosekai.tensai.engine.LoadedModelInfo] repeats — so this matches the
-     * loaded model back to its persisted [io.github.hokanosekai.tensai.data.models.ModelEntity] by
-     * display name, the same by-name match
-     * [io.github.hokanosekai.tensai.data.models.ModelRepository.deleteModel]'s in-use guard already
-     * relies on, with the same caveat noted there (a false negative if two imported files happen to
-     * share a display name).
+     * loaded model back to its persisted [io.github.hokanosekai.tensai.data.models.ModelEntity], by
+     * [io.github.hokanosekai.tensai.engine.LoadedModelInfo.modelId] since TEN-80. The display-name
+     * match it replaces could land on a different row that happened to share a GGUF name and read
+     * that row's `supportsThinking` instead — the toggle then showed or hid according to a file
+     * that was not loaded.
      *
      * Read through [residentModel] rather than `ModelReady` alone, or the toggle disappears from
      * the chrome for the whole duration of a reply — the model is still resident (TEN-76).
      */
     val currentModelSupportsThinking: Flow<Boolean> =
         combine(inferenceQueue.state, modelRepository.models) { state, models ->
-            val loadedName = state.residentModel?.name ?: return@combine false
-            models.any { it.displayName == loadedName && it.supportsThinking }
+            val loadedId = state.residentModel?.modelId ?: return@combine false
+            models.any { it.id == loadedId && it.supportsThinking }
         }
 
     /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
@@ -508,9 +508,23 @@ class ChatViewModel(
 
     /**
      * Resolves the [SessionModelKey] for whatever model is currently loaded, **together with the
-     * [LoadedModelInfo] it was derived from**, or `null` if none is loaded or it can't be matched
-     * back to a persisted [io.github.hokanosekai.tensai.data.models.ModelEntity] (by display name —
-     * see [currentModelSupportsThinking]'s KDoc for the same by-name-match caveat this shares).
+     * [LoadedModelInfo] it was derived from**, or `null` if none is loaded or what is loaded
+     * carries no [LoadedModelInfo.modelId] (a bare-path load, which no app path produces — see
+     * `LoadModelViewModel`).
+     *
+     * The id is read straight off the load rather than looked up. Until TEN-80 this matched the
+     * loaded model back to a persisted [io.github.hokanosekai.tensai.data.models.ModelEntity] by
+     * display name, against a list ordered `importedAt DESC` — so with two quantisations of one
+     * model imported (they share a GGUF name), loading the older one produced the *newer* one's
+     * id. Every key built here then named the wrong file:
+     * [io.github.hokanosekai.tensai.data.session.SessionEntity]'s whole promise is that
+     * a session saved against one model is never handed to another's `loadSession`, and
+     * [SessionRepository.restore]'s mismatch check was left comparing only `nCtx` and
+     * `kvCacheType` — which two quantisations of one model, planned by the same deterministic
+     * [io.github.hokanosekai.tensai.runtime.LoadPolicy] against the same device, will readily
+     * agree on. The same wrong id also reached [ActiveSessionTracker.report], where
+     * [syncSessionForConversationSwitch]'s `outgoingKey != incomingKey` could then read a real
+     * model swap as "same model".
      *
      * The info is carried out rather than dropped because every restore has to hand it to
      * [InferenceQueue.restoreSession] as its `expectedModel` (TEN-81): this whole resolution runs
@@ -518,11 +532,11 @@ class ChatViewModel(
      * takes the lock, and the key alone — which names a model by *database id* — is not something
      * the queue can compare against what it has loaded.
      */
-    private suspend fun resolveSessionKey(): Pair<LoadedModelInfo, SessionModelKey>? {
+    private fun resolveSessionKey(): Pair<LoadedModelInfo, SessionModelKey>? {
         val info = inferenceQueue.state.value.residentModel ?: return null
-        val model = modelRepository.models.first().find { it.displayName == info.name } ?: return null
+        val modelId = info.modelId ?: return null
         return info to SessionModelKey(
-            modelId = model.id,
+            modelId = modelId,
             nCtx = info.nCtxEffective,
             kvCacheType = info.kvCacheType,
             backend = info.backend,

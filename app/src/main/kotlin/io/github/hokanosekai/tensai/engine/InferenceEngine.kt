@@ -42,6 +42,11 @@ enum class KvCacheType {
  *
  * @param path path to the model file on disk, in whatever format the
  *   target engine expects (GGUF, MLC bundle, LiteRT model, …).
+ * @param modelId opaque caller-supplied identity for the file at [path], echoed back on
+ *   [LoadedModelInfo.modelId] and never interpreted by the engine. The app passes the loaded
+ *   row's [io.github.hokanosekai.tensai.data.models.ModelEntity.id]; `null` (the default) is for
+ *   callers loading a bare path with no persisted row behind it, and costs them nothing but the
+ *   exact identity that field buys — see [LoadedModelInfo.modelId].
  * @param nCtx requested context window size, in tokens.
  * @param backend see [BackendHint].
  * @param kvCacheType see [KvCacheType].
@@ -51,6 +56,7 @@ enum class KvCacheType {
  */
 data class ModelLoadConfig(
     val path: String,
+    val modelId: String? = null,
     val nCtx: Int = 4096,
     val backend: BackendHint = BackendHint.Auto,
     val kvCacheType: KvCacheType = KvCacheType.F16,
@@ -390,12 +396,23 @@ sealed class DecodeEvent {
  *   session's metadata can record exactly what produced it: TEN-34's restore path refuses to load
  *   a session back unless the model, [nCtxEffective] and this all still match, and this is the one
  *   place that triple is available together after a load completes.
+ * @param modelId whatever [ModelLoadConfig.modelId] the load was requested with, echoed back
+ *   untouched — the app's [io.github.hokanosekai.tensai.data.models.ModelEntity.id], or `null` for
+ *   a load with no row behind it. [name] cannot stand in for it: it comes from the GGUF header, so
+ *   two quantisations of the same model — the ordinary case of importing a Q4 and a Q8 to compare
+ *   them — are two files with two rows and one single name. Everything that has to say *which
+ *   file* is loaded reads this: TEN-34's session key (a session restored onto the other
+ *   quantisation is one model's KV state fed to another), the delete guard's "is this file
+ *   mmapped", and this type's own equality, which
+ *   [io.github.hokanosekai.tensai.runtime.InferenceQueue.restoreSession] re-checks a model against
+ *   under its lock (TEN-80).
  */
 data class LoadedModelInfo(
     val name: String,
     val nCtxEffective: Int,
     val backend: String,
     val kvCacheType: KvCacheType,
+    val modelId: String? = null,
 )
 
 /**

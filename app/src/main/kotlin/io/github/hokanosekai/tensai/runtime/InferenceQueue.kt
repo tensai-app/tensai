@@ -72,18 +72,23 @@ val QueueState.residentModel: LoadedModelInfo?
     }
 
 /**
- * The display name of the model this queue currently holds in memory — [residentModel] read off
- * [InferenceQueue.state], as one named thing rather than an expression each caller writes out.
+ * The [io.github.hokanosekai.tensai.data.models.ModelEntity.id] of the model this queue currently
+ * holds in memory — [residentModel] read off [InferenceQueue.state], as one named thing rather
+ * than an expression each caller writes out. `null` when nothing is loaded, and also when what is
+ * loaded came in without an id (a bare-path load — see [LoadedModelInfo.modelId]).
  *
  * It exists because of the one caller that must never get this wrong:
- * [io.github.hokanosekai.tensai.data.models.ModelRepository]'s `currentLoadedModelName`, whose
+ * [io.github.hokanosekai.tensai.data.models.ModelRepository]'s `currentLoadedModelId`, whose
  * in-use guard is the only thing standing between a mid-generation delete and an `unlink` of a
  * `.gguf` llama.cpp still has mmapped (TEN-76). Wiring that guard to an expression matching
  * `ModelReady` alone left it blind for the whole duration of a reply. Wire it to this instead, so
  * the guard and the tests that pin it read the same derivation.
+ *
+ * Was the display *name* until TEN-80, which is a weaker thing to compare: two quantisations of
+ * one model share a GGUF name, so the guard refused to delete either while one was loaded.
  */
-val InferenceQueue.residentModelName: String?
-    get() = state.value.residentModel?.name
+val InferenceQueue.residentModelId: String?
+    get() = state.value.residentModel?.modelId
 
 /**
  * Thrown (as [DecodeEvent.Error]) when [InferenceQueue.generate] is called

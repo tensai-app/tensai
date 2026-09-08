@@ -188,6 +188,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
             nCtxEffective = config.nCtx,
             backend = backend,
             kvCacheType = config.kvCacheType,
+            modelId = config.modelId,
         )
 
         refreshKvUsedCells()

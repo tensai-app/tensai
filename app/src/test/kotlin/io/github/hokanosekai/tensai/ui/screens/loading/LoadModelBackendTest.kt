@@ -62,7 +62,7 @@ class LoadModelBackendTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            currentLoadedModelName = { null },
+            currentLoadedModelId = { null },
             storageRoot = storageRoot,
         )
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

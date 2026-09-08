@@ -60,23 +60,24 @@ data class StorageUsage(val modelsBytes: Long, val freeBytes: Long, val totalByt
  * @param kvShapeVersion the revision of the native KV-shape derivation the engine currently
  *   carries — see [KvCacheShapeBackfill] for why this is asked of the library rather than written
  *   down here.
- * @param currentLoadedModelName the display name of whatever model is currently loaded in the
+ * @param currentLoadedModelId the [ModelEntity.id] of whatever model is currently loaded in the
  *   queue, or `null` if none is — used by [deleteModel]'s in-use guard. Wire this to
- *   [io.github.hokanosekai.tensai.runtime.residentModelName] and nothing else: a *generating* model
+ *   [io.github.hokanosekai.tensai.runtime.residentModelId] and nothing else: a *generating* model
  *   is every bit as resident as an idle one, and a derivation matching `QueueState.ModelReady`
  *   alone leaves this guard blind for the whole duration of a reply, which is how TEN-76 could
- *   unlink a multi-gigabyte `.gguf` llama.cpp still had mmapped. Note also that `LoadedModelInfo`
- *   has no file path, only a name, so this guard compares by [ModelEntity.displayName]. Two
- *   distinct imported files that happen to share a display name would produce a false positive;
- *   harmless in V1 (blocks a delete that should have been allowed) rather than the reverse
- *   (deleting a file still in use).
+ *   unlink a multi-gigabyte `.gguf` llama.cpp still had mmapped. This compared by
+ *   [ModelEntity.displayName] until TEN-80, for want of anything better on `LoadedModelInfo`, and
+ *   the false positive that bought was not as harmless as it looked: two quantisations of the same
+ *   model share a GGUF display name, so importing a Q4 and a Q8 to compare them — the ordinary
+ *   reason to hold two — made the loaded one lock the other against deletion, with a message
+ *   naming a model the user could see was not the one they meant.
  */
 class ModelRepository(
     private val context: Context,
     private val modelDao: ModelDao,
     private val readMetadata: suspend (path: String) -> GgufInfo,
     private val kvShapeVersion: () -> Long,
-    private val currentLoadedModelName: () -> String?,
+    private val currentLoadedModelId: () -> String?,
     // Root under which imported GGUFs are stored. Defaults to the app's real filesDir; tests MUST
     // pass a temp dir — this class deletes/overwrites files under `models/`, and pointing it at the
     // real filesDir (as an instrumented test's targetContext does) makes those deletes destroy the
@@ -181,12 +182,13 @@ class ModelRepository(
 
     /**
      * Deletes [id]'s file and row. Throws [ModelInUseException] (without deleting anything) if
-     * the model is currently loaded — see this class's KDoc for the by-name comparison caveat.
-     * No-op if [id] doesn't exist.
+     * the model is currently loaded — by [ModelEntity.id], so it is exactly this file that is
+     * refused and not merely one sharing its name (see this class's KDoc). No-op if [id] doesn't
+     * exist.
      */
     suspend fun deleteModel(id: String) = withContext(Dispatchers.IO) {
         val entity = modelDao.getById(id) ?: return@withContext
-        if (currentLoadedModelName() == entity.displayName) {
+        if (currentLoadedModelId() == entity.id) {
             throw ModelInUseException("Cannot delete \"${entity.displayName}\" while it is loaded")
         }
         File(entity.filePath).delete()

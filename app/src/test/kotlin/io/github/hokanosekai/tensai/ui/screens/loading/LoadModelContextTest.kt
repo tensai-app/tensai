@@ -75,7 +75,7 @@ class LoadModelContextTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            currentLoadedModelName = { null },
+            currentLoadedModelId = { null },
             storageRoot = storageRoot,
         )
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -107,6 +107,21 @@ class LoadModelContextTest {
             config.nCtx,
         )
         assertEquals(KvCacheType.F16, config.kvCacheType)
+    }
+
+    /**
+     * TEN-80's transport half. This is the one moment the row's id and the file about to be loaded
+     * are both in hand; if the id does not leave here it cannot be recovered afterwards, because
+     * the display name that used to stand in for it names the *model* and not the file — two
+     * quantisations of one model carry the same one.
+     */
+    @Test
+    fun theLoadCarriesTheRowsIdSoWhatIsLoadedCanBeNamedExactly() = runBlocking {
+        val model = gemmaSizedModel()
+
+        viewModel(model, phone(totalRamGb = 8, availableRamMb = 6_000)).start()
+
+        assertEquals(model.id, awaitLoad().modelId)
     }
 
     /**
@@ -280,6 +295,7 @@ class LoadModelContextTest {
                     nCtxEffective = config.nCtx,
                     backend = config.backend.name,
                     kvCacheType = config.kvCacheType,
+                    modelId = config.modelId,
                 )
 
                 override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {

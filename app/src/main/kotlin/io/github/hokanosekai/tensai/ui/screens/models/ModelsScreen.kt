@@ -77,7 +77,9 @@ fun ModelsScreen(
     val storageUsageFlow = remember(repository) { repository.storageUsage() }
     val storageUsage by storageUsageFlow.collectAsState(initial = null)
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val loadedModelName = queueState.residentModel?.name
+    // By id, not display name (TEN-80): two quantisations of one model carry the same GGUF
+    // name, and marking both "loaded" is a lie about the one that is not.
+    val loadedModelId = queueState.residentModel?.modelId
 
     var importProgress by remember { mutableStateOf<Float?>(null) }
     var importFailure by remember { mutableStateOf<ImportFailure?>(null) }
@@ -160,7 +162,7 @@ fun ModelsScreen(
                             items(currentModels, key = { it.id }) { model ->
                                 ModelCard(
                                     model = model,
-                                    isLoaded = model.displayName == loadedModelName,
+                                    isLoaded = model.id == loadedModelId,
                                     onClick = { onModelClick(model.id) },
                                     onLoadClick = { onLoadModelClick(model.id) },
                                     onDeleteClick = { fileExists ->

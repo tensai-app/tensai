@@ -194,7 +194,7 @@ object RuntimeGraph {
             modelDao = database.modelDao(),
             readMetadata = llamaEngine::readMetadata,
             kvShapeVersion = llamaEngine::kvShapeVersion,
-            currentLoadedModelName = { inferenceQueue.residentModelName },
+            currentLoadedModelId = { inferenceQueue.residentModelId },
         )
     }
 

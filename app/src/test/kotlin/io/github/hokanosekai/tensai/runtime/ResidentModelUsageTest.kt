@@ -17,7 +17,7 @@ import org.junit.Test
  * available to write again.
  *
  * The expression has no correct use left. Extracting the loaded model out of the queue's state is
- * what [residentModel] and [residentModelName] are for; asking whether the queue is *idle enough*
+ * what [residentModel] and [residentModelId] are for; asking whether the queue is *idle enough*
  * to start work is `is`/`!is QueueState.ModelReady`, which does not carry `info` out and is
  * deliberately untouched by this test (see [InferenceQueue.generate] and [InferenceQueue.saveSession]).
  *
@@ -37,7 +37,7 @@ class ResidentModelUsageTest {
 
         assertEquals(
             "`$BANNED` reads as \"no model loaded\" for the whole duration of a generation. Use " +
-                "`residentModel`/`residentModelName` instead — or, if the question really is " +
+                "`residentModel`/`residentModelId` instead — or, if the question really is " +
                 "whether the queue is idle, `is QueueState.ModelReady`, which carries no `info` out.",
             emptyList<String>(),
             offenders,

@@ -27,7 +27,7 @@ import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
-import io.github.hokanosekai.tensai.runtime.residentModelName
+import io.github.hokanosekai.tensai.runtime.residentModelId
 import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
@@ -84,8 +84,8 @@ class ChatViewModelTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            // Wired exactly as `RuntimeGraph` wires it — see `residentModelName` (TEN-76).
-            currentLoadedModelName = { inferenceQueue.residentModelName },
+            // Wired exactly as `RuntimeGraph` wires it — see `residentModelId` (TEN-76, TEN-80).
+            currentLoadedModelId = { inferenceQueue.residentModelId },
             storageRoot = storageRoot,
         )
         sessionRepository = SessionRepository(
@@ -114,13 +114,27 @@ class ChatViewModelTest {
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false) {
-        inferenceQueue.loadModel(ModelLoadConfig(path = "/models/fake.gguf", nCtx = NCTX))
+        importModel(supportsThinking = supportsThinking)
+        loadImportedModel(MODEL_ID)
+    }
+
+    /**
+     * Inserts one imported model's row. Defaults to the single model the rest of these tests use;
+     * the TEN-80 tests import a second one that deliberately shares [MODEL_NAME], which is what two
+     * quantisations of the same model look like — the GGUF header names the model, not the file.
+     */
+    private suspend fun importModel(
+        id: String = MODEL_ID,
+        fileName: String = "fake.gguf",
+        importedAt: Long = 0L,
+        supportsThinking: Boolean = false,
+    ) {
         modelDao.insert(
             ModelEntity(
-                id = MODEL_ID,
+                id = id,
                 displayName = MODEL_NAME,
-                fileName = "fake.gguf",
-                filePath = "/models/fake.gguf",
+                fileName = fileName,
+                filePath = "/models/$fileName",
                 sizeBytes = 1L,
                 architecture = "test",
                 quantLabel = "F16",
@@ -129,9 +143,15 @@ class ChatViewModelTest {
                 embeddingLength = 1L,
                 blockCount = 1L,
                 supportsThinking = supportsThinking,
-                importedAt = 0L,
+                importedAt = importedAt,
             ),
         )
+    }
+
+    /** Loads [id]'s file the way `LoadModelViewModel` does — carrying the row's id on the config. */
+    private suspend fun loadImportedModel(id: String) {
+        val model = modelDao.getById(id) ?: error("no imported model $id")
+        inferenceQueue.loadModel(ModelLoadConfig(path = model.filePath, modelId = model.id, nCtx = NCTX))
     }
 
     /**
@@ -178,6 +198,80 @@ class ChatViewModelTest {
             "reportActiveSession must move the tracker to B once B's turn runs",
             conversationB,
             ActiveSessionTracker.current.value?.first,
+        )
+    }
+
+    /**
+     * TEN-80, the defect itself. Two quantisations of one model — a Q4 and a Q8 imported to compare
+     * them — are two files, two rows, and one GGUF display name. `resolveSessionKey` used to turn
+     * the loaded model back into a row by that name, against a list ordered `importedAt DESC`, so
+     * loading the *older* one produced the *newer* one's id and every session written under it was
+     * stamped with a model that was never loaded.
+     */
+    @Test
+    fun theSessionKeyCarriesTheLoadedQuantisationsIdNotTheNewestRowSharingItsName() = runBlocking {
+        importModel(id = OLDER_MODEL_ID, fileName = "q4.gguf", importedAt = 0L)
+        importModel(id = MODEL_ID, fileName = "q8.gguf", importedAt = 1L)
+        loadImportedModel(OLDER_MODEL_ID)
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+
+        newViewModel(conversationA).send("hi from A")
+        waitForAssistantReply(conversationA, expectedCount = 2)
+        assertEquals(
+            "the tracked session must name the quantisation that is loaded",
+            OLDER_MODEL_ID,
+            ActiveSessionTracker.current.value?.second?.modelId,
+        )
+
+        // Switching away is what commits that key to disk (TEN-62), which is where a wrong id
+        // stops being a wrong number and becomes a session another model can be handed.
+        newViewModel(conversationB).send("hi from B")
+        waitForAssistantReply(conversationB, expectedCount = 2)
+
+        assertEquals(
+            "the saved session must be stamped with the loaded model's own id",
+            OLDER_MODEL_ID,
+            sessionDao.getByConversation(conversationA)?.modelId,
+        )
+    }
+
+    /**
+     * TEN-80's consequence, and the reason the id matters more than tidiness:
+     * [SessionRepository.restore]'s mismatch check is the only thing standing between a session and
+     * a *different* model's `loadSession`, and with the wrong id written down it had nothing left
+     * to catch this with. `nCtx` and `kvCacheType` are the rest of the check, and two quantisations
+     * of one model planned by the same deterministic [io.github.hokanosekai.tensai.runtime.LoadPolicy]
+     * against the same device agree on both — as they do here.
+     */
+    @Test
+    fun aSessionSavedUnderOneQuantisationIsNeverRestoredOntoTheOther() = runBlocking {
+        importModel(id = OLDER_MODEL_ID, fileName = "q4.gguf", importedAt = 0L)
+        importModel(id = MODEL_ID, fileName = "q8.gguf", importedAt = 1L)
+        loadImportedModel(OLDER_MODEL_ID)
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+
+        newViewModel(conversationA).send("hi from A")
+        waitForAssistantReply(conversationA, expectedCount = 2)
+        newViewModel(conversationB).send("hi from B")
+        waitForAssistantReply(conversationB, expectedCount = 2)
+        assertTrue("precondition: A's session must be on disk to be restorable at all", sessionDao.getByConversation(conversationA) != null)
+
+        // The swap the user makes to compare the two: same model, other file. The queue comes back
+        // on an empty cache, so A's next turn takes the cold-start restore path.
+        loadImportedModel(MODEL_ID)
+        newViewModel(conversationA).send("back in A")
+        waitForAssistantReply(conversationA, expectedCount = 4)
+
+        assertEquals(
+            "the other quantisation's KV state was handed to this model",
+            0,
+            engine.loadSessionCalls,
+        )
+        assertTrue(
+            "a mismatch is not a broken session — the row must survive for the model it belongs to",
+            sessionDao.getByConversation(conversationA) != null,
         )
     }
 
@@ -1016,6 +1110,16 @@ class ChatViewModelTest {
         private val models = mutableMapOf<String, ModelEntity>()
         private val flow = MutableStateFlow<List<ModelEntity>>(emptyList())
 
+        /**
+         * Ordered `importedAt` descending, like [ModelDao.observeAll]'s own query. Insertion order
+         * would do for every other test here, but not for TEN-80: the defect *is* which of two
+         * rows sharing a display name that ordering puts first, so a fake answering in insertion
+         * order could not reproduce it.
+         */
+        private fun publish() {
+            flow.value = models.values.sortedByDescending { it.importedAt }
+        }
+
         override fun observeAll(): Flow<List<ModelEntity>> = flow
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
@@ -1037,17 +1141,17 @@ class ChatViewModelTest {
                 slidingWindow = slidingWindow,
                 kvShapeVersion = kvShapeVersion,
             )
-            flow.value = models.values.toList()
+            publish()
         }
 
         override suspend fun insert(model: ModelEntity) {
             models[model.id] = model
-            flow.value = models.values.toList()
+            publish()
         }
 
         override suspend fun delete(model: ModelEntity) {
             models.remove(model.id)
-            flow.value = models.values.toList()
+            publish()
         }
     }
 
@@ -1096,15 +1200,30 @@ class ChatViewModelTest {
         var scriptedEvents: List<DecodeEvent>? = null
         var hangBeforeTerminal = false
 
+        /**
+         * How many times a session file was actually handed to the engine — the only way to tell a
+         * restore that was declined upstream from one that went through, since [loadSession] itself
+         * always succeeds here. TEN-80 asserts on it being zero.
+         */
+        var loadSessionCalls = 0
+            private set
+
         /** The last [DecodeRequest] handed to [LoadedModel.decode] — TEN-35 asserts on its sampling. */
         var lastRequest: DecodeRequest? = null
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
+            // A load gets a fresh llama.cpp context, so the cache it reports starts empty — which
+            // is what makes `ChatViewModel`'s cold-start restore path reachable after a model swap.
+            init {
+                usedCells = 0
+            }
+
             override val metadata = LoadedModelInfo(
                 name = MODEL_NAME,
                 nCtxEffective = config.nCtx,
                 backend = "CPU",
                 kvCacheType = config.kvCacheType,
+                modelId = config.modelId,
             )
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
@@ -1132,7 +1251,10 @@ class ChatViewModelTest {
             return usedCells
         }
 
-        override suspend fun loadSession(path: String): Boolean = true
+        override suspend fun loadSession(path: String): Boolean {
+            loadSessionCalls++
+            return true
+        }
 
         override suspend fun readMetadata(path: String): GgufInfo =
             throw UnsupportedOperationException("not needed by these tests")
@@ -1140,6 +1262,9 @@ class ChatViewModelTest {
 
     private companion object {
         const val MODEL_ID = "model-1"
+
+        /** A second import of the same model at a different quantisation — same [MODEL_NAME], older. */
+        const val OLDER_MODEL_ID = "model-0"
         const val MODEL_NAME = "fake-model"
         const val NCTX = 100
         const val TOKENS_PER_TURN = 10
