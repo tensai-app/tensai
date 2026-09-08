@@ -226,6 +226,81 @@ class InlineMathTest {
         assertEquals(rendered, mathSpans("\$x^2 \\% y\$"))
     }
 
+    @Test
+    fun delimitersPaddedWithSpacesStillOpenAFormula() {
+        // The hole that let 19 green tests ship a screen where nothing rendered. `$ x_1 $` is how
+        // these models write inline maths most of the time, and refusing a run that opens or
+        // closes on a space refused all of it.
+        assertEquals(
+            listOf(MathSpan.Plain("x"), MathSpan.Subscript("1")),
+            mathSpans("\$ x_1 \$"),
+        )
+        assertEquals(
+            listOf(MathSpan.Plain("ax"), MathSpan.Superscript("2"), MathSpan.Plain(" + bx + c = 0")),
+            mathSpans("\$ ax^2 + bx + c = 0 \$"),
+        )
+    }
+
+    @Test
+    fun paddingIsTrimmedSoAPaddedFormulaDrawsNoWiderThanATightOne() {
+        assertEquals(mathSpans("\$x_1\$"), mathSpans("\$ x_1 \$"))
+        assertEquals(mathSpans("\$\$a^2 = b\$\$"), mathSpans("\$\$  a^2 = b  \$\$"))
+    }
+
+    @Test
+    fun aDisplayRunPaddedInsideItsDoubleDollarsIsRead() {
+        assertEquals(
+            listOf(
+                MathSpan.Plain("a"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" + b"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" = c"),
+                MathSpan.Superscript("2"),
+            ),
+            mathSpans("\$\$ a^2 + b^2 = c^2 \$\$"),
+        )
+    }
+
+    @Test
+    fun proseNamingTwoShellVariablesIsPaddedOnOneSideOnlyAndStaysLiteral() {
+        // What the padding rule buys once it stops being "no padding at all". Each of these holds
+        // a `_` or `^`, so the marker rule alone would let every one of them through and mangle it.
+        for (prose in listOf(
+            "export \$HOME_DIR before \$PATH",
+            "il a payé \$5_000 puis \$10",
+            "set \$x_1 and \$y then run",
+        )) {
+            assertEquals(listOf(MathSpan.Plain(prose)), mathSpans(prose))
+        }
+    }
+
+    @Test
+    fun aDisplayBlockPaddedAndSeparatedByQuadsReadsEndToEnd() {
+        // Verbatim from the QA reply (Qwen3-1.7B): padded delimiters on their own lines, two
+        // equations separated by \quad \text{et} \quad.
+        val markdown = "\$\$\nax_1^2 + bx_1 + c = 0 \\quad \\text{et} \\quad ax_2^2 + bx_2 + c = 0\n\$\$\n"
+
+        assertEquals(
+            listOf(
+                MathSpan.Plain("ax"),
+                MathSpan.Subscript("1"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" + bx"),
+                MathSpan.Subscript("1"),
+                // \u2003 is the em space \quad maps to — spelled out, because an em space sitting
+                // invisibly in a string literal is a trap for whoever reads this next.
+                MathSpan.Plain(" + c = 0 \u2003 et \u2003 ax"),
+                MathSpan.Subscript("2"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" + bx"),
+                MathSpan.Subscript("2"),
+                MathSpan.Plain(" + c = 0"),
+            ),
+            paragraphSpans(markdown),
+        )
+    }
+
     /**
      * The spans `MarkdownText` would draw for [markdown]: it calls [mathSpans] for commonmark
      * `Text` nodes and for nothing else, so collecting those literals in document order is the

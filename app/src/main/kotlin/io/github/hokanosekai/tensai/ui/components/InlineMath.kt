@@ -37,7 +37,7 @@ internal sealed interface MathSpan {
  * What is read:
  * - the operators `\times \cdot \div \pm \mp \le \leq \ge \geq \ne \neq \approx \infty`,
  * - the Greek letters, lower and upper case, including the `\var…` shapes,
- * - the spacing commands `\, \; \: \ `,
+ * - the spacing commands `\, \; \: \ `, plus `\quad` and `\qquad` as em spaces,
  * - single subscripts and superscripts, `H_B`, `x^2`, `x_{10}`,
  * - `\frac{a}{b}`, flattened to `a/b` and parenthesised when a side is not a single atom,
  * - `\text{…}`, whose body is taken verbatim — it is what the models here reach for to label a
@@ -47,11 +47,21 @@ internal sealed interface MathSpan {
  * `\sqrt`, `\mathrm`, an unknown command, a stray `{` — makes the *whole* formula fall back to its
  * literal source.
  *
- * Two conservative rules keep ordinary prose out of this. A single `$` only opens a formula when
- * the run between it and its closing `$` holds a `\`, `_` or `^`: a price ("costs $5 and $7") has
- * no such marker and stays literal, and neither does a `$` with no partner at all, which is what
- * every generation looks like while the token after `$H_B` has not arrived yet. A formula never
- * spans a line break. `$$…$$` is unambiguous enough to skip the marker rule.
+ * Three conservative rules keep ordinary prose out of this, and none of them may be traded for
+ * another: each catches a class the other two miss.
+ *
+ * A single `$` only opens a formula when the run between it and its closing `$` holds a `\`, `_`
+ * or `^`. A price ("costs $5 and $7") carries no such marker and stays literal.
+ *
+ * The padding must match at both ends — see [paddingIsSymmetric]. Models write `$ x_1 $` far more
+ * often than `$x_1$`, so padding cannot disqualify a run; what it can do is tell maths from prose
+ * naming two shell variables, which is padded on one side only.
+ *
+ * A `$` with no partner at all stays literal, which is what every generation looks like while the
+ * token after `$H_B` has not arrived yet, and a formula never spans a line break.
+ *
+ * `$$…$$` is unambiguous enough to skip the marker rule, but not the other two. What is left of a
+ * run once its padding is trimmed is what gets read, so `$ x_1 $` draws no wider than `$x_1$`.
  *
  * Code is excluded structurally rather than by a rule here: [MarkdownText] only ever calls this
  * for commonmark `Text` nodes, and a fenced block or an inline `` `…` `` carries its content as a
@@ -78,8 +88,9 @@ internal fun mathSpans(literal: String): List<MathSpan> {
         val delimiter = if (display) "$$" else "$"
         val contentStart = index + delimiter.length
         val close = findClosingDelimiter(literal, contentStart, delimiter)
-        val formula = close?.let { literal.substring(contentStart, it) }
-        val read = formula?.takeIf { looksLikeMaths(it, display) }?.let(::readFormula)
+        val raw = close?.let { literal.substring(contentStart, it) }
+        val formula = raw?.takeIf(::paddingIsSymmetric)?.trim()
+        val read = formula?.takeIf { it.isNotEmpty() && looksLikeMaths(it, display) }?.let(::readFormula)
 
         if (close == null || read == null) {
             // Unclosed, unconvincing, or not in the vocabulary: the source stands as written.
@@ -153,15 +164,14 @@ private fun flattenedText(paragraph: Node): String? {
 
 /** The index of the `$`/`$$` that closes a formula opened at [contentStart], or `null`. */
 private fun findClosingDelimiter(source: String, contentStart: Int, delimiter: String): Int? {
-    // A formula never opens on whitespace ("100 $ or so") and never spans a line break.
-    if (contentStart >= source.length || source[contentStart].isWhitespace()) return null
+    // A formula never spans a line break.
+    if (contentStart >= source.length) return null
     var index = contentStart
     while (index < source.length) {
         val char = source[index]
         if (char == '\n' || char == '\r') return null
         if (source.startsWith(delimiter, index)) {
-            // ...nor closes on whitespace ("$5 to $7 a day"), nor holds nothing at all.
-            if (index == contentStart || source[index - 1].isWhitespace()) return null
+            if (index == contentStart) return null // ...and never holds nothing at all.
             return index
         }
         if (char == '$') return null
@@ -169,6 +179,18 @@ private fun findClosingDelimiter(source: String, contentStart: Int, delimiter: S
     }
     return null
 }
+
+/**
+ * Whether a `$…$` run is padded the same way at both ends (TEN-90, device QA).
+ *
+ * Models pad their delimiters — `$ x_1 $` is the commonest way they write inline maths — so the
+ * padding cannot simply disqualify a run. But it is exactly what separates maths from prose that
+ * happens to name two shell variables: `$ x_1 $` and `$x_1$` are padded on both sides or neither,
+ * while `export $HOME_DIR before $PATH` opens tight against `H` and closes after a space. That
+ * asymmetry is the tell, and it costs nothing to read.
+ */
+private fun paddingIsSymmetric(raw: String): Boolean =
+    raw.firstOrNull()?.isWhitespace() == raw.lastOrNull()?.isWhitespace()
 
 /** Whether a `$…$` run carries enough LaTeX to be worth reading as one — see [mathSpans]. */
 private fun looksLikeMaths(formula: String, display: Boolean): Boolean =
@@ -321,6 +343,9 @@ private val Symbols: Map<String, String> = mapOf(
     "le" to "≤", "leq" to "≤", "ge" to "≥", "geq" to "≥",
     "ne" to "≠", "neq" to "≠", "approx" to "≈", "infty" to "∞",
     "," to " ", ";" to " ", ":" to " ", " " to " ", "%" to "%",
+    // \quad is a wide space, and models use it to separate two equations on one line — a single
+    // space would run them together, so it gets the em space it means.
+    "quad" to "\u2003", "qquad" to "\u2003\u2003",
     "alpha" to "α", "beta" to "β", "gamma" to "γ", "delta" to "δ",
     "epsilon" to "ε", "varepsilon" to "ε", "zeta" to "ζ", "eta" to "η",
     "theta" to "θ", "vartheta" to "ϑ", "iota" to "ι", "kappa" to "κ",
