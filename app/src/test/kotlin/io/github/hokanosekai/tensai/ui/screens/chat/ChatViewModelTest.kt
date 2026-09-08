@@ -27,6 +27,7 @@ import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModelName
 import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
@@ -83,7 +84,8 @@ class ChatViewModelTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            currentLoadedModelName = { (inferenceQueue.state.value as? QueueState.ModelReady)?.info?.name },
+            // Wired exactly as `RuntimeGraph` wires it — see `residentModelName` (TEN-76).
+            currentLoadedModelName = { inferenceQueue.residentModelName },
             storageRoot = storageRoot,
         )
         sessionRepository = SessionRepository(
@@ -570,6 +572,33 @@ class ChatViewModelTest {
         assertEquals(SamplingConfig().temperature, engine.lastRequest!!.sampling.temperature, 1e-6f)
         assertEquals(SamplingConfig().maxTokens, engine.lastRequest!!.sampling.maxTokens)
         assertNull("reset stores no blob at all, not an encoded copy of the defaults", chatDao.getConversation(conversation)!!.samplingJson)
+    }
+
+    /**
+     * TEN-76, the chrome half: the model does not stop supporting thinking because it is busy
+     * thinking. Derived from `ModelReady` alone, this flow went `false` the moment a reply started
+     * streaming and the toggle vanished from `ChatScreen` mid-answer — the same blind spot that let
+     * the Models screen offer to delete a mmapped `.gguf`. See `residentModel`'s KDoc.
+     */
+    @Test
+    fun theThinkingToggleSurvivesTheGenerationItIsThinkingIn() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+        assertTrue("precondition: the toggle shows while idle", viewModel.currentModelSupportsThinking.first())
+
+        viewModel.send("hi")
+        withTimeout(5_000) {
+            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
+        }
+
+        assertTrue(
+            "the loaded model is still loaded while it generates — the toggle must not disappear",
+            viewModel.currentModelSupportsThinking.first(),
+        )
+
+        viewModel.stop()
     }
 
     /**

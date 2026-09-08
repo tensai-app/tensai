@@ -246,10 +246,13 @@ class ChatViewModel(
      * [io.github.hokanosekai.tensai.data.models.ModelRepository.deleteModel]'s in-use guard already
      * relies on, with the same caveat noted there (a false negative if two imported files happen to
      * share a display name).
+     *
+     * Read through [residentModel] rather than `ModelReady` alone, or the toggle disappears from
+     * the chrome for the whole duration of a reply — the model is still resident (TEN-76).
      */
     val currentModelSupportsThinking: Flow<Boolean> =
         combine(inferenceQueue.state, modelRepository.models) { state, models ->
-            val loadedName = (state as? QueueState.ModelReady)?.info?.name ?: return@combine false
+            val loadedName = state.residentModel?.name ?: return@combine false
             models.any { it.displayName == loadedName && it.supportsThinking }
         }
 

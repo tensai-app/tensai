@@ -61,11 +61,15 @@ data class StorageUsage(val modelsBytes: Long, val freeBytes: Long, val totalByt
  *   carries — see [KvCacheShapeBackfill] for why this is asked of the library rather than written
  *   down here.
  * @param currentLoadedModelName the display name of whatever model is currently loaded in the
- *   queue, or `null` if none is — used by [deleteModel]'s in-use guard. Note:
- *   `LoadedModelInfo` (what `QueueState.ModelReady` carries) has no file path, only a name, so this
- *   guard compares by [ModelEntity.displayName]. Two distinct imported files that happen to share a
- *   display name would produce a false positive; harmless in V1 (blocks a delete that should have
- *   been allowed) rather than the reverse (deleting a file still in use).
+ *   queue, or `null` if none is — used by [deleteModel]'s in-use guard. Wire this to
+ *   [io.github.hokanosekai.tensai.runtime.residentModelName] and nothing else: a *generating* model
+ *   is every bit as resident as an idle one, and a derivation matching `QueueState.ModelReady`
+ *   alone leaves this guard blind for the whole duration of a reply, which is how TEN-76 could
+ *   unlink a multi-gigabyte `.gguf` llama.cpp still had mmapped. Note also that `LoadedModelInfo`
+ *   has no file path, only a name, so this guard compares by [ModelEntity.displayName]. Two
+ *   distinct imported files that happen to share a display name would produce a false positive;
+ *   harmless in V1 (blocks a delete that should have been allowed) rather than the reverse
+ *   (deleting a file still in use).
  */
 class ModelRepository(
     private val context: Context,

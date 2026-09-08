@@ -37,7 +37,7 @@ import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
-import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
@@ -77,7 +77,7 @@ fun ModelsScreen(
     val storageUsageFlow = remember(repository) { repository.storageUsage() }
     val storageUsage by storageUsageFlow.collectAsState(initial = null)
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val loadedModelName = (queueState as? QueueState.ModelReady)?.info?.name
+    val loadedModelName = queueState.residentModel?.name
 
     var importProgress by remember { mutableStateOf<Float?>(null) }
     var importFailure by remember { mutableStateOf<ImportFailure?>(null) }

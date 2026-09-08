@@ -70,6 +70,20 @@ val QueueState.residentModel: LoadedModelInfo?
     }
 
 /**
+ * The display name of the model this queue currently holds in memory — [residentModel] read off
+ * [InferenceQueue.state], as one named thing rather than an expression each caller writes out.
+ *
+ * It exists because of the one caller that must never get this wrong:
+ * [io.github.hokanosekai.tensai.data.models.ModelRepository]'s `currentLoadedModelName`, whose
+ * in-use guard is the only thing standing between a mid-generation delete and an `unlink` of a
+ * `.gguf` llama.cpp still has mmapped (TEN-76). Wiring that guard to an expression matching
+ * `ModelReady` alone left it blind for the whole duration of a reply. Wire it to this instead, so
+ * the guard and the tests that pin it read the same derivation.
+ */
+val InferenceQueue.residentModelName: String?
+    get() = state.value.residentModel?.name
+
+/**
  * Thrown (as [DecodeEvent.Error]) when [InferenceQueue.generate] is called
  * while the queue cannot start a new generation — either another
  * generation is already active, or no model is currently loaded.

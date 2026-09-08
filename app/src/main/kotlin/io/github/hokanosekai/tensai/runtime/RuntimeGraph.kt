@@ -160,9 +160,7 @@ object RuntimeGraph {
             modelDao = database.modelDao(),
             readMetadata = llamaEngine::readMetadata,
             kvShapeVersion = llamaEngine::kvShapeVersion,
-            currentLoadedModelName = {
-                (inferenceQueue.state.value as? QueueState.ModelReady)?.info?.name
-            },
+            currentLoadedModelName = { inferenceQueue.residentModelName },
         )
     }
 

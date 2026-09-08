@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
-import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
@@ -68,7 +68,9 @@ fun TensaiDrawerContent(
     val scope = rememberCoroutineScope()
 
     // Same by-displayName caveat as ModelsScreen's `loadedModelName` — see ModelRepository's KDoc.
-    val loadedModelId = (queueState as? QueueState.ModelReady)?.info?.name
+    // `residentModel`, not `ModelReady` alone: a "New chat" started while a reply is streaming in
+    // another conversation would otherwise be created with a null modelId (TEN-76).
+    val loadedModelId = queueState.residentModel?.name
         ?.let { name -> models.find { it.displayName == name }?.id }
 
     fun startNewChat() {
