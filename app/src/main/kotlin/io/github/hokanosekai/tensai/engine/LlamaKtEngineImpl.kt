@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.channels.Channel
@@ -394,6 +395,17 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                             budgetTracker?.onParsed(content, reasoningContent)
                             trySend(DecodeEvent.Parsed(content, reasoningContent.ifEmpty { null }))
                         }
+                        // Last look before committing to a call that can hold this thread for
+                        // minutes. Everything above (`formatChat`, `tokenize`) is a blocking
+                        // native call with no suspension point, so a cancellation landing during
+                        // it is not delivered anywhere — and `awaitClose`'s interrupt(), the only
+                        // other thing that fires, sets a flag that `completion` clears on entry
+                        // when it rewinds the context. A stop arriving in that window is simply
+                        // erased: the decode runs to the end, the "stop" button does nothing
+                        // visible, and the next load waits out a generation nobody wanted. There
+                        // is no second interrupt to try — the flag was consumed — so the check has
+                        // to happen before the call rather than be retried after it.
+                        coroutineContext.ensureActive()
                         llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
 
                         val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)

@@ -18,18 +18,22 @@ import io.github.hokanosekai.tensai.engine.GgufInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import kotlin.coroutines.coroutineContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -53,6 +57,11 @@ import org.junit.Test
  * over a freed-but-never-released model, the [InferenceQueue.generate] rejection that skipped its
  * own cleanup, and the retry loops that spun on the result. Each is pinned on its own, and the
  * three are pinned in conjunction.
+ *
+ * And TEN-82, the two remaining halves of the same "a cancelled caller must not walk away
+ * mid-swap" rule TEN-74 established for the free: the load itself, whose allocation is not
+ * cancellable and so must be handed back rather than dropped, and the save hook that has to
+ * precede the free.
  */
 class InferenceQueueTest {
 
@@ -465,9 +474,12 @@ class InferenceQueueTest {
 
         val entered = CompletableDeferred<Unit>()
         // Suspends inside the release, holding it open long enough to be cancelled mid-flight.
+        // [entered] is what makes that window deterministic, so the delay only has to outlast the
+        // cancel — and since TEN-82 the hook runs to its end even on a cancelled caller, so it is
+        // time this test really spends. A timeout-sized wait here would just be a slow test.
         queue.onBeforeModelSwap = {
             entered.complete(Unit)
-            delay(10_000)
+            delay(50)
         }
 
         val unload = launch { queue.unloadModel() }
@@ -475,6 +487,75 @@ class InferenceQueueTest {
         unload.cancelAndJoin()
 
         assertEquals("a cancelled release must still release", 1, engine.freeCount)
+        assertEquals(QueueState.Idle, queue.state.value)
+    }
+
+    /**
+     * TEN-82, first of two. The mirror image of [aCancelledUnloadStillFreesTheModel] on the load
+     * side, and the more expensive one: `LlamaKtEngineImpl` allocates the weights inside a
+     * `withContext(dispatcher)` whose blocking native call has no suspension point to cancel at,
+     * so a cancelled caller gets the whole allocation and loses the handle to it.
+     *
+     * Nothing reports that. [InferenceQueue.state] falls back to [QueueState.Idle], the queue
+     * reads as empty, and the user's retry loads a second copy of a multi-GB model on top of the
+     * first — which is how a silent leak becomes an OOM kill.
+     */
+    @Test
+    fun aCancelledLoadStillRegistersTheModelItLoaded() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val engine = FakeEngine(loadDelayMs = 50, loadEntered = entered)
+        val queue = InferenceQueue(engine)
+
+        val load = launch { queue.loadModel(ModelLoadConfig(path = "/models/a.gguf")) }
+        entered.await()
+        load.cancelAndJoin()
+
+        assertEquals("the load allocated, so there is something to account for", 1, engine.allocatedCount)
+        assertTrue(
+            "a cancelled load dropped the model it had already allocated: ${queue.state.value}",
+            queue.state.value is QueueState.ModelReady,
+        )
+        // Being registered is the whole point of registering it: the model stays reachable, so
+        // whoever comes next can still get rid of it.
+        queue.unloadModel()
+        assertEquals("what was allocated must still be freeable", engine.allocatedCount, engine.freeCount)
+    }
+
+    /**
+     * TEN-82, second of two. [InferenceQueue.onBeforeModelSwap] is where `RuntimeGraph` writes the
+     * outgoing conversation's KV cache to disk, and it suspends on that I/O. Abandoning it
+     * half-way and freeing the model anyway destroys the cache with nothing written — silently,
+     * because the hook's body wraps the save in a `runCatching` whose `Result` nobody reads.
+     *
+     * Pinned by observing [FakeEngine.freeCount] from inside the hook: "the save finished" and
+     * "the save finished *before* the free" are the same guarantee, and asserting only the first
+     * would leave the ordering to a `try`/`finally` nobody is checking.
+     */
+    @Test
+    fun aCancelledSwapStillRunsTheSaveHookToCompletion() = runBlocking {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        val entered = CompletableDeferred<Unit>()
+        var freeCountWhenHookReturned = -1
+        queue.onBeforeModelSwap = {
+            entered.complete(Unit)
+            // The save's own file I/O: a suspension point, which is all a cancellation needs.
+            delay(50)
+            freeCountWhenHookReturned = engine.freeCount
+        }
+
+        val unload = launch { queue.unloadModel() }
+        entered.await()
+        unload.cancelAndJoin()
+
+        assertEquals(
+            "a cancelled swap freed the model without ever finishing the session save",
+            0,
+            freeCountWhenHookReturned,
+        )
+        assertEquals(1, engine.freeCount)
         assertEquals(QueueState.Idle, queue.state.value)
     }
 
@@ -603,8 +684,15 @@ class InferenceQueueTest {
     private class FakeEngine(
         private val loadDelayMs: Long = 0L,
         private val decodeGate: CompletableDeferred<Unit>? = null,
+        // Completed once a load is inside the uninterruptible native section below, which is the
+        // only way a test can cancel the caller in the window TEN-82 is about.
+        private val loadEntered: CompletableDeferred<Unit>? = null,
     ) : InferenceEngine {
         var loadCallCount = 0
+            private set
+
+        /** How many loads actually allocated — TEN-82's leak numerator, against [freeCount]. */
+        var allocatedCount = 0
             private set
 
         /** How many models this engine handed out have been released — TEN-74's leak check. */
@@ -613,17 +701,29 @@ class InferenceQueueTest {
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel {
             loadCallCount++
-            if (loadDelayMs > 0) delay(loadDelayMs)
-            return FakeLoadedModel(
-                LoadedModelInfo(
-                    name = config.path,
-                    nCtxEffective = config.nCtx,
-                    backend = "CPU",
-                    kvCacheType = config.kvCacheType,
-                ),
-                decodeGate,
-                onFree = { freeCount++ },
-            )
+            // Mirrors `LlamaKtEngineImpl.loadModel`, which is a blocking native load inside a
+            // `withContext(dispatcher)`. The native call has no suspension point, so cancelling
+            // the caller does not stop it: the weights are allocated in full ...
+            val model = withContext(NonCancellable) {
+                loadEntered?.complete(Unit)
+                if (loadDelayMs > 0) delay(loadDelayMs)
+                allocatedCount++
+                FakeLoadedModel(
+                    LoadedModelInfo(
+                        name = config.path,
+                        nCtxEffective = config.nCtx,
+                        backend = "CPU",
+                        kvCacheType = config.kvCacheType,
+                    ),
+                    decodeGate,
+                    onFree = { freeCount++ },
+                )
+            }
+            // ... and it is the dispatch's *return* that throws rather than handing the model
+            // back, dropping the only reference to it. A fake that threw before allocating instead
+            // would pass `aCancelledLoadStillRegistersTheModelItLoaded` whatever the queue does.
+            coroutineContext.ensureActive()
+            return model
         }
     }
 

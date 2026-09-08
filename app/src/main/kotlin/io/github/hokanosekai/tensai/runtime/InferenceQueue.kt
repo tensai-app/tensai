@@ -286,6 +286,18 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * Must only be called while holding [mutex]. Frees any currently loaded
      * model, then loads [config] via [engine]. On failure, [state] is reset
      * to [QueueState.Idle] and the exception is rethrown.
+     *
+     * The load and the three fields that record it are [NonCancellable], for the same reason
+     * [releaseLoadedLocked]'s free is (TEN-74) and against the same trigger. `LlamaKtEngineImpl`
+     * runs the blocking native load inside a `withContext(dispatcher)`, which has no suspension
+     * point to interrupt: on a cancelled caller the weights are allocated in full and then the
+     * dispatch *return* throws, dropping the only reference to several GB with nothing left to
+     * free them. Nothing here would notice — [state] falls back to [QueueState.Idle] and the queue
+     * reads as empty, so the user's retry loads a second copy *on top* of the first.
+     *
+     * The consequence is that a cancelled load still ends on [QueueState.ModelReady] over a
+     * genuinely loaded model, and that is the point: it is the only outcome from which the model
+     * can still be unloaded. The caller's coroutine is ending either way.
      */
     private suspend fun performLoadLocked(config: ModelLoadConfig): LoadedModelInfo {
         _state.value = QueueState.Loading(0f)
@@ -306,13 +318,15 @@ class InferenceQueue(private val engine: InferenceEngine) {
                     config.onProgress?.invoke(progress)
                 },
             )
-            val model = engine.loadModel(effectiveConfig)
-            val info = model.metadata
-            loadedModel = model
-            loadedInfo = info
-            loadedConfig = config.dedupKey()
-            _state.value = QueueState.ModelReady(info)
-            info
+            withContext(NonCancellable) {
+                val model = engine.loadModel(effectiveConfig)
+                val info = model.metadata
+                loadedModel = model
+                loadedInfo = info
+                loadedConfig = config.dedupKey()
+                _state.value = QueueState.ModelReady(info)
+                info
+            }
         } catch (e: Exception) {
             _state.value = QueueState.Idle
             throw e
@@ -337,16 +351,27 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * `runCatching` would file that away as just another failed release. Cancelling a release has
      * to still release; the caller's coroutine is already ending either way, and the alternative is
      * the same leak by a different door.
+     *
+     * The hook is inside that same [NonCancellable] block rather than outside it, because a
+     * half-run hook is worse than a skipped free: what it does here (`RuntimeGraph`) is write the
+     * outgoing conversation's KV cache to disk, and it suspends on that I/O. A cancelled caller
+     * used to abandon it mid-write and then free the model anyway — the cache destroyed, nothing
+     * on disk, and silently: `RuntimeGraph`'s `runCatching` hands back a `Result.failure` nobody
+     * reads. Both halves of "save, then free" have to survive the cancellation or neither is worth
+     * running.
      */
     private suspend fun releaseLoadedLocked() {
         val previous = loadedModel
         loadedModel = null
         loadedInfo = null
         loadedConfig = null
-        try {
-            if (previous != null) onBeforeModelSwap?.invoke()
-        } finally {
-            previous?.let { withContext(NonCancellable) { runCatching { it.free() } } }
+        if (previous == null) return
+        withContext(NonCancellable) {
+            try {
+                onBeforeModelSwap?.invoke()
+            } finally {
+                runCatching { previous.free() }
+            }
         }
     }
 
