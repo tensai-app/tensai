@@ -152,11 +152,13 @@ data class SamplingConfig(
  * [io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser]'s job, on the app side) — only that
  * seeing it in the stream means "reasoning is over".
  *
- * Known limitation, left as-is rather than worked around: a model that really does reason past
- * [reasoningMaxTokens] has its generation cut there and [StopReason.ReasoningBudgetExhausted] is
- * reported — there is no way to *force* an answer out of a model stuck reasoning. Doing that for
- * real would mean re-injecting a synthetic [endMarker] and re-running the completion from there
- * (a full re-prefill of the reasoning so far), which is out of scope here.
+ * A model that really does reason past [reasoningMaxTokens] is **made to stop reasoning**, not made
+ * to stop generating (TEN-85): llama.cpp's own reasoning-budget sampler forces the template's
+ * closing tag out token by token and then steps aside, and the model answers into what is left of
+ * the two caps' sum. Until TEN-85 the decode was interrupted at the cap instead, which is how a
+ * Gemma-4 reply reached the user as a reasoning block with no answer under it. The forcing needs
+ * the model's chat template to delimit reasoning; where it doesn't, nothing enforces
+ * [reasoningMaxTokens] at all and only the sum still holds.
  *
  * @param reasoningMaxTokens cap on tokens sampled while the model is still reasoning.
  * @param responseMaxTokens tokens the answer is guaranteed. It may use more — up to the sum of the
@@ -233,9 +235,17 @@ enum class StopReason {
     TokenBudget,
 
     /**
-     * [ReasoningBudget.reasoningMaxTokens] was reached before the model's `<think>` block closed
-     * (TEN-61). There may be no answer at all yet — see [ReasoningBudget]'s KDoc for why this
-     * can't be forced past.
+     * The decode spent everything [ReasoningBudget] allows — `reasoningMaxTokens +
+     * responseMaxTokens` — while the model was **still reasoning**. There is no answer, and there
+     * was never going to be one: nothing of the budget was left to write it with.
+     *
+     * Not "the reasoning cap was reached", which is what this meant up to TEN-85 and what made it
+     * the common outcome for a verbose thinking model. That cap no longer ends a decode — see
+     * [ReasoningBudget]'s KDoc — so reaching this now means the model reasoned for the *whole*
+     * budget without the reasoning-budget sampler ever forcing it out: a template that delimits no
+     * reasoning, a raw prompt, or a model that ignored its own closing tag. Rare, and a real
+     * failure when it happens, which is why it keeps its own name instead of folding into
+     * [ResponseBudgetExhausted].
      */
     ReasoningBudgetExhausted,
 

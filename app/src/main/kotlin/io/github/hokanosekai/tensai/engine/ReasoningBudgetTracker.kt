@@ -4,12 +4,34 @@ package io.github.hokanosekai.tensai.engine
  * Tracks a decode's [ReasoningBudget] token by token, deciding when [LlamaKtEngineImpl] should cut
  * generation short (TEN-61). One instance per decode.
  *
+ * ### What this stops the decode for, and what it doesn't (TEN-85)
+ *
+ * Only for the **total**, `reasoningMaxTokens + responseMaxTokens`. Reaching
+ * [ReasoningBudget.reasoningMaxTokens] while the model is still reasoning stops nothing here, and
+ * used to: generation was interrupted on the spot, which is how a Gemma-4 reply came back with 811
+ * characters of thinking, no answer at all, and `ReasoningBudgetExhausted` on the row. Cutting the
+ * power to a model that hasn't finished thinking is not a budget, it is a failure mode — the user
+ * asked a question and got a monologue.
+ *
+ * The reasoning cap is now enforced where it can be enforced *without* ending the decode: inside
+ * llama.cpp, by a sampler (`common/reasoning-budget.cpp`, wired up in `tensai_jni.cpp`) that forces
+ * the chat template's own closing tag out token by token once the cap is spent, then steps aside so
+ * the model writes its answer. [ReasoningBudget.reasoningMaxTokens] is what this layer hands that
+ * sampler — see [LlamaKtEngineImpl]'s `libParams` — and the phase counters below no longer decide
+ * anything but *which* phase gets blamed when the total runs out.
+ *
+ * So this class is the outer safety net it always described itself as, and nothing else. It still
+ * has to be one: the native sampler needs the model's template to delimit reasoning, and a model
+ * whose template says nothing about it (or a raw, non-chat prompt) gets no sampler at all.
+ *
  * ### What the two caps mean (TEN-69)
  *
  * [ReasoningBudget.responseMaxTokens] is a **floor the answer is guaranteed**, not a ceiling it is
  * held to. Reasoning may spend at most [ReasoningBudget.reasoningMaxTokens]; the answer gets
  * everything the reasoning left of the two caps' sum. A model that reasons briefly — or not at all
- * — therefore answers into the whole budget rather than into its half of it.
+ * — therefore answers into the whole budget rather than into its half of it. That property is what
+ * TEN-85 had to preserve and did: the sampler ends the reasoning block at the cap instead of ending
+ * the decode, so the tokens reasoning didn't spend are still there for the answer to spend.
  *
  * Until TEN-69 the response was capped at [ReasoningBudget.responseMaxTokens] whatever reasoning
  * had cost, so unspent reasoning tokens were simply lost: a Qwen3 reply that opened and closed an
@@ -73,7 +95,9 @@ internal class ReasoningBudgetTracker(private val budget: ReasoningBudget) {
 
     /**
      * Records one streamed token's [text]. Returns the [StopReason] generation should be cut off
-     * for, or `null` to keep going.
+     * for, or `null` to keep going — which, since TEN-85, only ever happens on the decode's total.
+     * A reasoning phase running past [ReasoningBudget.reasoningMaxTokens] returns `null` like any
+     * other token: see this class's KDoc for where that cap is enforced now, and why not here.
      */
     fun onToken(text: String): StopReason? {
         if (phase == Phase.Reasoning) {
@@ -88,15 +112,14 @@ internal class ReasoningBudgetTracker(private val budget: ReasoningBudget) {
                 val keep = longestSuffixThatIsMarkerPrefix()
                 if (keep < window.length) window.delete(0, window.length - keep)
             }
-            if (reasoningTokens >= budget.reasoningMaxTokens) return StopReason.ReasoningBudgetExhausted
         } else {
             responseTokens++
         }
         // The answer is held to the total, not to responseMaxTokens: whatever reasoning did not
-        // spend is the answer's to use (TEN-69). Checked on the reasoning branch too — normally
-        // unreachable there, since the reasoning cap is a share of the total and bites first, but a
-        // parse that retracts content ([onParsed]) can hand tokens back and forth between the two
-        // counters, and nothing else would then hold their sum down.
+        // spend is the answer's to use (TEN-69). The one cap left here since TEN-85, and it applies
+        // to both phases: a model still reasoning at the total has genuinely spent everything the
+        // decode had, and stopping it is the only thing left to do — unlike the reasoning cap,
+        // there is no budget to hand on to an answer.
         return if (reasoningTokens + responseTokens >= totalMaxTokens) currentPhaseStopReason() else null
     }
 

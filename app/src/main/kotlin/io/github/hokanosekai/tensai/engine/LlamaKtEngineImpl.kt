@@ -303,9 +303,8 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
             checkOpen()
             val libMessages = request.messages.map { LlamaChatMessage(it.role.toLibRole(), it.content) }
             val reasoningBudget = request.sampling.reasoningBudget
-            // With a split budget, llama.kt still needs a single nPredict — the two per-phase
-            // caps below are what actually stop generation early; this total is just the outer
-            // safety net (TEN-61).
+            // With a split budget, llama.kt still needs a single nPredict — the whole decode,
+            // reasoning and answer together, is held to the sum of the two caps (TEN-61/TEN-69).
             val requestedNPredict = reasoningBudget
                 ?.let { it.reasoningMaxTokens + it.responseMaxTokens }
                 ?: request.sampling.maxTokens
@@ -337,6 +336,16 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         val nPredict = requestedNPredict.coerceAtMost(available)
                         val libParams = LlamaSamplingParams(
                             nPredict = nPredict,
+                            // TEN-85: the reasoning cap is enforced *inside* llama.cpp, by a
+                            // sampler that forces the template's own closing tag out once the cap
+                            // is reached and then steps aside — the model writes its answer into
+                            // what nPredict has left. This layer used to enforce it by
+                            // interrupting the decode, which is why a model that reasoned past its
+                            // cap produced a thinking block and no reply at all. Passed unclipped
+                            // by `available`: a cap larger than the room left simply never fires,
+                            // and clipping it would silently shorten the reasoning of exactly the
+                            // conversations that are already short of context.
+                            reasoningBudgetTokens = reasoningBudget?.reasoningMaxTokens ?: -1,
                             temperature = request.sampling.temperature,
                             topK = request.sampling.topK,
                             topP = request.sampling.topP,
@@ -354,6 +363,10 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                             // to call from this same dispatcher thread mid-callback — it unblocks
                             // completion() below rather than tearing down the flow, so Done still
                             // fires with real stats (TEN-61, same mechanism TEN-60's `stop` relies on).
+                            // Since TEN-85 the tracker only ever fires on the decode's *total*, so
+                            // this is the last resort it was always meant to be: `nPredict` above
+                            // says the same thing to llama.cpp, and cutting a reply short is
+                            // something no per-phase cap does any more.
                             if (budgetTracker != null && budgetStopReason == null) {
                                 budgetTracker.onToken(token)?.let { reason ->
                                     budgetStopReason = reason

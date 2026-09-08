@@ -86,8 +86,9 @@ enum class TruncationReason {
     None,
 
     /**
-     * [StopReason.ReasoningBudgetExhausted]: the reasoning budget ran out before the model's
-     * `<think>` block ever closed — there may be no answer at all yet.
+     * [StopReason.ReasoningBudgetExhausted]: the whole budget went on reasoning that never closed,
+     * so there is no answer under it. Since TEN-85 this is the rare case it describes and not the
+     * routine one — reaching the reasoning half of the budget no longer ends a reply.
      */
     Reasoning,
 

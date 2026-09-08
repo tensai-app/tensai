@@ -6,15 +6,43 @@ import org.junit.Test
 
 class ReasoningBudgetTrackerTest {
 
+    /**
+     * TEN-85. Reaching [ReasoningBudget.reasoningMaxTokens] is not a reason to stop generating: the
+     * reasoning cap is enforced natively, by forcing the template's closing tag out and letting the
+     * model answer (`common/reasoning-budget.cpp`). Cutting the decode here is what left the user
+     * with a thinking block and nothing under it.
+     */
     @Test
-    fun reasoningBudgetExhaustedBeforeMarkerEverAppears() {
+    fun reasoningRunningPastItsOwnCapDoesNotEndTheDecode() {
         val tracker = ReasoningBudgetTracker(
             ReasoningBudget(reasoningMaxTokens = 3, responseMaxTokens = 10, endMarker = "</think>"),
         )
 
         assertNull(tracker.onToken("still"))
         assertNull(tracker.onToken("thinking"))
-        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("hard"))
+        // The third token spends the reasoning cap, and used to be the one that killed the reply.
+        assertNull(tracker.onToken("hard"))
+        assertNull(tracker.onToken("and"))
+        assertNull(tracker.onToken("harder"))
+    }
+
+    /**
+     * The device case from TEN-85, played out end to end: the model reasons past its cap, the native
+     * sampler forces the closing tag into the stream, and the answer is written into what the total
+     * has left. Before TEN-85 the decode ended on the fourth token with `content` empty.
+     */
+    @Test
+    fun theAnswerStillGetsWrittenAfterReasoningOverranItsCap() {
+        val tracker = ReasoningBudgetTracker(
+            ReasoningBudget(reasoningMaxTokens = 3, responseMaxTokens = 10, endMarker = "</think>"),
+        )
+
+        repeat(6) { assertNull(tracker.onToken("thinking")) }
+        // What the reasoning-budget sampler forces once the budget is spent.
+        assertNull(tracker.onToken("</think>"))
+        // 7 of the 13 tokens are gone; the answer has the remaining 6.
+        repeat(5) { assertNull(tracker.onToken("answer")) }
+        assertEquals(StopReason.ResponseBudgetExhausted, tracker.onToken("last"))
     }
 
     @Test
@@ -67,16 +95,21 @@ class ReasoningBudgetTrackerTest {
         assertEquals(StopReason.ResponseBudgetExhausted, tracker.onToken("x"))
     }
 
+    /**
+     * A block that never closes and a native sampler that never forced it shut (no reasoning
+     * delimiters in the template, a raw prompt): the decode is held to the total and to nothing
+     * else, and the reason names the phase it died in. Until TEN-85 it died 1000 tokens earlier, at
+     * the reasoning cap, with all of the response's room untouched.
+     */
     @Test
-    fun neverClosingTheThinkBlockEventuallyExhaustsTheReasoningBudgetEvenWithPlentyOfResponseRoom() {
+    fun neverClosingTheThinkBlockSpendsTheWholeBudgetBeforeAnythingStopsIt() {
         val tracker = ReasoningBudgetTracker(
             ReasoningBudget(reasoningMaxTokens = 5, responseMaxTokens = 1000, endMarker = "</think>"),
         )
 
-        var stopReason: StopReason? = null
-        repeat(5) { i -> stopReason = tracker.onToken("thought $i ") }
+        repeat(1004) { i -> assertNull("stopped at token ${i + 1}", tracker.onToken("thought $i ")) }
 
-        assertEquals(StopReason.ReasoningBudgetExhausted, stopReason)
+        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("last thought"))
     }
 
     @Test
@@ -163,9 +196,13 @@ class ReasoningBudgetTrackerTest {
         assertEquals(StopReason.ResponseBudgetExhausted, tracker.onToken("last"))
     }
 
-    /** The engine's split must not disarm the reasoning cap for a model that really does reason. */
+    /**
+     * The engine's split keeps the decode *attributed* to reasoning for a model that really does
+     * reason, even though nothing here cuts it short any more (TEN-85) — that attribution is what
+     * names the stop reason if the total runs out before an answer is written.
+     */
     @Test
-    fun engineSplitStillCapsReasoningThatRunsLong() {
+    fun engineSplitKeepsTheDecodeOnTheReasoningPhaseForAModelThatRunsLong() {
         val tracker = ReasoningBudgetTracker(
             ReasoningBudget(reasoningMaxTokens = 3, responseMaxTokens = 100, endMarker = "</think>"),
         )
@@ -174,7 +211,13 @@ class ReasoningBudgetTrackerTest {
         tracker.onParsed("", "reasoning so far")
         assertNull(tracker.onToken("still thinking"))
         tracker.onParsed("", "reasoning so far")
-        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("and still"))
+        assertNull(tracker.onToken("and still"))
+        tracker.onParsed("", "reasoning so far")
+        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.currentPhaseStopReason())
+
+        // Past the reasoning cap and still going — only the 103-token total ends this.
+        repeat(99) { assertNull(tracker.onToken("on and on")) }
+        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("last"))
     }
 
     /**
@@ -190,10 +233,12 @@ class ReasoningBudgetTrackerTest {
 
         assertNull(tracker.onToken("<"))
         tracker.onParsed("<", "reasoning so far")
+        assertEquals(StopReason.ResponseBudgetExhausted, tracker.currentPhaseStopReason())
         assertNull(tracker.onToken("think>"))
         tracker.onParsed("", "reasoning so far")
 
-        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("reasoning"))
+        assertNull(tracker.onToken("reasoning"))
+        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.currentPhaseStopReason())
     }
 
     /**
@@ -230,7 +275,8 @@ class ReasoningBudgetTrackerTest {
         // The model quoting its own closing tag inside the reasoning it is still writing.
         assertNull(tracker.onToken("</think>"))
         tracker.onParsed("", "reasoning so far")
-        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.onToken("more reasoning"))
+        assertNull(tracker.onToken("more reasoning"))
+        assertEquals(StopReason.ReasoningBudgetExhausted, tracker.currentPhaseStopReason())
     }
 
     /**
