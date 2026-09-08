@@ -101,6 +101,46 @@ class QueueBusyException(message: String) : Exception(message)
 private fun ModelLoadConfig.dedupKey(): ModelLoadConfig = copy(onProgress = null)
 
 /**
+ * "The user asked for this generation to stop" — one instance per [InferenceQueue.generate] call,
+ * created by whoever collects it and read back by that same collector once the flow ends (TEN-79).
+ *
+ * It exists because the two halves of that sentence live in different objects. *Which* generation
+ * gets cancelled is decided by [InferenceQueue.cancelActive], which is app-wide and knows nothing
+ * about conversations; *what to record about it* is decided by the collector, which knows only its
+ * own conversation. A `ChatViewModel` keeping a private "I tapped stop" flag gets the pairing wrong
+ * the moment those two disagree: with a reply streaming in conversation A and the user looking at
+ * B, B's stop button cancels A — there is one queue and one generation — while the flag that was
+ * set belongs to B. A's own collector then sees an unexplained cancellation and persists the reply
+ * truncated, unmarked, indistinguishable from a short complete one, and replays it into every later
+ * prompt as if the model had finished speaking. That is the defect TEN-39 fixed for one path and
+ * this reintroduced through another; carrying the fact on the generation instead of on the caller
+ * closes both, and the notification's stop action ([InferenceService]) with them — it goes through
+ * the same [InferenceQueue.cancelActive] and so labels what it cancels, where it used to be
+ * deliberately left unlabelled for want of anywhere to put the fact.
+ *
+ * Deliberately a plain "was it asked for", not "why": a cancellation the queue did not initiate
+ * (the collector walking away, a model swap) leaves this `false`, which is what lets a caller tell
+ * a stop from any other way its collection can end.
+ */
+class GenerationStopSignal {
+
+    /**
+     * `@Volatile`: written from whatever thread called [InferenceQueue.cancelActive] (the UI
+     * thread, or a service callback) and read from the collector's.
+     */
+    @Volatile
+    private var requested = false
+
+    /** Whether [InferenceQueue.cancelActive] cancelled *this* generation. */
+    val wasRequested: Boolean get() = requested
+
+    /** Set by [InferenceQueue.cancelActive], and by nothing else — see this class's KDoc. */
+    internal fun markRequested() {
+        requested = true
+    }
+}
+
+/**
  * Single, app-wide entry point for every inference in Tensai.
  *
  * Contracts (see spec V1 "Contrats transverses"):
@@ -141,7 +181,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
     val state: StateFlow<QueueState> = _state.asStateFlow()
 
     /**
-     * Guarded by [mutex], with no exception — [cancelActive] reads [activeGenerationJob], not this.
+     * Guarded by [mutex], with no exception — [cancelActive] reads [activeGeneration], not this.
      * Non-null exactly when [state] is [QueueState.ModelReady] or [QueueState.Generating]; the
      * invariant is what [generate] trusts when it hands out [loadedModel] on the strength of
      * [state] alone, and restoring it on every path out of a release is TEN-74.
@@ -189,11 +229,19 @@ class InferenceQueue(private val engine: InferenceEngine) {
      */
     var onBeforeModelSwap: (suspend () -> Unit)? = null
 
+    /** The [Job] of the generation currently producing events, and the signal it reports a stop on. */
+    private class ActiveGeneration(val job: Job, val stopSignal: GenerationStopSignal?)
+
     /**
-     * The [Job] of the [generate] coroutine currently producing events, if
-     * any. Written only under [mutex] (in [generate]'s begin/end steps);
-     * read without the lock in [cancelActive] since cancelling a job is
-     * safe to call redundantly or on an already-completed job.
+     * The generation currently producing events, if any. Written only under [mutex] (in
+     * [generate]'s begin/end steps); read without the lock in [cancelActive] since cancelling a job
+     * is safe to call redundantly or on an already-completed job.
+     *
+     * One field holding both halves, not two fields (TEN-79): [cancelActive] marks a signal and
+     * cancels a job, and reading those from two separate references admits a tear where the signal
+     * belongs to a generation that has just ended and the job to the one that just started —
+     * exactly the mislabelling [GenerationStopSignal] exists to remove. A single volatile read
+     * cannot come apart that way.
      *
      * Set *before* [state] goes to [QueueState.Generating] and cleared *after* it leaves it, so
      * anyone who sees `Generating` sees a job to cancel (see [generate]). The reverse slack (a job
@@ -209,7 +257,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * not reachable from a single-threaded `runBlocking`, so it is unpinned by construction).
      */
     @Volatile
-    private var activeGenerationJob: Job? = null
+    private var activeGeneration: ActiveGeneration? = null
 
     /**
      * Loads the model described by [config], implicitly unloading and
@@ -272,7 +320,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * caller waits is not this case, it is the normal one, and its job is still live here.
      */
     private fun liveGenerationJobLocked(): Job {
-        val job = activeGenerationJob
+        val job = activeGeneration?.job
         if (job == null || job.isCompleted) {
             error(
                 "Queue state is ${_state.value} but no generation is running: " +
@@ -423,8 +471,15 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * collection starts — i.e. no model is loaded, a load is in progress,
      * or another generation is already active. This queue never queues up
      * a second generation behind the first; the caller must retry.
+     *
+     * @param stopSignal marked if — and only if — [cancelActive] is what ends *this* generation,
+     *   so the collector can tell a stop the user asked for from every other way its collection
+     *   can end (TEN-79). Optional: a caller with nothing to record about it passes none.
      */
-    fun generate(request: DecodeRequest): Flow<DecodeEvent> = channelFlow {
+    fun generate(
+        request: DecodeRequest,
+        stopSignal: GenerationStopSignal? = null,
+    ): Flow<DecodeEvent> = channelFlow {
         // Whether this call took the queue over — i.e. published the two writes below and so owes
         // the matching cleanup. Not `model != null`: if [state] ever says `ModelReady` over a
         // `null` [loadedModel], this call has already claimed the queue and must still hand it
@@ -442,7 +497,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 // this field without the lock. Publishing `Generating` first would leave a window,
                 // however narrow, where a stop is offered against a job that isn't there yet, and
                 // [cancelActive] would silently do nothing.
-                activeGenerationJob = coroutineContext[Job]
+                activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
                 _state.value = QueueState.Generating(current.info)
                 loadedModel
             } else {
@@ -476,7 +531,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                         // [cancelActive] landing in between cancels a job that is already inside
                         // this very (NonCancellable) cleanup: a no-op, not a torn teardown.
                         _state.value = loadedInfo?.let { QueueState.ModelReady(it) } ?: QueueState.Idle
-                        activeGenerationJob = null
+                        activeGeneration = null
                     }
                 }
             }
@@ -489,9 +544,19 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * Does not wait for the stop to complete — collect [generate]'s flow to
      * completion (or observe [state] return to [QueueState.ModelReady]) for
      * that.
+     *
+     * Marks that generation's [GenerationStopSignal] first, so it is recorded as stopped *by the
+     * user* rather than as one more cancellation of unknown origin — see that class for why the
+     * fact belongs on the generation and not on whoever pressed the button. Marked before the
+     * cancel, never after: the collector's `finally` can start running the instant the job is
+     * cancelled, and a mark landing after it has already read the signal would arrive too late to
+     * label anything.
      */
     fun cancelActive() {
-        activeGenerationJob?.cancel()
+        // One read, so the signal and the job are guaranteed to be the same generation's.
+        val active = activeGeneration ?: return
+        active.stopSignal?.markRequested()
+        active.job.cancel()
     }
 
     /**

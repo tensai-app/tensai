@@ -360,6 +360,142 @@ class ChatViewModelTest {
     }
 
     /**
+     * TEN-79's third defect, and the reason TEN-39's fix did not hold: the queue is app-wide, so
+     * whichever screen the stop button is pressed on, the generation it cancels is the one that is
+     * running. Conversation A is streaming, the user opens B from the drawer, B's screen offers a
+     * stop (there *is* a generation), and pressing it cuts A.
+     *
+     * With "the user stopped it" held as a flag on the `ChatViewModel`, that flag was B's while the
+     * cancellation was A's: A's row was persisted truncated with no stats and no reason — which is
+     * exactly what a complete short answer looks like on re-read, and what
+     * [ChatRepository.toEngineMessages] replays into every later prompt.
+     */
+    @Test
+    fun stoppingFromAnotherConversationsScreenLabelsTheReplyItActuallyCuts() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(DecodeEvent.Token("half an answer"))
+        engine.hangBeforeTerminal = true
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(conversationA)
+        val viewModelB = newViewModel(conversationB)
+
+        viewModelA.send("hi")
+        waitForAssistantReply(conversationA, expectedCount = 2) { it.content.isNotEmpty() }
+        // The user is looking at B and presses the only button on offer.
+        viewModelB.stop()
+        withTimeout(5_000) {
+            while (inferenceQueue.state.value !is QueueState.ModelReady) delay(10)
+        }
+
+        val reply = chatRepository.observeMessages(conversationA).first().last()
+        assertEquals("half an answer", reply.content)
+        assertEquals(
+            "the row that was cut is the row that carries the reason, whichever screen the button was on",
+            StopReason.Cancelled.name,
+            reply.stopReason,
+        )
+        assertEquals(ReplyEnding.Stopped, viewModelA.messages.first().last().ending)
+    }
+
+    /**
+     * The other half of the same defect: B should not have been offering that button at all.
+     *
+     * `ChatScreen` derived its stop affordance from [InferenceQueue.state] alone, which says
+     * "generating" on every conversation's screen at once. [ChatViewModel.canStop] narrows it to
+     * the conversation the generation belongs to, so B shows a busy pill rather than a control over
+     * a reply the user cannot see.
+     */
+    @Test
+    fun theStopButtonIsOnlyOfferedOnTheConversationThatIsGenerating() = runBlocking {
+        loadFakeModel()
+        engine.hangBeforeTerminal = true
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(conversationA)
+        val viewModelB = newViewModel(conversationB)
+
+        viewModelA.send("hi")
+        withTimeout(5_000) {
+            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
+        }
+
+        assertTrue("A is generating, and A is where the stop belongs", viewModelA.canStop.first())
+        assertFalse(
+            "B has nothing of its own to stop — offering one here cuts A instead",
+            viewModelB.canStop.first(),
+        )
+
+        viewModelA.stop()
+    }
+
+    /**
+     * A `ChatViewModel` rebuilt mid-reply — `ChatScreen` `remember`s one per conversation id, so
+     * navigating to Home and back makes a new one while the generation, which runs on the
+     * application scope, carries on — must still offer the stop for its own conversation. That is
+     * what [ActiveSessionTracker] covers and an instance-scoped flag cannot.
+     */
+    @Test
+    fun aScreenReopenedMidReplyStillOffersTheStop() = runBlocking {
+        loadFakeModel()
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        withTimeout(5_000) {
+            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
+        }
+
+        val reopened = newViewModel(conversation)
+        assertTrue("the reply on screen is still this conversation's", reopened.canStop.first())
+
+        viewModel.stop()
+    }
+
+    /**
+     * TEN-79's second defect, end to end. TEN-65 clips `nPredict` to the room the context window
+     * has left; when the reply then spends all of it, the engine used to report
+     * [StopReason.ResponseBudgetExhausted] — "you hit your limit". The user raises max-tokens,
+     * which does not enter into `available` at all, and the next reply stops at the same word.
+     *
+     * The row is marked for what happened to it, and the banner names the conversation as the
+     * problem — the reply is on screen, so nothing else would.
+     */
+    @Test
+    fun aReplyCutOffByTheContextWindowSaysSoRatherThanBlamingTheTokenLimit() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Token("as far as the window would let me g"),
+            DecodeEvent.Done(
+                DecodeStats(
+                    tokensGenerated = TOKENS_PER_TURN,
+                    tokPerSec = 1f,
+                    ttftMs = 1L,
+                    stopReason = StopReason.ContextBudgetClipped,
+                ),
+            ),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+
+        assertEquals(StopReason.ContextBudgetClipped.name, reply.stopReason)
+        assertEquals(
+            "not the max-tokens truncation — that would send the user to a setting that cannot help",
+            TruncationReason.Context,
+            viewModel.messages.first().last().stats!!.truncation,
+        )
+        assertEquals(
+            "only the banner can say the window is what ran out, and what to do about it",
+            ChatError.ContextWindowFull,
+            viewModel.error.value,
+        )
+    }
+
+    /**
      * TEN-52's actual bug: a [DecodeEvent.Error] arriving *after* the first token used to be
      * swallowed whole. The partial reply was persisted with no stats and no stop reason, which is
      * byte for byte what a deliberate stop looks like, so a broken generation was presented as a

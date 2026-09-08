@@ -18,6 +18,7 @@ import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
+import io.github.hokanosekai.tensai.runtime.GenerationStopSignal
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -99,6 +100,15 @@ enum class TruncationReason {
      * is cut off mid-thought.
      */
     Response,
+
+    /**
+     * [StopReason.ContextBudgetClipped]: the reply used up what the context window had left, not
+     * the max-tokens the user set (TEN-79). Kept apart from [Response] because the two point at
+     * different actions — "your reply hit its limit, raise it if you want more" against "this
+     * conversation has no room left, and raising anything will not give it any". The banner says
+     * the second one in full; this is the mark on the row that outlives it.
+     */
+    Context,
 }
 
 /**
@@ -125,6 +135,7 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
         val truncation = when (stopReason) {
             StopReason.ReasoningBudgetExhausted.name -> TruncationReason.Reasoning
             StopReason.ResponseBudgetExhausted.name, StopReason.TokenBudget.name -> TruncationReason.Response
+            StopReason.ContextBudgetClipped.name -> TruncationReason.Context
             else -> TruncationReason.None
         }
         MessageStatsUi(
@@ -162,11 +173,18 @@ sealed class ChatError {
     data object NoModelLoaded : ChatError()
 
     /**
-     * The last generation attempted produced zero tokens because the conversation's prompt alone
-     * already filled the model's context window (TEN-65, see
-     * [io.github.hokanosekai.tensai.engine.StopReason.ContextBudgetExhausted]). No assistant message
-     * was kept for that attempt (see [ChatViewModel.streamInto]'s [hasPersistableContent] check), so
-     * this is the only trace of it the user sees.
+     * The conversation has outgrown the model's context window, on either of the two ways that
+     * shows up:
+     *
+     * - the prompt alone already filled it, so the attempt produced zero tokens and no assistant
+     *   message was kept for it (TEN-65, [StopReason.ContextBudgetExhausted]) — this banner is the
+     *   only trace of it the user gets;
+     * - the prompt left a little room and the reply spent all of it (TEN-79,
+     *   [StopReason.ContextBudgetClipped]) — there *is* a bubble, cut off, and the banner is what
+     *   says the cut came from the window rather than from the max-tokens setting.
+     *
+     * One error for both because the user's move is the same either way, and it is not in the
+     * settings sheet: start a new conversation, or reload the model with a larger context.
      */
     data object ContextWindowFull : ChatError()
 
@@ -235,6 +253,32 @@ class ChatViewModel(
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
+
+    /** `true` for as long as a reply *this* instance started is still streaming — see [canStop]. */
+    private val _generatingHere = MutableStateFlow(false)
+
+    /**
+     * Whether the stop button on *this* conversation's screen would stop a reply belonging to it
+     * (TEN-79).
+     *
+     * [queueState] alone cannot answer that. It is app-wide, so with a reply streaming in
+     * conversation A every conversation's screen reads `Generating` and every one of them offers a
+     * stop — which, pressed on B, cancels A. The user is shown a control over a generation they
+     * are not looking at, and A's reply is cut off with nothing on screen to explain why.
+     *
+     * Ownership is read from two sources because neither covers the whole of it on its own.
+     * [_generatingHere] is exact but instance-scoped: navigating away and back rebuilds the
+     * `ChatViewModel` (`ChatScreen` `remember`s one per conversation id) while the generation, which
+     * runs on [scope], keeps going — the new instance never started it and would offer no way to
+     * stop a reply that is visibly still streaming. [ActiveSessionTracker] survives that, being
+     * keyed on the conversation rather than on an instance, but is best-effort by design (see its
+     * KDoc) and reports nothing for a loaded model it cannot match back to a persisted row. Either
+     * one saying "mine" is enough; requiring both would inherit both weaknesses.
+     */
+    val canStop: Flow<Boolean> =
+        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere) { state, active, here ->
+            state is QueueState.Generating && (here || active?.first == conversationId)
+        }
 
     /**
      * Whether the currently loaded model's chat template supports thinking — gates whether
@@ -326,24 +370,6 @@ class ChatViewModel(
     }
 
     /**
-     * Set by [stop] and read by [streamInto]'s `finally` to record [StopReason.Cancelled].
-     *
-     * `@Volatile` because the two run on different threads: `stop()` is called from the UI thread,
-     * the `finally` from [scope] ([kotlinx.coroutines.Dispatchers.Default]). Cleared at the top of
-     * every [streamInto], so a flag left over from a previous turn cannot mislabel the next one.
-     *
-     * This is what makes "the user stopped it" a *fact* rather than an inference. It cannot be
-     * confused with any other cancellation because nothing else sets it: leaving the chat screen
-     * doesn't cancel a generation at all (it runs on [scope], see this class's KDoc), and the
-     * notification's stop action goes through
-     * [io.github.hokanosekai.tensai.runtime.InferenceService], whose cancel is not routed here — a
-     * generation stopped from the notification therefore stays unlabelled rather than being
-     * labelled wrongly, which is the safe direction to be incomplete in.
-     */
-    @Volatile
-    private var stopRequested = false
-
-    /**
      * Stops the active generation, if any. The partial reply streamed so far is left exactly as
      * is — see [streamInto]'s `finally`, which persists whatever was accumulated regardless of how
      * generation ended, now with [StopReason.Cancelled] recorded against it.
@@ -363,9 +389,15 @@ class ChatViewModel(
      * The chip cannot collide with TEN-52's "generation failed" one: both come from the single
      * [ChatMessageUi.ending] field, so the row renders exactly one of them, and `failed` still wins
      * when a decode manages to both error and be stopped (see the `finally` below).
+     *
+     * Nothing is recorded *here* (TEN-79). This method used to set a flag on this instance, which
+     * is the wrong object to hold it: the queue is app-wide and [InferenceQueue.cancelActive] stops
+     * whichever generation is running, which is not necessarily one this conversation started. The
+     * fact now travels with the generation — see [GenerationStopSignal] — so the reply that
+     * actually gets cut is the reply that gets the chip, whichever screen the button was on and
+     * whether it was a button at all (the notification's stop action lands on the same path).
      */
     fun stop() {
-        stopRequested = true
         inferenceQueue.cancelActive()
     }
 
@@ -600,9 +632,13 @@ class ChatViewModel(
         var stats: DecodeStats? = null
         var failed = false
         var lastPersistAt = 0L
-        stopRequested = false
+        // Fresh per turn, and handed to the queue so it is *this* generation that gets marked when
+        // the user stops one — see [GenerationStopSignal] for why a flag on this object could not
+        // be trusted to mean that.
+        val stopSignal = GenerationStopSignal()
+        _generatingHere.value = true
         try {
-            inferenceQueue.generate(request).collect { event ->
+            inferenceQueue.generate(request, stopSignal).collect { event ->
                 when (event) {
                     is DecodeEvent.Token -> {
                         parser.accept(event.text)
@@ -631,6 +667,9 @@ class ChatViewModel(
                 }
             }
         } finally {
+            // Dropped before the row is written, not after: this only ever gates the stop button
+            // (see [canStop]), and the generation it could act on is over the moment collection is.
+            _generatingHere.value = false
             parser.finish()
             val content = parser.content
             val kept = hasPersistableContent(content, parser.thinking)
@@ -647,7 +686,7 @@ class ChatViewModel(
             // reading it.
             val stopReason = when {
                 failed -> StopReason.Failed
-                stopRequested && stats == null -> StopReason.Cancelled
+                stopSignal.wasRequested && stats == null -> StopReason.Cancelled
                 else -> stats?.stopReason
             }
             withContext(NonCancellable) {
@@ -676,7 +715,16 @@ class ChatViewModel(
             //
             // A failure that *did* produce text needs no banner — the reply is on screen carrying
             // its own "generation failed" chip, and a banner on top would say the same thing twice.
-            if (stats?.stopReason == StopReason.ContextBudgetExhausted) {
+            //
+            // TEN-79 adds the one exception to that rule: a reply cut off by the context window
+            // (StopReason.ContextBudgetClipped) *did* leave a bubble behind, and still gets the
+            // banner. Its chip can only say the reply was cut off, and the user's reading of "cut
+            // off" is "raise max-tokens" — a setting that, in this one case, is not what stopped it
+            // and cannot lengthen it. Only the banner names the conversation itself as the problem
+            // and points at the way out.
+            if (stats?.stopReason == StopReason.ContextBudgetExhausted ||
+                stats?.stopReason == StopReason.ContextBudgetClipped
+            ) {
                 _error.value = ChatError.ContextWindowFull
             } else if (failed && !kept) {
                 _error.value = ChatError.GenerationFailed

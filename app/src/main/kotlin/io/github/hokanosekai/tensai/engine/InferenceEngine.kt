@@ -268,6 +268,24 @@ enum class StopReason {
     ContextBudgetExhausted,
 
     /**
+     * The decode filled every token [LoadedModelInfo.nCtxEffective] had left after the prompt —
+     * the reply is cut off, and raising [SamplingConfig.maxTokens] would not have made it any
+     * longer (TEN-79).
+     *
+     * Distinct from [TokenBudget]/[ResponseBudgetExhausted] because the two call for opposite
+     * reactions. Those mean "the cap you set was reached", and the cap is a setting the user can
+     * move. This one means the cap was never in play: TEN-65 had already clipped it down to the
+     * room the context window actually left, so the number in the settings sheet is not what
+     * stopped the reply and moving it changes nothing. The way forward is a new conversation, or
+     * reloading the model with a larger context — which is what the chat's own
+     * [io.github.hokanosekai.tensai.ui.screens.chat.ChatError.ContextWindowFull] banner says.
+     *
+     * Sibling of [ContextBudgetExhausted], one step earlier: there the prompt left no usable room
+     * at all and nothing was generated, here it left some and the reply spent all of it.
+     */
+    ContextBudgetClipped,
+
+    /**
      * The decode ended on a [DecodeEvent.Error] (TEN-52). Never reported in [DecodeStats]: a failed
      * decode produces no stats at all, which is precisely the problem this value exists to solve.
      * The app layer needs a name for the third way a generation can end when it records one (see
@@ -288,9 +306,10 @@ enum class StopReason {
      * value existed looks like. Recording it makes a stopped reply a fact the chat can read back a
      * week later instead of a guess it has to make from three nulls.
      *
-     * The app layer sets it, in [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.stop]'s
-     * name — see that method for why the flag it reads cannot be confused with any other kind of
-     * cancellation.
+     * The app layer sets it, off the
+     * [io.github.hokanosekai.tensai.runtime.GenerationStopSignal] the cancelled generation was
+     * started with — see that class for why the fact belongs to the generation rather than to
+     * whoever pressed the button, and for what it cannot be confused with.
      */
     Cancelled,
 }

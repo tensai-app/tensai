@@ -61,9 +61,18 @@ internal fun shortModelLabel(name: String): String =
  * [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and, per TEN-37, Home.
  *
  * V1 is deliberately spare (no attach/mic actions, per the design): the trailing button toggles
- * between send and stop as [isGenerating] flips, and a lavender ring animates around the whole
- * pill for the same duration. The ring respects the system's "remove animations" accessibility
+ * between send and stop as [canStop] flips, and a lavender ring animates around the whole
+ * pill while [isGenerating]. The ring respects the system's "remove animations" accessibility
  * toggle the same way [KanjiGlyph] does — reduced motion gets a static ring, not a spinning one.
+ *
+ * @param isGenerating a generation is running — app-wide, not necessarily this screen's. Shows the
+ *   ring and blocks sending: the queue runs one generation at a time, and a send issued now would
+ *   only be rejected.
+ * @param canStop the running generation is one this screen may stop (TEN-79), which is what turns
+ *   the button into a stop button. Defaults to [isGenerating] for callers with a single
+ *   conversation in play; [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] passes the
+ *   narrower answer, so a reply streaming in *another* conversation shows as busy rather than
+ *   offering a stop that would cut off something the user cannot see.
  */
 @Composable
 fun InputPill(
@@ -75,6 +84,7 @@ fun InputPill(
     modelLabel: String,
     onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
+    canStop: Boolean = isGenerating,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         if (isGenerating) {
@@ -111,12 +121,14 @@ fun InputPill(
                 )
 
                 IconButton(
-                    onClick = { if (isGenerating) onStop() else onSend() },
-                    enabled = isGenerating || value.isNotBlank(),
+                    onClick = { if (canStop) onStop() else onSend() },
+                    // Busy without a stop to offer leaves the button disabled rather than enabled
+                    // on a send the queue would refuse — with the ring still turning to say why.
+                    enabled = canStop || (!isGenerating && value.isNotBlank()),
                 ) {
                     Icon(
-                        imageVector = if (isGenerating) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = if (isGenerating) "Stop" else "Send",
+                        imageVector = if (canStop) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (canStop) "Stop" else "Send",
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }

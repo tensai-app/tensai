@@ -167,6 +167,9 @@ private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
             TruncationReason.None -> null
             TruncationReason.Reasoning -> "cut off while reasoning"
             TruncationReason.Response -> "cut off at limit"
+            // Not "at limit": the limit was never reached (TEN-79). Worded so a reader who is
+            // about to go raise max-tokens doesn't — the banner above says the rest.
+            TruncationReason.Context -> "cut off, conversation full"
         }
         Text(
             text = if (suffix != null) "$figures · $suffix" else figures,

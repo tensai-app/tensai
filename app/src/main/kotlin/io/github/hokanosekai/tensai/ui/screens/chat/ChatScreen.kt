@@ -80,6 +80,8 @@ fun ChatScreen(
     val error by viewModel.error.collectAsState()
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
+    // Narrower than isGenerating, and only the stop button uses it — see ChatViewModel.canStop.
+    val canStop by viewModel.canStop.collectAsState(initial = false)
     // Generating still has a model resident, so the pill and the "no model" banner must not fall
     // back to the empty state mid-reply — see residentModel's KDoc (TEN-46, TEN-58).
     val modelInfo = queueState.residentModel
@@ -207,6 +209,7 @@ fun ChatScreen(
             },
             onStop = viewModel::stop,
             isGenerating = isGenerating,
+            canStop = canStop,
             modelLabel = modelInfo?.name?.let(::shortModelLabel) ?: "no model",
             onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),

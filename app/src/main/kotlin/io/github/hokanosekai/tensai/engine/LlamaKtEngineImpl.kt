@@ -315,7 +315,6 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
             // the flow fires awaitClose, and interrupt() (safe from any thread) unblocks
             // an in-flight completion, prefill included.
             launch(dispatcher) {
-                var tokenCount = 0
                 var firstTokenAtMs = 0L
                 val startMs = System.currentTimeMillis()
                 val budgetTracker = reasoningBudget?.let { ReasoningBudgetTracker(it) }
@@ -335,6 +334,11 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         trySend(DecodeEvent.Done(DecodeStats(0, 0f, 0L, StopReason.ContextBudgetExhausted)))
                     } else {
                         val nPredict = requestedNPredict.coerceAtMost(available)
+                        // Whether TEN-65's clip above actually bit. Kept because reaching a cap the
+                        // caller asked for and reaching one the context window imposed are two
+                        // different endings for the reader (TEN-79) — see
+                        // [StopReason.ContextBudgetClipped].
+                        val clipped = nPredict < requestedNPredict
                         val libParams = LlamaSamplingParams(
                             nPredict = nPredict,
                             // TEN-85: the reasoning cap is enforced *inside* llama.cpp, by a
@@ -354,8 +358,10 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                             stopSequences = request.sampling.stopSequences,
                         )
                         val callback = TokenCallback { token ->
+                            // Only the *first* callback is worth a timestamp: this fires once per
+                            // flushable piece of text, so counting the calls counts something that
+                            // is not tokens (TEN-79, see the `completion` call below).
                             if (firstTokenAtMs == 0L) firstTokenAtMs = System.currentTimeMillis()
-                            tokenCount++
                             // Runs on `dispatcher`, inside the blocking completion — the one place the
                             // KV fill can be sampled while a generation is under way (TEN-51).
                             refreshKvUsedCells()
@@ -406,33 +412,34 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         // is no second interrupt to try — the flag was consumed — so the check has
                         // to happen before the call rather than be retried after it.
                         coroutineContext.ensureActive()
-                        llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
+                        // TEN-79: llama.cpp's own count of the tokens it sampled — the *only*
+                        // figure comparable to nPredict. `tokenCount` is not it and never was: the
+                        // token callback fires once per flushable piece of text, not once per
+                        // token, so it under-counts every decode that held a token back (an
+                        // accented character split across two tokens is enough — see
+                        // `LlamaEngine.completion`'s @return). Comparing that undercount against
+                        // nPredict is what let a reply cut off at its budget be reported as
+                        // `Complete`, which is the same thing TEN-60 set out to fix.
+                        val tokensPredicted =
+                            llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
 
                         val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                         val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
-                        val tokPerSec = tokenCount * 1000f / elapsedMs
-                        // completion() returns Unit, so the reason has to be inferred: a budget
-                        // tracked above wins if it fired; otherwise reaching nPredict (TEN-65: the
-                        // smaller of requestedNPredict and what the context actually left available)
-                        // is the one other ending we can recognise from out here (TEN-60/TEN-61).
-                        // Compared against nPredict rather than request.sampling.maxTokens because
-                        // TEN-65 may have clipped the cap below what the caller asked for, and that's
-                        // still a real cutoff, not a Complete.
-                        val stopReason = budgetStopReason
-                            ?: if (tokenCount < nPredict) {
-                                StopReason.Complete
-                            } else if (reasoningBudget == null) {
-                                StopReason.TokenBudget
-                            } else {
-                                budgetTracker!!.currentPhaseStopReason()
-                            }
+                        val tokPerSec = tokensPredicted * 1000f / elapsedMs
+                        val stopReason = DecodeOutcome.stopReason(
+                            budgetStopReason = budgetStopReason,
+                            tokensPredicted = tokensPredicted,
+                            nPredict = nPredict,
+                            clipped = clipped,
+                            phaseStopReason = budgetTracker?.currentPhaseStopReason(),
+                        )
                         // Reached on a cancellation too, and deliberately: `awaitClose`'s
                         // interrupt() unblocks completion() rather than throwing, so the normal
                         // path runs to here with the channel already closed and this `trySend`
                         // silently fails. That is the intended outcome (a cancelled decode owes its
                         // collector no terminal event), and it is why this is `trySend` and not
                         // `send`. Not dead code: it is the one place a completed decode reports.
-                        trySend(DecodeEvent.Done(DecodeStats(tokenCount, tokPerSec, ttftMs, stopReason)))
+                        trySend(DecodeEvent.Done(DecodeStats(tokensPredicted, tokPerSec, ttftMs, stopReason)))
                     }
                 } catch (e: CancellationException) {
                     throw e

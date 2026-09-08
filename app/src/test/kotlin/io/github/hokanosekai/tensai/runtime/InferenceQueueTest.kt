@@ -217,6 +217,55 @@ class InferenceQueueTest {
         assertTrue(queue.state.value is QueueState.ModelReady)
     }
 
+    /**
+     * TEN-79: a stop is a fact about the generation that was cancelled, not about whoever asked for
+     * it. [InferenceQueue.cancelActive] is the one place both are known at once — it is app-wide,
+     * so it stops whatever is running regardless of which screen (or the notification) called it —
+     * and it is where the fact is recorded, on the signal that generation was started with.
+     */
+    @Test
+    fun cancelActiveMarksTheStopSignalOfTheGenerationItCancels() = runBlocking {
+        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        val stopSignal = GenerationStopSignal()
+
+        val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { } }
+        withTimeout(2_000) {
+            while (queue.state.value !is QueueState.Generating) delay(5)
+        }
+        assertFalse("nothing has been asked of it yet", stopSignal.wasRequested)
+
+        queue.cancelActive()
+        withTimeout(2_000) { collectJob.join() }
+
+        assertTrue("the generation that was cut is the one that carries the reason", stopSignal.wasRequested)
+    }
+
+    /**
+     * The negative that gives the signal its meaning: a generation cancelled by something other
+     * than a stop must come out unmarked. A model swap cancels the active generation to get at the
+     * weights (see [InferenceQueue.loadModel]) — labelling that as "the user stopped it" would put
+     * a stop chip on a reply nobody stopped, which is the same class of lie in the other direction.
+     */
+    @Test
+    fun aGenerationCancelledByAModelSwapIsNotMarkedAsStopped() = runBlocking {
+        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        val stopSignal = GenerationStopSignal()
+
+        val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { } }
+        withTimeout(2_000) {
+            while (queue.state.value !is QueueState.Generating) delay(5)
+        }
+
+        queue.loadModel(ModelLoadConfig(path = "/models/b.gguf"))
+        withTimeout(2_000) { collectJob.join() }
+
+        assertFalse("a swap is not a stop", stopSignal.wasRequested)
+    }
+
     @Test
     fun saveSessionReportsNotAttemptedWhenNoModelIsLoaded() = runBlocking {
         val queue = InferenceQueue(FakeEngine())
@@ -667,7 +716,7 @@ class InferenceQueueTest {
      */
     private fun wedgeOnGenerating(queue: InferenceQueue) {
         val info = queue.state.value.residentModel!!
-        setPrivateField(queue, "activeGenerationJob", null)
+        setPrivateField(queue, "activeGeneration", null)
         @Suppress("UNCHECKED_CAST")
         val state = readPrivateField(queue, "_state") as MutableStateFlow<QueueState>
         state.value = QueueState.Generating(info)
