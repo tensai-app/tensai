@@ -84,10 +84,24 @@ class InferenceService : Service() {
      * otherwise keep pinning RAM with no UI left to manage it, so unload it
      * and stop cleanly instead of leaving an orphaned foreground service +
      * notification behind.
+     *
+     * [stopSelf] runs **inside** the `launch`, after the unload (TEN-78). Calling it alongside the
+     * launch — as this did — dropped the foreground protection immediately, while the unload it had
+     * just started was still running: [InferenceQueue.unloadModel] fires
+     * [InferenceQueue.onBeforeModelSwap], which is where TEN-34's save-before-swap writes a
+     * multi-hundred-MB state dump, and the process was back at background priority for the whole of
+     * it. Nothing corrupts — `SessionRepository` writes to a temp file and renames — the save is
+     * simply lost, silently, on the exit path where it is worth the most.
+     *
+     * The [stopSelf] is close to redundant now: `unloadModel` settles [QueueState.Idle], and the
+     * observer in [onCreate] stops the service on it. It stays because that is an inference across
+     * two coroutines, and this method's contract is to stop.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        RuntimeGraph.applicationScope.launch { RuntimeGraph.inferenceQueue.unloadModel() }
-        stopSelf()
+        RuntimeGraph.applicationScope.launch {
+            RuntimeGraph.inferenceQueue.unloadModel()
+            stopSelf()
+        }
         super.onTaskRemoved(rootIntent)
     }
 

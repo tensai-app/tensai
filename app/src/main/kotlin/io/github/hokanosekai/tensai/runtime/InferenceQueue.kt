@@ -1,5 +1,7 @@
 package io.github.hokanosekai.tensai.runtime
 
+import io.github.hokanosekai.tensai.data.session.SessionRestoreOutcome
+import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.InferenceEngine
@@ -504,65 +506,101 @@ class InferenceQueue(private val engine: InferenceEngine) {
     /**
      * Persists the currently loaded model's KV-cache/prompt state to [path] — TEN-34's
      * app-triggered save (e.g. the app going to background), as opposed to [onBeforeModelSwap]'s
-     * save-before-swap. Returns the number of tokens saved (`>= 0`) on success, `-1` if no model is
-     * loaded, [state] is not [QueueState.ModelReady] (in particular: mid-generation, so a save
-     * can't stall behind an in-flight decode holding [engine]'s own dispatcher — see
-     * `LlamaKtEngineImpl`'s KDoc), [engine] isn't a [LlamaKtEngine], or the underlying save itself
-     * failed.
+     * save-before-swap.
      *
-     * No *failure* throws, then — but a [CancellationException] does (TEN-73), because it is not
+     * Answers with a [SessionSaveOutcome] rather than a token count, because the two ways this can
+     * decline are not the same thing (TEN-78): [SessionSaveOutcome.EngineFailed] is the engine
+     * saying no, [SessionSaveOutcome.NotAttempted] is this queue never asking it — no model
+     * loaded, a load in progress, a generation in flight, or an [engine] that isn't a
+     * [LlamaKtEngine]. Both used to be `-1`, and `SessionRepository.save` turned both into
+     * `SaveResult.Failed`, i.e. "the engine tried and broke": a plain reply streaming in was
+     * reported as a save failure, and `ChatViewModel` cancelled the incoming conversation's
+     * restore over it.
+     *
+     * **Mid-generation is still deliberately declined**, and that is the point of naming it
+     * [SessionSaveOutcome.NotAttempted] rather than making it work: [LlamaKtEngineImpl] runs every
+     * engine call on one thread, so a dump issued during a decode either queues behind the whole
+     * generation while holding [mutex] — blocking [unloadModel], and with it the notification's
+     * Unload action, for the length of a reply *and* a multi-hundred-MB write — or interleaves
+     * between tokens and freezes half an answer. Neither is worth having when the state one moment
+     * later is strictly better. What closes TEN-78's third case is the *other* end: see
+     * [saveSessionAfterBackgroundedGeneration], which watches for the generation ending and saves
+     * then.
+     *
+     * No failure throws, then — but a [CancellationException] does (TEN-73), because it is not
      * one. See the guard in the body.
      *
      * Serialized on [mutex] like every other queue operation, so it can never race a concurrent
      * [loadModel]/[unloadModel]/[generate] — unlike [onBeforeModelSwap], which runs already inside
      * [mutex], this is meant for callers *outside* the queue and must take the lock itself.
      */
-    suspend fun saveSession(path: String): Int = mutex.withLock {
-        if (_state.value !is QueueState.ModelReady) return@withLock -1
-        val llama = engine as? LlamaKtEngine ?: return@withLock -1
+    suspend fun saveSession(path: String): SessionSaveOutcome = mutex.withLock {
+        if (_state.value !is QueueState.ModelReady) return@withLock SessionSaveOutcome.NotAttempted
+        val llama = engine as? LlamaKtEngine ?: return@withLock SessionSaveOutcome.NotAttempted
         try {
-            llama.saveSession(path)
+            SessionSaveOutcome.Wrote(llama.saveSession(path))
         } catch (e: CancellationException) {
             // Ahead of the catch below, which reported a cancelled dump as `-1` — indistinguishable
             // from an engine that tried and failed, and swallowed on the way (TEN-73). This is the
             // layer that matters for it: `SessionRepository.save` takes this method as its
-            // `saveOnEngine`, so a `-1` here is what it turns into "Session save reported failure",
-            // and its own cancellation guard would never have seen a thing.
+            // `saveOnEngine`, so a failure reported here is what it turns into "Session save
+            // reported failure", and its own cancellation guard would never have seen a thing.
             throw e
         } catch (e: Exception) {
-            -1
+            SessionSaveOutcome.EngineFailed
         }
     }
 
     /**
      * Restores a previously-saved KV-cache/prompt state from [path] onto whatever model is
      * currently loaded — the app-side counterpart of prefill, letting a resumed conversation skip
-     * re-feeding a prompt prefix already present in [path]. Callers are responsible for validating
-     * that [path] actually matches the currently loaded model/context/KV-cache-type *before*
-     * calling this (see `io.github.hokanosekai.tensai.data.session.SessionRepository`) — this only
-     * forwards to [LlamaKtEngine.loadSession] and does not itself re-check compatibility.
+     * re-feeding a prompt prefix already present in [path].
      *
-     * Returns `false` if no model is loaded, [state] is not [QueueState.ModelReady], [engine]
-     * isn't a [LlamaKtEngine], or the underlying restore failed — every case is a clean signal to
-     * fall back to a normal prefill. A [CancellationException] is the one thing that throws instead
-     * (TEN-73): it is not a verdict on the session, and callers treat `false` as one.
+     * Callers validate that [path] matches the loaded model/context/KV-cache-type before calling
+     * this (see `io.github.hokanosekai.tensai.data.session.SessionRepository.restore`), and that
+     * check necessarily runs *outside* [mutex] — so by the time this takes the lock, the model it
+     * was made against may already be gone. [expectedModel] is how a caller says which model it
+     * checked: pass the [LoadedModelInfo] that was resident then, and this re-reads it under the
+     * lock and declines with [SessionRestoreOutcome.NotAttempted] if anything else is loaded now.
+     * Without it, a [loadModel] winning the race left [state] back on [QueueState.ModelReady] with
+     * a *different* model, and this handed that model another model's KV state (TEN-81). `null`
+     * skips the re-check, for callers with no model identity to assert.
+     *
+     * The three outcomes are the restore twin of [saveSession]'s, and the distinction matters more
+     * here: `SessionRepository.restore` deletes the state file and its row on
+     * [SessionRestoreOutcome.EngineRefused], to stop a permanently-broken session occupying the
+     * conversation's one slot. A queue that was merely busy is not evidence of anything, and
+     * answering it with the same `false` as a refusal is what destroyed valid sessions (TEN-81).
+     *
+     * A [CancellationException] throws instead of being classified (TEN-73): it is not a verdict
+     * on the session either.
      *
      * Serialized on [mutex] like every other queue operation, so it can't race a concurrent
      * [loadModel]/[unloadModel]/[generate] — must be called before [generate].
      */
-    suspend fun restoreSession(path: String): Boolean = mutex.withLock {
-        if (_state.value !is QueueState.ModelReady) return@withLock false
-        val llama = engine as? LlamaKtEngine ?: return@withLock false
+    suspend fun restoreSession(
+        path: String,
+        expectedModel: LoadedModelInfo? = null,
+    ): SessionRestoreOutcome = mutex.withLock {
+        val current = _state.value
+        if (current !is QueueState.ModelReady) return@withLock SessionRestoreOutcome.NotAttempted
+        // The revalidation TEN-81 asks for, and it has to be here rather than at the caller: this
+        // is the only place "the model is X" and "the engine is about to be handed this file" are
+        // true at the same instant, because nothing else can take [mutex] in between.
+        if (expectedModel != null && current.info != expectedModel) {
+            return@withLock SessionRestoreOutcome.NotAttempted
+        }
+        val llama = engine as? LlamaKtEngine ?: return@withLock SessionRestoreOutcome.NotAttempted
         try {
-            llama.loadSession(path)
+            if (llama.loadSession(path)) SessionRestoreOutcome.Restored else SessionRestoreOutcome.EngineRefused
         } catch (e: CancellationException) {
             // As in [saveSession], and worse downstream: `SessionRepository.restore` reads a
-            // `false` from its `restoreOnEngine` as "this session is unusable" and deletes the
+            // refusal from its `restoreOnEngine` as "this session is unusable" and deletes the
             // state file and its row to stop it being retried forever. A cancelled caller would
             // have taken a good session with it (TEN-73).
             throw e
         } catch (e: Exception) {
-            false
+            SessionRestoreOutcome.EngineRefused
         }
     }
 }

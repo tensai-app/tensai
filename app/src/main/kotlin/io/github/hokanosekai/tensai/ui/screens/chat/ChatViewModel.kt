@@ -13,6 +13,7 @@ import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
+import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
@@ -446,15 +447,26 @@ class ChatViewModel(
     }
 
     /**
-     * Resolves the [SessionModelKey] for whatever model is currently loaded, or `null` if none is
-     * loaded or it can't be matched back to a persisted [io.github.hokanosekai.tensai.data.models.ModelEntity]
-     * (by display name — see [currentModelSupportsThinking]'s KDoc for the same by-name-match
-     * caveat this shares).
+     * Resolves the [SessionModelKey] for whatever model is currently loaded, **together with the
+     * [LoadedModelInfo] it was derived from**, or `null` if none is loaded or it can't be matched
+     * back to a persisted [io.github.hokanosekai.tensai.data.models.ModelEntity] (by display name —
+     * see [currentModelSupportsThinking]'s KDoc for the same by-name-match caveat this shares).
+     *
+     * The info is carried out rather than dropped because every restore has to hand it to
+     * [InferenceQueue.restoreSession] as its `expectedModel` (TEN-81): this whole resolution runs
+     * outside the queue's mutex, so the model it describes may be gone by the time the restore
+     * takes the lock, and the key alone — which names a model by *database id* — is not something
+     * the queue can compare against what it has loaded.
      */
-    private suspend fun resolveSessionKey(): SessionModelKey? {
+    private suspend fun resolveSessionKey(): Pair<LoadedModelInfo, SessionModelKey>? {
         val info = inferenceQueue.state.value.residentModel ?: return null
         val model = modelRepository.models.first().find { it.displayName == info.name } ?: return null
-        return SessionModelKey(modelId = model.id, nCtx = info.nCtxEffective, kvCacheType = info.kvCacheType, backend = info.backend)
+        return info to SessionModelKey(
+            modelId = model.id,
+            nCtx = info.nCtxEffective,
+            kvCacheType = info.kvCacheType,
+            backend = info.backend,
+        )
     }
 
     /**
@@ -489,7 +501,10 @@ class ChatViewModel(
      *   saved sessions from Settings while this save was running) does not permit it either, and
      *   for the same reason — nothing was written, so nothing may be restored over. The switch
      *   falling back to a re-prefill is the correct outcome there too: after a purge there is no
-     *   session left to restore into this conversation anyway.
+     *   session left to restore into this conversation anyway. Nor does
+     *   [io.github.hokanosekai.tensai.data.session.SaveResult.NotAttempted] (TEN-78: the queue was
+     *   busy and the engine was never asked) — again nothing on disk, again no restore, but this
+     *   one is the transient case and the switch works on the next attempt.
      *
      * Guarded to only run this last case when [ActiveSessionTracker.current]'s recorded
      * [SessionModelKey] matches this conversation's own (via [resolveSessionKey]): a different key
@@ -502,30 +517,54 @@ class ChatViewModel(
      */
     private suspend fun syncSessionForConversationSwitch() {
         if ((inferenceQueue.kvUsedPercent() ?: 0f) == 0f) {
-            val key = resolveSessionKey() ?: return
-            sessionRepository.restore(conversationId, key)
+            val (info, key) = resolveSessionKey() ?: return
+            restoreOnto(conversationId, key, info)
             return
         }
 
         val (outgoingConversationId, outgoingKey) = ActiveSessionTracker.current.value ?: return
         if (outgoingConversationId == conversationId) return
 
-        val incomingKey = resolveSessionKey() ?: return
+        val (incomingInfo, incomingKey) = resolveSessionKey() ?: return
         if (outgoingKey != incomingKey) return
 
         val saveResult = sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)
         val outgoingStateIsSafe = when (saveResult) {
             is SaveResult.Saved, is SaveResult.Unchanged, SaveResult.NothingToSave -> true
-            is SaveResult.Failed, SaveResult.Discarded -> false
+            // TEN-78 splits what used to be one branch. Both still block the restore, for the one
+            // reason that matters here — nothing was written, so there is nothing to restore over —
+            // but they are not the same event and nothing downstream may conflate them again:
+            // `Failed` is the engine breaking, `NotAttempted` is a queue that was busy and a switch
+            // that simply has to wait for the next turn.
+            is SaveResult.Failed, SaveResult.Discarded, SaveResult.NotAttempted -> false
         }
         if (!outgoingStateIsSafe) return
 
-        sessionRepository.restore(conversationId, incomingKey)
+        restoreOnto(conversationId, incomingKey, incomingInfo)
+    }
+
+    /**
+     * [SessionRepository.restore] against [key], asserting under the queue's own mutex that
+     * [expectedModel] is still what's loaded when the engine is finally handed the file (TEN-81).
+     *
+     * The assertion is the whole reason the engine call is passed in per restore rather than wired
+     * once in `RuntimeGraph`: [key] was validated against [expectedModel] here, outside any lock,
+     * and a `loadModel` finishing in between leaves the queue back on [QueueState.ModelReady] with a
+     * *different* model — which the restore would otherwise have fed one model's KV state to.
+     */
+    private suspend fun restoreOnto(
+        conversationId: String,
+        key: SessionModelKey,
+        expectedModel: LoadedModelInfo,
+    ) {
+        sessionRepository.restore(conversationId, key) { path ->
+            inferenceQueue.restoreSession(path, expectedModel = expectedModel)
+        }
     }
 
     /** Reports this conversation as the one currently bound to the loaded model — see [ActiveSessionTracker]. */
     private suspend fun reportActiveSession() {
-        val key = resolveSessionKey() ?: return
+        val (_, key) = resolveSessionKey() ?: return
         ActiveSessionTracker.report(conversationId, key)
     }
 

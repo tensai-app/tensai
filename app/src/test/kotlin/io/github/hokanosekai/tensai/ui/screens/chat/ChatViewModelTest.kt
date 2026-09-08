@@ -91,7 +91,6 @@ class ChatViewModelTest {
         sessionRepository = SessionRepository(
             dao = sessionDao,
             storageRoot = storageRoot,
-            restoreOnEngine = { path -> inferenceQueue.restoreSession(path) },
             currentTokenCount = { inferenceQueue.currentKvTokenCount() },
         )
         // ActiveSessionTracker is process-wide, mutable state — clear it so no leftover value from

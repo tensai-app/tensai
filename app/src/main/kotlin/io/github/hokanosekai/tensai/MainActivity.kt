@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.withAppLanguage
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
+import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.navigation.TensaiShell
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
@@ -68,22 +69,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** See [AppForegroundTracker] — the other half of [onStop]'s report. */
+    override fun onStart() {
+        super.onStart()
+        AppForegroundTracker.onActivityStarted()
+    }
+
     /**
      * TEN-34's second save trigger: the app going to background. This is the app's only
      * `Activity`, so `onStop` here reliably means "no longer in the foreground" rather than an
      * internal Compose navigation (which never stops the `Activity`) — no
      * `ProcessLifecycleOwner`/extra dependency needed for that distinction.
      *
-     * Best-effort: `lifecycleScope` survives past `onStop` (cancelled on `onDestroy`), so this save
-     * has a chance to finish even though the coroutine isn't awaited here — but a save can still be
-     * cut short if the process is killed for real memory pressure shortly after backgrounding.
-     * There is no stronger guarantee available without extending the foreground service's
-     * lifetime past when a model stops being *used*, which is well beyond this ticket's scope.
+     * **Launched on [RuntimeGraph.applicationScope], not `lifecycleScope`** (TEN-78). The scope is
+     * the whole trigger: `lifecycleScope` is cancelled on `onDestroy`, and leaving by the back
+     * button runs `onStop` and `onDestroy` back to back, so this save was cancelled within
+     * milliseconds of starting and the app's most ordinary exit persisted nothing, ever. It was
+     * "best-effort" in name and never once effected. `applicationScope` is what the swap hook
+     * (`RuntimeGraph.init`) and every `ChatViewModel` already use, for this exact reason, and the
+     * foreground service keeps the process alive while a model is resident — which is precisely as
+     * long as there is any state worth writing.
+     *
+     * Still best-effort in the honest sense: a process killed under real memory pressure shortly
+     * after backgrounding can cut the dump short. `SessionRepository` writes to a temp file and
+     * renames, so what that loses is the save, never the previous session.
+     *
+     * A save is *declined* rather than lost if a generation is still streaming here — the queue
+     * cannot dump mid-decode (see [io.github.hokanosekai.tensai.runtime.InferenceQueue.saveSession])
+     * and answers `SaveResult.NotAttempted`. That case is covered from the other end, by
+     * [io.github.hokanosekai.tensai.runtime.saveSessionAfterBackgroundedGeneration], which is why
+     * the flag below is reported *before* the save is launched.
      */
     override fun onStop() {
         super.onStop()
+        AppForegroundTracker.onActivityStopped()
         val (conversationId, key) = ActiveSessionTracker.current.value ?: return
-        lifecycleScope.launch {
+        RuntimeGraph.applicationScope.launch {
             runCatching {
                 RuntimeGraph.sessionRepository.save(conversationId, key, saveOnEngine = RuntimeGraph.inferenceQueue::saveSession)
             }

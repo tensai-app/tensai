@@ -28,6 +28,20 @@ sealed class SaveResult {
     data object NothingToSave : SaveResult()
 
     /**
+     * Nothing was persisted because `saveOnEngine` was never in a position to try — the queue was
+     * loading a model, streaming a reply, or holding none at all (see
+     * [SessionSaveOutcome.NotAttempted]).
+     *
+     * Distinct from [Failed] on purpose, and that distinction is TEN-78: both mean "nothing on
+     * disk", but nothing went *wrong* here, and no [Throwable] exists to blame. It used to arrive
+     * as `Failed(IllegalStateException("Session save reported failure (returned -1)"))`, which is a
+     * sentence about an engine that was never called. Callers deciding whether live state is safe
+     * to overwrite must treat it like [Failed] — the state was not written — but nothing may report
+     * it to the user as an error, and nothing may conclude anything about the engine from it.
+     */
+    data object NotAttempted : SaveResult()
+
+    /**
      * Nothing was persisted because [SessionRepository.purgeAll] ran while this save was in
      * flight (TEN-38's Settings > Storage > Clear) — the state dump completed, and was then thrown
      * away rather than committed, because the user asked for an empty sessions directory *after*
@@ -81,6 +95,20 @@ sealed class RestoreResult {
      */
     data object Failed : RestoreResult()
 
+    /**
+     * `restoreOnEngine` never asked the engine — see [SessionRestoreOutcome.NotAttempted]. The
+     * session is left exactly as it was, file and row both, and the conversation falls back to a
+     * normal prefill for this turn only.
+     *
+     * The whole of TEN-81 is the gap between this and [Failed]. They used to be the same `false`,
+     * and [Failed]'s answer to it is to delete the state file: a model load overlapping a restore —
+     * the user tapping through to Models mid-save, say — was enough to destroy a valid session
+     * worth 107 s of prefill (TEN-63's measurement, cited in [SessionStoragePolicy]'s KDoc), and
+     * the conversation restarted cold from then on, permanently. A busy queue says nothing about a
+     * session, so nothing is done to it.
+     */
+    data object NotAttempted : RestoreResult()
+
     /** Restored successfully; [tokenCount] mirrors [SessionEntity.tokenCount]. */
     data class Restored(val tokenCount: Int) : RestoreResult()
 }
@@ -90,18 +118,23 @@ sealed class RestoreResult {
  * conversation resume against the engine's KV cache instead of a full re-prefill.
  *
  * Deliberately decoupled from both [io.github.hokanosekai.tensai.engine.LlamaKtEngine] and
- * [io.github.hokanosekai.tensai.runtime.InferenceQueue]: [restoreOnEngine] and [save]'s
- * `saveOnEngine` parameter are plain suspend functions instead, which is what makes this class
- * fully unit-testable with fakes and no Room/Android/native dependency. Callers pass:
- * - `inferenceQueue::restoreSession` for [restoreOnEngine] — restore always happens from outside
- *   any [io.github.hokanosekai.tensai.runtime.InferenceQueue]-held lock, so it must go through that
- *   mutex-protected entry point.
- * - Either `inferenceQueue::saveSession` (a caller outside the queue — the app backgrounding, or
- *   `ChatViewModel` saving the outgoing conversation before a same-model conversation switch,
- *   TEN-62) or the raw `LlamaKtEngine::saveSession` (a caller *inside* `onBeforeModelSwap`, which
- *   already runs under the queue's own mutex and would deadlock calling back into it — see that
- *   hook's KDoc) for [save]'s `saveOnEngine` parameter, depending on which situation triggered the
- *   save.
+ * [io.github.hokanosekai.tensai.runtime.InferenceQueue]: [save]'s `saveOnEngine` and [restore]'s
+ * `restoreOnEngine` are plain suspend functions instead, which is what makes this class fully
+ * unit-testable with fakes and no Room/Android/native dependency. Both are per-call parameters
+ * rather than constructor wiring, because in both directions *which* engine entry point is correct
+ * depends on where the caller is standing:
+ * - [save] takes either `inferenceQueue::saveSession` (a caller outside the queue — the app
+ *   backgrounding, `ChatViewModel` saving the outgoing conversation before a same-model
+ *   conversation switch, TEN-62) or the raw `LlamaKtEngine::saveSession` (a caller *inside*
+ *   `onBeforeModelSwap`, which already runs under the queue's own mutex and would deadlock calling
+ *   back into it — see that hook's KDoc).
+ * - [restore] takes a lambda closing over the [io.github.hokanosekai.tensai.engine.LoadedModelInfo]
+ *   the caller validated [restore]'s `key` against, so the queue can re-check it under its own lock
+ *   (TEN-81 — see [io.github.hokanosekai.tensai.runtime.InferenceQueue.restoreSession]'s
+ *   `expectedModel`). Only the caller knows which model it looked at; this class holds a
+ *   [SessionModelKey], which names a model by database id and cannot be compared to a loaded one.
+ *   Restore always happens from outside any queue-held lock, so it goes through that
+ *   mutex-protected entry point rather than the raw engine.
  *
  * @param storageRoot root directory state files live under (`storageRoot/sessions/`) — the app
  *   passes `context.filesDir`; tests MUST pass a temp directory (see
@@ -116,7 +149,6 @@ sealed class RestoreResult {
 class SessionRepository(
     private val dao: SessionDao,
     storageRoot: File,
-    private val restoreOnEngine: suspend (path: String) -> Boolean,
     private val currentTokenCount: () -> Int? = { null },
 ) {
 
@@ -191,6 +223,10 @@ class SessionRepository(
      * A third, unrelated way (TEN-38): **Discarded**, if [purgeAll] runs between this call
      * starting and it committing — see [SaveResult.Discarded] and [commitMutex].
      *
+     * A fourth (TEN-78): **NotAttempted**, if [saveOnEngine] answers
+     * [SessionSaveOutcome.NotAttempted] because the queue was busy. Not a failure, and specifically
+     * not [SaveResult.Failed] — see that variant's KDoc for the difference and what it cost.
+     *
      * Cancellation is **not** one of the ways this ends in a [SaveResult]: a cancelled
      * [saveOnEngine] re-throws (TEN-73), taking the temp file with it. It is not a failure to
      * report — the caller asked for this — and answering with one would swallow it, leaving a
@@ -210,7 +246,7 @@ class SessionRepository(
     suspend fun save(
         conversationId: String,
         key: SessionModelKey,
-        saveOnEngine: suspend (path: String) -> Int,
+        saveOnEngine: suspend (path: String) -> SessionSaveOutcome,
     ): SaveResult {
         // Read under the lock, together, so a purge can't slip between them: an
         // `existingBeforeSave` row that a purge is about to delete would otherwise let the
@@ -234,7 +270,7 @@ class SessionRepository(
         val finalFile = finalPathFor(conversationId)
         val tempFile = tempPathFor(conversationId)
 
-        val tokenCount = try {
+        val outcome = try {
             saveOnEngine(tempFile.absolutePath)
         } catch (e: CancellationException) {
             // Ahead of the catch below, which would otherwise answer a cancellation with
@@ -246,8 +282,25 @@ class SessionRepository(
             tempFile.delete()
             throw e
         } catch (e: Exception) {
+            // A `saveOnEngine` that throws rather than reporting is the raw-engine wiring
+            // (`LlamaKtEngine::saveSession` throws `InferenceException`); it means the engine tried,
+            // so it lands on [SaveResult.Failed] like [SessionSaveOutcome.EngineFailed] does.
             tempFile.delete()
             return SaveResult.Failed(e)
+        }
+        val tokenCount = when (outcome) {
+            // TEN-78: the queue was never in a position to ask the engine. Nothing was written and
+            // nothing broke — reporting this as a failure is what cancelled a perfectly good
+            // incoming restore every time a reply happened to be streaming.
+            SessionSaveOutcome.NotAttempted -> {
+                tempFile.delete()
+                return SaveResult.NotAttempted
+            }
+            SessionSaveOutcome.EngineFailed -> {
+                tempFile.delete()
+                return SaveResult.Failed(IllegalStateException("Session save reported failure"))
+            }
+            is SessionSaveOutcome.Wrote -> outcome.tokenCount
         }
         if (tokenCount < 0) {
             tempFile.delete()
@@ -305,8 +358,22 @@ class SessionRepository(
      * but only if it was saved against a model/context/KV-cache-type matching [key] — see
      * [RestoreResult.Mismatch]'s KDoc for why that check runs *before* ever calling
      * [restoreOnEngine], not after.
+     *
+     * That ordering is also why [restoreOnEngine] is a per-call parameter and not constructor
+     * wiring: the check above runs against a snapshot, outside any lock the queue holds, and the
+     * caller is the only one who knows which loaded model it read. It closes over that model so the
+     * queue can re-assert it under its own mutex (TEN-81) — see this class's KDoc.
+     *
+     * @param restoreOnEngine hands the state file to the engine. Its
+     *   [SessionRestoreOutcome.EngineRefused] is the *only* answer that self-heals the session off
+     *   disk; [SessionRestoreOutcome.NotAttempted] leaves it strictly alone. See
+     *   [RestoreResult.NotAttempted].
      */
-    suspend fun restore(conversationId: String, key: SessionModelKey): RestoreResult {
+    suspend fun restore(
+        conversationId: String,
+        key: SessionModelKey,
+        restoreOnEngine: suspend (path: String) -> SessionRestoreOutcome,
+    ): RestoreResult {
         val epochAtStart = purgeEpoch.get()
         val entity = dao.getByConversation(conversationId) ?: return RestoreResult.NotFound
 
@@ -320,13 +387,13 @@ class SessionRepository(
             return RestoreResult.Corrupted
         }
 
-        val restored = try {
+        val outcome = try {
             restoreOnEngine(entity.filePath)
         } catch (e: CancellationException) {
             // The same swallow as [save]'s, except this one would destroy data on its way past
-            // (TEN-73): `restored = false` falls into the self-healing branch below, which deletes
-            // this conversation's state file *and* its row. A cancelled caller is no evidence that
-            // the session is unusable — it says nothing about the session at all — so that branch
+            // (TEN-73): a refusal falls into the self-healing branch below, which deletes this
+            // conversation's state file *and* its row. A cancelled caller is no evidence that the
+            // session is unusable — it says nothing about the session at all — so that branch
             // would throw away a good multi-hundred-MB session and re-prefill from scratch forever
             // after.
             //
@@ -337,15 +404,28 @@ class SessionRepository(
             // being wrong is silent data loss, and the next caller need only be scoped normally.
             throw e
         } catch (e: Exception) {
-            false
+            // A `restoreOnEngine` that throws has been asked and could not do it, which is a
+            // verdict on the file — same class as [SessionRestoreOutcome.EngineRefused], and
+            // self-healed the same way. Only [SessionRestoreOutcome.NotAttempted] means "never
+            // asked", and it cannot arrive by exception.
+            SessionRestoreOutcome.EngineRefused
         }
 
-        if (!restored) {
-            commitMutex.withLock {
-                file.delete()
-                dao.delete(conversationId)
+        when (outcome) {
+            // TEN-81, the whole ticket: a queue that was loading, generating, or resident on a
+            // different model than the one [key] was checked against never touched this file. It is
+            // no evidence the session is broken, so nothing is deleted and the caller re-prefills
+            // for this turn only. The self-heal below is for sessions actually shown to be
+            // unusable, and it is not reversible.
+            SessionRestoreOutcome.NotAttempted -> return RestoreResult.NotAttempted
+            SessionRestoreOutcome.EngineRefused -> {
+                commitMutex.withLock {
+                    file.delete()
+                    dao.delete(conversationId)
+                }
+                return RestoreResult.Failed
             }
-            return RestoreResult.Failed
+            SessionRestoreOutcome.Restored -> Unit
         }
 
         commitMutex.withLock {

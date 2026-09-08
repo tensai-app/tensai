@@ -87,7 +87,6 @@ class ChatViewModelTest {
         sessionRepository = SessionRepository(
             dao = db.sessionDao(),
             storageRoot = context.cacheDir,
-            restoreOnEngine = { path -> queue.restoreSession(path) },
         )
         // A dedicated scope per test rather than RuntimeGraph.applicationScope — same idea as
         // InferenceQueueTest's own fresh InferenceQueue per test: no shared state across tests.

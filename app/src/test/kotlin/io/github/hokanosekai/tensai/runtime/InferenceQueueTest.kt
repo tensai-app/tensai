@@ -1,5 +1,7 @@
 package io.github.hokanosekai.tensai.runtime
 
+import io.github.hokanosekai.tensai.data.session.SessionRestoreOutcome
+import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeEvent
@@ -207,19 +209,19 @@ class InferenceQueueTest {
     }
 
     @Test
-    fun saveSessionReturnsNegativeOneWhenNoModelIsLoaded() = runBlocking {
+    fun saveSessionReportsNotAttemptedWhenNoModelIsLoaded() = runBlocking {
         val queue = InferenceQueue(FakeEngine())
 
-        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+        assertEquals(SessionSaveOutcome.NotAttempted, queue.saveSession("/sessions/a.state"))
     }
 
     @Test
-    fun saveSessionReturnsNegativeOneWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
+    fun saveSessionReportsNotAttemptedWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
         val engine = FakeEngine()
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+        assertEquals(SessionSaveOutcome.NotAttempted, queue.saveSession("/sessions/a.state"))
     }
 
     @Test
@@ -228,33 +230,57 @@ class InferenceQueueTest {
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(42, queue.saveSession("/sessions/a.state"))
+        assertEquals(SessionSaveOutcome.Wrote(42), queue.saveSession("/sessions/a.state"))
         assertEquals(listOf("/sessions/a.state"), engine.savedPaths)
     }
 
     @Test
-    fun saveSessionReturnsNegativeOneRatherThanThrowingWhenTheEngineFails() = runBlocking {
+    fun saveSessionReportsEngineFailedRatherThanThrowingWhenTheEngineFails() = runBlocking {
         val engine = FakeLlamaKtEngine(saveThrows = true)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(-1, queue.saveSession("/sessions/a.state"))
+        assertEquals(SessionSaveOutcome.EngineFailed, queue.saveSession("/sessions/a.state"))
+    }
+
+    /**
+     * TEN-78's third case, at the layer that decides it. Mid-generation still declines — see
+     * [InferenceQueue.saveSession]'s KDoc for why that stays — but it must say *which* kind of no
+     * it is. As `-1` it reached `SessionRepository` as "the engine tried and failed", which
+     * `ChatViewModel` answers by cancelling the incoming conversation's restore. A reply streaming
+     * in is not an engine failure, and the app is in that state constantly.
+     */
+    @Test
+    fun saveSessionReportsNotAttemptedRatherThanAFailureWhileGenerating() = runBlocking {
+        val engine = FakeLlamaKtEngine(saveTokens = 42, decodeGate = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        val collectJob = launch { queue.generate(newRequest()).collect { } }
+        withTimeout(2_000) {
+            while (queue.state.value !is QueueState.Generating) delay(5)
+        }
+
+        val outcome = queue.saveSession("/sessions/a.state")
+
+        assertEquals(SessionSaveOutcome.NotAttempted, outcome)
+        assertEquals("the engine must not have been asked at all", emptyList<String>(), engine.savedPaths)
+        collectJob.cancelAndJoin()
     }
 
     @Test
-    fun restoreSessionReturnsFalseWhenNoModelIsLoaded() = runBlocking {
+    fun restoreSessionReportsNotAttemptedWhenNoModelIsLoaded() = runBlocking {
         val queue = InferenceQueue(FakeEngine())
 
-        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+        assertEquals(SessionRestoreOutcome.NotAttempted, queue.restoreSession("/sessions/a.state"))
     }
 
     @Test
-    fun restoreSessionReturnsFalseWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
+    fun restoreSessionReportsNotAttemptedWhenTheEngineIsNotALlamaKtEngine() = runBlocking {
         val engine = FakeEngine()
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+        assertEquals(SessionRestoreOutcome.NotAttempted, queue.restoreSession("/sessions/a.state"))
     }
 
     @Test
@@ -263,17 +289,65 @@ class InferenceQueueTest {
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(true, queue.restoreSession("/sessions/a.state"))
+        assertEquals(SessionRestoreOutcome.Restored, queue.restoreSession("/sessions/a.state"))
         assertEquals(listOf("/sessions/a.state"), engine.loadedPaths)
     }
 
     @Test
-    fun restoreSessionReturnsFalseRatherThanThrowingWhenTheEngineFails() = runBlocking {
+    fun restoreSessionReportsEngineRefusedWhenTheEngineSaysNo() = runBlocking {
+        val engine = FakeLlamaKtEngine(loadResult = false)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        assertEquals(SessionRestoreOutcome.EngineRefused, queue.restoreSession("/sessions/a.state"))
+    }
+
+    @Test
+    fun restoreSessionReportsEngineRefusedRatherThanThrowingWhenTheEngineFails() = runBlocking {
         val engine = FakeLlamaKtEngine(loadThrows = true)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
-        assertEquals(false, queue.restoreSession("/sessions/a.state"))
+        assertEquals(SessionRestoreOutcome.EngineRefused, queue.restoreSession("/sessions/a.state"))
+    }
+
+    /**
+     * TEN-81's worse variant, and why the re-check has to be under [InferenceQueue]'s own mutex.
+     *
+     * The caller validates a session's model/context/KV-cache-type against whatever is loaded, then
+     * calls this — and between the two, a `loadModel` can complete. The queue is back on
+     * [QueueState.ModelReady], so the old guard passed, but over a *different* model. Handing
+     * `loadSession` one model's KV state while another is resident is not a lost session, it is a
+     * corrupt one.
+     */
+    @Test
+    fun restoreSessionRefusesToLoadOntoAModelOtherThanTheOneTheCallerValidatedAgainst() = runBlocking {
+        val engine = FakeLlamaKtEngine(loadResult = true)
+        val queue = InferenceQueue(engine)
+        val loaded = queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        // What the caller checked against, a moment before some other coroutine swapped the model.
+        val staleExpectation = loaded.copy(name = "a-different-model")
+
+        val outcome = queue.restoreSession("/sessions/a.state", expectedModel = staleExpectation)
+
+        assertEquals(SessionRestoreOutcome.NotAttempted, outcome)
+        assertEquals(
+            "a session must never reach loadSession against a model it was not checked against",
+            emptyList<String>(),
+            engine.loadedPaths,
+        )
+    }
+
+    @Test
+    fun restoreSessionProceedsWhenTheExpectedModelIsStillTheResidentOne() = runBlocking {
+        val engine = FakeLlamaKtEngine(loadResult = true)
+        val queue = InferenceQueue(engine)
+        val loaded = queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        val outcome = queue.restoreSession("/sessions/a.state", expectedModel = loaded)
+
+        assertEquals(SessionRestoreOutcome.Restored, outcome)
+        assertEquals(listOf("/sessions/a.state"), engine.loadedPaths)
     }
 
     /**
@@ -586,6 +660,9 @@ class InferenceQueueTest {
         // is the window TEN-73 is about. A fake that returned promptly could never reach it.
         private val saveGate: CompletableDeferred<Unit>? = null,
         private val loadGate: CompletableDeferred<Unit>? = null,
+        // Same idea one layer out: holds the *decode* open so the queue can be observed on
+        // [QueueState.Generating] while a save is issued against it (TEN-78).
+        private val decodeGate: CompletableDeferred<Unit>? = null,
     ) : LlamaKtEngine {
         val savedPaths = mutableListOf<String>()
         val loadedPaths = mutableListOf<String>()
@@ -597,7 +674,7 @@ class InferenceQueueTest {
                 backend = "CPU",
                 kvCacheType = config.kvCacheType,
             ),
-            decodeGate = null,
+            decodeGate = decodeGate,
         )
 
         override fun kvCacheUsedCells(): Int = 0

@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.data.session.SessionRepository
+import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,8 +62,37 @@ object RuntimeGraph {
             ActiveSessionTracker.clear()
             if (snapshot != null) {
                 val (conversationId, key) = snapshot
-                runCatching { sessionRepository.save(conversationId, key, saveOnEngine = llamaEngine::saveSession) }
+                runCatching {
+                    // The raw engine reports a token count and throws on failure, where
+                    // `SessionRepository` now speaks in `SessionSaveOutcome` (TEN-78) — the throw is
+                    // caught there and lands on `SaveResult.Failed`, exactly as before. There is no
+                    // `NotAttempted` to express from here: this hook runs under the queue's mutex
+                    // with the model still resident, so the engine is always asked.
+                    sessionRepository.save(conversationId, key) { path ->
+                        SessionSaveOutcome.Wrote(llamaEngine.saveSession(path))
+                    }
+                }
             }
+        }
+
+        // TEN-78's third save trigger — see [saveSessionAfterBackgroundedGeneration] for why the
+        // other two structurally cannot cover a reply that finishes after the user has left. Same
+        // fire-and-forget shape as the two below, except this one never returns: it collects
+        // [InferenceQueue.state] for the life of the process.
+        applicationScope.launch {
+            saveSessionAfterBackgroundedGeneration(
+                queueState = inferenceQueue.state,
+                isForeground = { AppForegroundTracker.isForeground.value },
+                activeSession = { ActiveSessionTracker.current.value },
+                save = { conversationId, key ->
+                    // Swallowed for the same reason the swap hook's is, plus one specific to a
+                    // long-lived collector: an escaping exception would end the collection and this
+                    // trigger would silently stop existing for the rest of the process.
+                    runCatching {
+                        sessionRepository.save(conversationId, key, saveOnEngine = inferenceQueue::saveSession)
+                    }
+                },
+            )
         }
 
         // This app keeps at most two persisted sessions, table-wide (LRU-2 as of TEN-62; TEN-63
@@ -168,16 +198,17 @@ object RuntimeGraph {
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
 
     /**
-     * Persisted KV-cache/prompt state per conversation (TEN-34) — see [SessionRepository]. Its
-     * [SessionRepository.restore] is wired to [InferenceQueue.restoreSession] rather than the raw
-     * engine, since restoring always happens from outside any lock this queue holds (unlike the
-     * save-before-swap path wired in [init], which runs already inside the queue's mutex).
+     * Persisted KV-cache/prompt state per conversation (TEN-34) — see [SessionRepository].
+     *
+     * Both engine entry points are passed per call rather than wired here, and since TEN-81 that
+     * includes the restore side: only the caller knows which loaded model it validated the session
+     * against, and the queue has to be told so it can re-assert it under its own mutex. `ChatViewModel`
+     * is the only caller of [SessionRepository.restore] and does exactly that.
      */
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(
             dao = database.sessionDao(),
             storageRoot = appContext.filesDir,
-            restoreOnEngine = { path -> inferenceQueue.restoreSession(path) },
             currentTokenCount = { inferenceQueue.currentKvTokenCount() },
         )
     }

@@ -15,6 +15,7 @@ import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.data.session.SessionModelKey
 import io.github.hokanosekai.tensai.data.session.SessionRepository
+import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.runtime.QueueState
@@ -78,7 +79,6 @@ class SettingsViewModelTest {
         sessionRepository = SessionRepository(
             dao = sessionDao,
             storageRoot = dir,
-            restoreOnEngine = { true },
         )
     }
 
@@ -210,7 +210,7 @@ class SettingsViewModelTest {
 
     @Test
     fun clearingSessionsEmptiesTheTableAndReportsWhatItFreed() = runBlocking {
-        sessionRepository.save("c1", key) { path -> File(path).writeText("0123456789"); 10 }
+        sessionRepository.save("c1", key) { path -> File(path).writeText("0123456789"); SessionSaveOutcome.Wrote(10) }
 
         val report = awaitClear(newViewModel())
 
