@@ -236,16 +236,34 @@ Le natif est dominé par le link LTO, qui est séquentiel : passer de 4 à 2 vCP
 coûte que 40 secondes. C'est la bonne nouvelle de la mesure, parce qu'un dépôt
 privé n'a droit qu'au runner 2 vCPU.
 
-Estimation pour un run réel, checkout, `setup-gradle` et sauvegarde du cache
-compris :
+Estimé d'abord à ~9 min au miss et ~7 min au hit, à partir des mesures locales
+ci-dessus. **Le premier run réel a démenti cette estimation d'un facteur deux**,
+et voici ce qu'il a coûté (run du 2026-09-09 sur `931fcfd`, miss de cache) :
 
-| | Durée |
+| Étape | Durée |
 |---|---|
-| Miss de cache | ~9 min |
-| Hit de cache | ~7 min |
+| checkout + sous-modules OpenCL | 49 s |
+| init du sous-module llama.cpp | 34 s |
+| génération des shaders | 2 min 54 |
+| cache, `libOpenCL.so`, java, `setup-gradle` | 16 s |
+| **`assembleDebug`** | **11 min 38** |
+| `lintDebug` | 1 min 58 |
+| démontage | 35 s |
+| **Total** | **18 min 19** |
 
-Le cache économise deux minutes sur neuf. Ce n'est pas lui qui rend le job
-abordable, c'est le filtre de chemins.
+Le `taskset -c 0,1` des mesures locales borne le **nombre** de cœurs mais pas
+leur vitesse : ce sont deux cœurs rapides d'un CPU de bureau, avec beaucoup de
+RAM et un disque véloce. Deux vCPU GitHub sont bien plus lents par cœur. L'écart
+est un facteur 2,4 sur la compilation, et il ne se voyait pas autrement qu'en
+lançant le job pour de vrai.
+
+Ordre de grandeur à retenir : **~18 min au miss, ~15 min au hit** (le hit
+économise la génération des shaders et l'init du sous-module de 155 Mo, soit
+environ 3 min 30).
+
+Le cache pèse donc trois minutes et demie sur dix-huit. Comme prévu, ce n'est pas
+lui qui rend le job abordable, c'est le filtre de chemins — et c'est encore plus
+vrai qu'estimé.
 
 Combien de fois il se déclencherait, compté sur l'historique réel (80 commits du
 2026-08-03 au 2026-09-09) :
@@ -257,11 +275,16 @@ Combien de fois il se déclencherait, compté sur l'historique réel (80 commits
 | dont bumps du sous-module `llama.kt` | 13 |
 | dont uniquement `app/build.gradle.kts` ou `gradle/**` | 9 |
 
-Soit **une vingtaine de runs par mois** au rythme actuel du dépôt, donc
-**~160 min/mois**, plus ~35 pour le cron : de l'ordre de **200 minutes**, 10 %
-d'un quota de 2000. Le double si le travail passe par des PR, chaque changement
-étant alors vu deux fois. `cancel-in-progress` limite la casse sur les pushes
+Soit **une vingtaine de runs par mois** au rythme actuel du dépôt. Aux 15 minutes
+mesurées par run au hit, ça donne **~300 min/mois**, plus ~60 pour le cron : de
+l'ordre de **360 minutes**, soit **18 %** d'un quota de 2000. Le double si le
+travail passe par des PR, chaque changement étant alors vu deux fois — on
+approche alors des 40 %. `cancel-in-progress` limite la casse sur les pushes
 rapprochés.
+
+Ce chiffre a été annoncé à 200 minutes avant le premier run réel, sur la foi des
+mesures locales. Il est faux d'un facteur deux pour la raison expliquée plus
+haut, et c'est celui-ci qui fait foi.
 
 Les 13 bumps de sous-module sont le vrai signal, et il n'est pas théorique :
 TEN-91 et TEN-92 ont tous les deux modifié `tensai_jni.cpp`, qui vit dans
@@ -272,9 +295,17 @@ du wrapper Gradle, qui, elles, décident de la façon dont le natif est invoqué
 empaqueté, et qu'aucun chemin ne permet de distinguer les deux cas.
 
 Si le quota devient un problème, dans l'ordre : retirer `app/build.gradle.kts` et
-`gradle/**` du filtre (−38 % de runs, au prix d'une régression AGP vue une
-semaine plus tard par le cron), puis espacer le cron. Pas le cache, qui ne pèse
-que deux minutes.
+`gradle/**` du filtre, ce qui enlève 38 % des runs, environ **110 minutes par
+mois**, au prix d'une régression AGP vue une semaine plus tard par le cron ;
+puis espacer le cron. Pas le cache, qui ne pèse que trois minutes et demie sur
+dix-huit.
+
+Un levier plus gros existe et n'est pas exploré ici : **`.cxx/` n'est pas mis en
+cache**, donc la compilation CMake repart de zéro à chaque run, et c'est elle
+qui coûte les onze minutes. La mettre en cache demanderait une clé qui capture
+tout ce dont l'objet dépend — sources vendorées, drapeaux, version du NDK — et
+un cache faux à cet endroit produirait un binaire incohérent plutôt qu'un échec
+visible. À ne tenter que si le quota le force, et avec un ticket à part.
 
 ---
 
