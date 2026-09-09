@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: JVM unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # .gitmodules pins llama.kt over SSH, and a runner has no key for it.
+      # Rewriting the scheme here leaves .gitmodules alone, so nothing changes
+      # for anyone cloning locally.
+      - name: Fetch submodules over HTTPS
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 third_party/llama.kt
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Caches ~/.gradle (dependencies) and the build cache across runs.
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      # The instrumented suite can never run here (no ARM runner, and
+      # connectedCheck wipes the models off the device — see docs/ci.md).
+      # Compiling it at least keeps those sources from rotting unnoticed.
+      - name: Compile instrumented test sources
+        run: ./gradlew --no-daemon :app:compileDebugAndroidTestKotlin
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest/
+          retention-days: 14
