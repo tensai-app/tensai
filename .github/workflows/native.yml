@@ -1,0 +1,223 @@
+name: Native
+
+# Le job JVM de ci.yml compile le Kotlin et fait tourner les 409 tests, mais il
+# ne touche jamais au natif : un clone frais n'en est pas capable sans régénérer
+# 202 Mo de shaders SPIR-V et libOpenCL.so, tous deux gitignorés (TEN-93).
+# Ce workflow-ci fait exactement ça, et il est filtré par chemins parce que le
+# dépôt est privé et que ~8 min de runner par commit Kotlin ne se justifient pas.
+#
+# Les chemins retenus sont les seuls de CE dépôt qui peuvent bouger le natif :
+# le pointeur du sous-module llama.kt (où vivent le CMakeLists et les sources
+# cpp/), la config Gradle/NDK, et ce fichier. Une erreur Kotlin, elle, est déjà
+# attrapée par ci.yml. Le cron hebdomadaire rattrape la dérive de l'image du
+# runner quand rien de natif n'a bougé depuis longtemps.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'third_party/**'
+      - '.gitmodules'
+      - 'settings.gradle.kts'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'app/build.gradle.kts'
+      - 'gradle/**'
+      - '.github/workflows/native.yml'
+  pull_request:
+    paths:
+      - 'third_party/**'
+      - '.gitmodules'
+      - 'settings.gradle.kts'
+      - 'build.gradle.kts'
+      - 'gradle.properties'
+      - 'app/build.gradle.kts'
+      - 'gradle/**'
+      - '.github/workflows/native.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  native-build:
+    name: Native build (assembleDebug + lint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Même mécanisme que ci.yml : .gitmodules épingle llama.kt en SSH, un
+      # runner n'a pas de clé. La réécriture ne touche pas le fichier, donc rien
+      # ne change pour un clone local. Elle vaut aussi pour les imbriqués.
+      - name: Fetch submodules over HTTPS
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 third_party/llama.kt
+
+      # OpenCL-Headers est un include du CMakeLists (`${SRC_DIR}/../../../../
+      # third_party/OpenCL-Headers`), OpenCL-ICD-Loader produit le libOpenCL.so
+      # contre lequel llamakt se lie. 2 Mo à deux, ils sont toujours nécessaires.
+      # llama.cpp (155 Mo) n'est PAS initialisé ici : il ne sert qu'à générer les
+      # shaders, donc uniquement quand le cache manque (voir plus bas).
+      - name: Init OpenCL submodules
+        working-directory: third_party/llama.kt
+        run: |
+          git submodule update --init --depth 1 \
+            third_party/OpenCL-Headers third_party/OpenCL-ICD-Loader
+
+      # La version du NDK est lue dans le build.gradle.kts de llama.kt plutôt
+      # que recopiée ici : une seule source de vérité, pas de dérive silencieuse.
+      # glslc vient du NDK, pas d'un paquet système : il est ainsi épinglé par la
+      # même version, et sa sortie SPIR-V ne dépend plus de l'image du runner.
+      - name: Resolve NDK and glslc
+        id: toolchain
+        run: |
+          set -euo pipefail
+          ndk=$(sed -n 's/^ *ndkVersion *= *"\(.*\)"/\1/p' \
+            third_party/llama.kt/llama-kt/build.gradle.kts)
+          [ -n "$ndk" ] || { echo "ndkVersion introuvable"; exit 1; }
+          echo "NDK $ndk"
+
+          if [ ! -d "$ANDROID_HOME/ndk/$ndk" ]; then
+            echo "absent de l'image, installation"
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk"
+          fi
+
+          glslc="$ANDROID_HOME/ndk/$ndk/shader-tools/linux-x86_64/glslc"
+          [ -x "$glslc" ] || { echo "glslc absent du NDK: $glslc"; exit 1; }
+          "$glslc" --version
+
+          echo "glslc=$glslc" >> "$GITHUB_OUTPUT"
+          # Nomme la version de glslc dans la clé de cache : le NDK 27 embarque
+          # shaderc v2022.3, les paquets système v2026.2, et 131 des 136 fichiers
+          # diffèrent entre les deux. Du SPIR-V valide dans les deux cas, mais
+          # mélanger les deux toolchains dans un même build serait indébogable.
+          echo "glslc_id=$("$glslc" --version | head -1 | tr -c '[:alnum:].' '-')" \
+            >> "$GITHUB_OUTPUT"
+
+      # Le SHA épinglé se lit dans l'index de llama.kt, sans checkouter les
+      # 155 Mo : c'est ce qui permet de décider du cache avant de payer.
+      - name: Resolve pinned llama.cpp revision
+        id: llamacpp
+        working-directory: third_party/llama.kt
+        run: |
+          set -euo pipefail
+          sha=$(git ls-tree HEAD third_party/llama.cpp | awk '{print $3}')
+          [ -n "$sha" ] || { echo "gitlink llama.cpp introuvable"; exit 1; }
+          echo "llama.cpp $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # 202 Mo sur disque, ~21 Mo une fois compressés par le cache.
+      # Restore/save séparés : on n'enregistre qu'après avoir vérifié que la
+      # génération est complète, pour ne jamais figer un jeu partiel.
+      - name: Restore generated Vulkan shaders
+        id: shader-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/shaders
+            third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/ggml-vulkan-shaders.hpp
+          key: vk-shaders-${{ steps.llamacpp.outputs.sha }}-${{ steps.toolchain.outputs.glslc_id }}
+
+      - name: Init llama.cpp submodule
+        if: steps.shader-cache.outputs.cache-hit != 'true'
+        working-directory: third_party/llama.kt
+        run: git submodule update --init --depth 1 third_party/llama.cpp
+
+      # Section Vulkan de bootstrap.sh, réduite à ce dont un build a besoin.
+      # Procédure documentée dans le README ; la garder en phase avec lui.
+      # Le jeu de variantes est figé par le CMakeLists de vulkan-shaders-gen —
+      # aucun GGML_VULKAN_*_GLSLC_SUPPORT n'est passé, donc pas d'autodétection
+      # des capacités de l'hôte, donc une sortie qui ne dépend que de la clé.
+      - name: Generate Vulkan shaders
+        if: steps.shader-cache.outputs.cache-hit != 'true'
+        env:
+          GLSLC: ${{ steps.toolchain.outputs.glslc }}
+        run: |
+          set -euo pipefail
+          KT=third_party/llama.kt
+          SRC=$KT/third_party/llama.cpp/ggml/src/ggml-vulkan/vulkan-shaders
+          OUT=$KT/llama-kt/src/main/cpp/ggml-vulkan
+          WORK="$RUNNER_TEMP/vk"
+          mkdir -p "$WORK/spv" "$WORK/out" "$OUT/shaders"
+
+          cmake -S "$SRC" -B "$WORK/gen" -DCMAKE_BUILD_TYPE=Release -Wno-dev >/dev/null
+          cmake --build "$WORK/gen" -j"$(nproc)" >/dev/null
+
+          "$WORK/gen/vulkan-shaders-gen" \
+            --output-dir "$WORK/spv" --target-hpp "$WORK/out/ggml-vulkan-shaders.hpp"
+
+          for comp in "$SRC"/*.comp; do
+            "$WORK/gen/vulkan-shaders-gen" \
+              --glslc "$GLSLC" --source "$comp" --output-dir "$WORK/spv" \
+              --target-hpp "$WORK/out/ggml-vulkan-shaders.hpp" \
+              --target-cpp "$WORK/out/$(basename "$comp").cpp"
+          done
+
+          cp "$WORK/out/ggml-vulkan-shaders.hpp" "$OUT/"
+          for f in "$WORK/out"/*.comp.cpp; do
+            sed 's|#include "ggml-vulkan-shaders.hpp"|#include "../ggml-vulkan-shaders.hpp"|g' \
+              "$f" > "$OUT/shaders/$(basename "$f")"
+          done
+
+          rm -rf "$WORK"
+
+      # Vaut pour le hit comme pour le miss : un cache tronqué se verrait ici,
+      # pas trois minutes plus tard dans une erreur de link illisible.
+      - name: Check shader set is complete
+        run: |
+          set -euo pipefail
+          OUT=third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan
+          test -s "$OUT/ggml-vulkan-shaders.hpp"
+          n=$(find "$OUT/shaders" -name '*.comp.cpp' | wc -l)
+          echo "$n fichiers .comp.cpp"
+          [ "$n" -eq 136 ] || { echo "attendu 136"; exit 1; }
+
+      - name: Save generated Vulkan shaders
+        if: steps.shader-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/shaders
+            third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/ggml-vulkan-shaders.hpp
+          key: ${{ steps.shader-cache.outputs.cache-primary-key }}
+
+      # Quelques secondes, sans dépendance à mettre en cache.
+      - name: Build libOpenCL.so
+        run: ./third_party/llama.kt/scripts/build-opencl.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Ce que le job JVM ne peut pas garantir : que le CMake de llama.kt, les
+      # sources cpp/ vendorées, les shaders générés et libOpenCL.so tiennent
+      # ensemble, et qu'il en sort un APK.
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      # Bloqué jusqu'ici pour la même raison que le natif : lintDebug dépend de
+      # :llama-kt:buildCMakeDebug. Une minute de plus sur un job qui en coûte
+      # sept, et c'est le seul endroit où il peut tourner.
+      - name: Android lint
+        run: ./gradlew --no-daemon :app:lintDebug
+
+      # L'APK fait 215 Mo : pas d'artefact, le stockage est facturé sur un dépôt
+      # privé et « ça compile » est tout ce qu'on attend d'ici.
+      - name: Upload lint report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          retention-days: 14
