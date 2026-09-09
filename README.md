@@ -71,8 +71,9 @@ Then:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Needing these two artifacts is also what keeps the native build out of CI, see
-[docs/ci.md](docs/ci.md).
+CI does the same thing, in `.github/workflows/native.yml`: it regenerates both
+and caches the shaders. Keep that workflow and the snippet above in step with
+each other, see [docs/ci.md](docs/ci.md).
 
 Target hardware: arm64-v8a only, minSdk 29.
 
