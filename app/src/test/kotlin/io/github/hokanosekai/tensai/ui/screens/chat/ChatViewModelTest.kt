@@ -32,8 +32,8 @@ import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -70,9 +70,16 @@ class ChatViewModelTest {
     private lateinit var modelRepository: ModelRepository
     private lateinit var sessionRepository: SessionRepository
 
+    /**
+     * The job every [ChatViewModel] built here launches under — and the only thing that launches
+     * under it. That exclusivity is the whole point of it: see [awaitGeneration].
+     */
+    private lateinit var viewModelJob: Job
+
     @Before
     fun setUp() {
         storageRoot = Files.createTempDirectory("tensai-chatviewmodel-test").toFile()
+        viewModelJob = Job()
         chatDao = FakeChatDao()
         modelDao = FakeModelDao()
         sessionDao = FakeSessionDao()
@@ -100,17 +107,28 @@ class ChatViewModelTest {
 
     @After
     fun tearDown() {
+        // Cancelled rather than joined: anything still running is dispatched on the event loop of
+        // the `runBlocking` that has just returned, so nothing is left to resume it and a join here
+        // would wait for good. Every test that has something to wait for has already waited for it
+        // — see [awaitGeneration].
+        viewModelJob.cancel()
         storageRoot.deleteRecursively()
         ActiveSessionTracker.clear()
     }
 
+    /**
+     * Launches on the test's own thread — [runBlocking]'s event loop, which is what keeps the
+     * in-memory fakes below confined to one thread and free of locking — but under [viewModelJob]
+     * rather than the receiver's job, so [awaitGeneration] has something to join that holds the
+     * generations and nothing else.
+     */
     private fun CoroutineScope.newViewModel(conversationId: String) = ChatViewModel(
         conversationId = conversationId,
         chatRepository = chatRepository,
         inferenceQueue = inferenceQueue,
         modelRepository = modelRepository,
         sessionRepository = sessionRepository,
-        scope = this,
+        scope = CoroutineScope(this.coroutineContext + viewModelJob),
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false) {
@@ -155,24 +173,69 @@ class ChatViewModelTest {
     }
 
     /**
-     * Polls (like the `androidTest` suite's own tests) until [conversationId] has [expectedCount]
-     * messages and its last one is [settled] — by default, that it has stats, i.e. that it
-     * finished. A decode that failed never gets stats (TEN-52), so those tests pass a predicate of
-     * their own rather than waiting five seconds for something that will not happen.
+     * Waits for whatever [ChatViewModel] launched — a [ChatViewModel.send], a
+     * [ChatViewModel.regenerate] — to be over.
+     *
+     * Both are fire-and-forget: they start a coroutine and return, so an assertion written straight
+     * after one is a race between the test thread and a generation, settled by nothing but which of
+     * the two the machine happens to run first. Polling for the outcome under a budget does not
+     * remove that race — it gives the generation a head start and calls a slow machine a bug.
+     *
+     * [viewModelJob] has no children but those coroutines, and each of them ends only once
+     * `streamInto`'s `finally` has run to the end: the last (`NonCancellable`) write of the row,
+     * with its stats and its [io.github.hokanosekai.tensai.engine.StopReason], and then
+     * [ChatViewModel.error]. So joining them is the generation being *finished*, including the
+     * parts that happen after [InferenceQueue.state] has already dropped back to
+     * [QueueState.ModelReady] — and every assertion that follows one can be a single read.
      */
-    private suspend fun waitForAssistantReply(
-        conversationId: String,
-        expectedCount: Int,
-        settled: (MessageEntity) -> Boolean = { it.tokensGenerated != null },
-    ): List<MessageEntity> =
+    private suspend fun awaitGeneration() {
+        viewModelJob.children.toList().forEach { it.join() }
+    }
+
+    /**
+     * [awaitGeneration], then [conversationId]'s messages read once.
+     *
+     * [expectedCount] is asserted rather than waited for, and that is the whole difference from the
+     * loop this replaces: if the join were not a real happens-before, this would fail on every run
+     * instead of one in two.
+     *
+     * There is no "settled" predicate any more and none is needed. After the join the last row is
+     * whatever the generation left behind for good — with stats if it finished, without if it
+     * failed (TEN-52) — so the tests that used to pass a predicate of their own simply assert on it.
+     */
+    private suspend fun awaitAssistantReply(conversationId: String, expectedCount: Int): List<MessageEntity> {
+        awaitGeneration()
+        val messages = chatRepository.observeMessages(conversationId).first()
+        assertEquals("the generation is over, so this is the whole conversation", expectedCount, messages.size)
+        return messages
+    }
+
+    /**
+     * Waits for a reply to *start*: [conversationId] holding the user's message and an assistant row
+     * with something in it.
+     *
+     * The one wait here that cannot be a join, because its two callers hold the decode open
+     * ([FakeLlamaKtEngine.hangBeforeTerminal]) precisely so they can stop it mid-stream — the
+     * coroutine to join is the one that must not have finished. A suspension on the message flow all
+     * the same, not a poll: it resumes on the write that persists the first token, and the first
+     * token is always persisted (the throttle window starts open). The budget bounds an event that
+     * could genuinely never arrive — a decode that emits nothing at all — which is what a timeout is
+     * for, rather than a stand-in for synchronisation.
+     */
+    private suspend fun awaitStreamingReply(conversationId: String) {
         withTimeout(5_000) {
-            var current = chatRepository.observeMessages(conversationId).first()
-            while (current.size < expectedCount || !settled(current.last())) {
-                delay(10)
-                current = chatRepository.observeMessages(conversationId).first()
-            }
-            current
+            chatRepository.observeMessages(conversationId).first { it.size >= 2 && it.last().content.isNotEmpty() }
         }
+    }
+
+    /**
+     * Waits for the queue to report the generation started — a suspension on its own [StateFlow]
+     * where this was a poll. Not a join either, and for the same reason as [awaitStreamingReply]:
+     * the tests that need it are holding the decode open on purpose.
+     */
+    private suspend fun awaitGenerating() {
+        withTimeout(5_000) { inferenceQueue.state.first { it is QueueState.Generating } }
+    }
 
     @Test
     fun switchingToADifferentConversationAgainstTheSameModelSavesOutgoingAndAttemptsToRestoreIncoming() = runBlocking {
@@ -182,13 +245,13 @@ class ChatViewModelTest {
 
         val viewModelA = newViewModel(conversationA)
         viewModelA.send("hi from A")
-        waitForAssistantReply(conversationA, expectedCount = 2)
+        awaitAssistantReply(conversationA, expectedCount = 2)
 
         assertNull("no switch has happened yet, nothing should be saved", sessionDao.getByConversation(conversationA))
 
         val viewModelB = newViewModel(conversationB)
         viewModelB.send("hi from B")
-        waitForAssistantReply(conversationB, expectedCount = 2)
+        awaitAssistantReply(conversationB, expectedCount = 2)
 
         assertTrue(
             "switching away from A while its cache was live must save A's session",
@@ -217,7 +280,7 @@ class ChatViewModelTest {
         val conversationB = chatRepository.createConversation(modelId = null)
 
         newViewModel(conversationA).send("hi from A")
-        waitForAssistantReply(conversationA, expectedCount = 2)
+        awaitAssistantReply(conversationA, expectedCount = 2)
         assertEquals(
             "the tracked session must name the quantisation that is loaded",
             OLDER_MODEL_ID,
@@ -227,7 +290,7 @@ class ChatViewModelTest {
         // Switching away is what commits that key to disk (TEN-62), which is where a wrong id
         // stops being a wrong number and becomes a session another model can be handed.
         newViewModel(conversationB).send("hi from B")
-        waitForAssistantReply(conversationB, expectedCount = 2)
+        awaitAssistantReply(conversationB, expectedCount = 2)
 
         assertEquals(
             "the saved session must be stamped with the loaded model's own id",
@@ -253,16 +316,16 @@ class ChatViewModelTest {
         val conversationB = chatRepository.createConversation(modelId = null)
 
         newViewModel(conversationA).send("hi from A")
-        waitForAssistantReply(conversationA, expectedCount = 2)
+        awaitAssistantReply(conversationA, expectedCount = 2)
         newViewModel(conversationB).send("hi from B")
-        waitForAssistantReply(conversationB, expectedCount = 2)
+        awaitAssistantReply(conversationB, expectedCount = 2)
         assertTrue("precondition: A's session must be on disk to be restorable at all", sessionDao.getByConversation(conversationA) != null)
 
         // The swap the user makes to compare the two: same model, other file. The queue comes back
         // on an empty cache, so A's next turn takes the cold-start restore path.
         loadImportedModel(MODEL_ID)
         newViewModel(conversationA).send("back in A")
-        waitForAssistantReply(conversationA, expectedCount = 4)
+        awaitAssistantReply(conversationA, expectedCount = 4)
 
         assertEquals(
             "the other quantisation's KV state was handed to this model",
@@ -282,9 +345,9 @@ class ChatViewModelTest {
         val viewModelA = newViewModel(conversationA)
 
         viewModelA.send("first turn")
-        waitForAssistantReply(conversationA, expectedCount = 2)
+        awaitAssistantReply(conversationA, expectedCount = 2)
         viewModelA.send("second turn")
-        waitForAssistantReply(conversationA, expectedCount = 4)
+        awaitAssistantReply(conversationA, expectedCount = 4)
 
         assertNull(
             "two turns in the same conversation must never trigger a save — the cache is already this conversation's own",
@@ -300,12 +363,12 @@ class ChatViewModelTest {
 
         val viewModelA = newViewModel(conversationA)
         viewModelA.send("hi from A")
-        waitForAssistantReply(conversationA, expectedCount = 2)
+        awaitAssistantReply(conversationA, expectedCount = 2)
 
         engine.saveShouldFail = true
         val viewModelB = newViewModel(conversationB)
         viewModelB.send("hi from B")
-        val messagesB = waitForAssistantReply(conversationB, expectedCount = 2)
+        val messagesB = awaitAssistantReply(conversationB, expectedCount = 2)
 
         assertNull(
             "a failed save must leave no session on disk for the outgoing conversation — TEN-34's guarantee",
@@ -336,7 +399,7 @@ class ChatViewModelTest {
         val conversation = chatRepository.createConversation(modelId = null)
 
         newViewModel(conversation).send("2+2?")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("four", reply.content)
         assertEquals("let me count", reply.thinking)
@@ -358,7 +421,7 @@ class ChatViewModelTest {
         val conversation = chatRepository.createConversation(modelId = null)
 
         newViewModel(conversation).send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("the answer", reply.content)
         assertEquals("step one", reply.thinking)
@@ -375,7 +438,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("hi", reply.content)
         assertEquals(StopReason.Complete.name, reply.stopReason)
@@ -407,11 +470,12 @@ class ChatViewModelTest {
         viewModel.send("hi")
         // The first token is always persisted (the throttle window starts open), so this lands
         // once the reply is streaming and before any terminal event can arrive.
-        waitForAssistantReply(conversation, expectedCount = 2) { it.content.isNotEmpty() }
+        awaitStreamingReply(conversation)
         viewModel.stop()
-        withTimeout(5_000) {
-            while (inferenceQueue.state.value !is QueueState.ModelReady) delay(10)
-        }
+        // Not the queue leaving `Generating`: it does that in `generate`'s own `finally`, which runs
+        // *before* the collector's — the write that persists this partial reply and its
+        // `StopReason.Cancelled` is still to come. Joining the generation is what waits for that.
+        awaitGeneration()
 
         val reply = chatRepository.observeMessages(conversation).first().last()
         assertEquals("half an answer", reply.content)
@@ -444,7 +508,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
         // The generation is over by now; this is the late tap.
         viewModel.stop()
 
@@ -475,12 +539,11 @@ class ChatViewModelTest {
         val viewModelB = newViewModel(conversationB)
 
         viewModelA.send("hi")
-        waitForAssistantReply(conversationA, expectedCount = 2) { it.content.isNotEmpty() }
+        awaitStreamingReply(conversationA)
         // The user is looking at B and presses the only button on offer.
         viewModelB.stop()
-        withTimeout(5_000) {
-            while (inferenceQueue.state.value !is QueueState.ModelReady) delay(10)
-        }
+        // A's generation, joined from B's screen — same reason as the test above.
+        awaitGeneration()
 
         val reply = chatRepository.observeMessages(conversationA).first().last()
         assertEquals("half an answer", reply.content)
@@ -510,9 +573,7 @@ class ChatViewModelTest {
         val viewModelB = newViewModel(conversationB)
 
         viewModelA.send("hi")
-        withTimeout(5_000) {
-            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
-        }
+        awaitGenerating()
 
         assertTrue("A is generating, and A is where the stop belongs", viewModelA.canStop.first())
         assertFalse(
@@ -537,9 +598,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        withTimeout(5_000) {
-            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
-        }
+        awaitGenerating()
 
         val reopened = newViewModel(conversation)
         assertTrue("the reply on screen is still this conversation's", reopened.canStop.first())
@@ -574,7 +633,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals(StopReason.ContextBudgetClipped.name, reply.stopReason)
         assertEquals(
@@ -606,7 +665,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("2+2?")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("the partial reply must survive the failure", "the answer is ", reply.content)
         assertEquals(StopReason.Failed.name, reply.stopReason)
@@ -637,9 +696,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        withTimeout(5_000) {
-            while (viewModel.error.value == null) delay(10)
-        }
+        awaitGeneration()
 
         assertEquals(ChatError.GenerationFailed, viewModel.error.value)
         val messages = chatRepository.observeMessages(conversation).first()
@@ -666,9 +723,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        withTimeout(5_000) {
-            while (viewModel.error.value == null) delay(10)
-        }
+        awaitGeneration()
 
         assertEquals(ChatError.GenerationFailed, viewModel.error.value)
         assertEquals(1, chatRepository.observeMessages(conversation).first().size)
@@ -691,23 +746,19 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        withTimeout(5_000) {
-            while (viewModel.error.value == null) delay(10)
-        }
+        awaitGeneration()
         assertEquals(ChatError.GenerationFailed, viewModel.error.value)
 
         engine.scriptedEvents = null
-        // Sent in a loop rather than once: `send` is a deliberate no-op while the previous
-        // generation's job is still winding down, and the banner is raised on that job's very last
-        // statement — the wait above can return a heartbeat before it completes. The second call
-        // is the no-op, not a second user message: the guard holds until the append has landed.
-        withTimeout(5_000) {
-            while (chatRepository.observeMessages(conversation).first().size < 2) {
-                viewModel.send("try again")
-                delay(10)
-            }
-        }
-        val messages = waitForAssistantReply(conversation, expectedCount = 3)
+        // Sent once, and that is an assertion now rather than a convenience. The loop this replaces
+        // was there because the wait above returned while the failed generation's job was still
+        // winding down — the banner is raised on that job's very last statement — so the first
+        // `send` could land on `generationJob?.isActive == true` and be dropped on the floor. That
+        // was the test compensating for its own wait, not for anything undecided in production:
+        // `send` no-ops exactly while a generation is running, and [awaitGeneration] is that being
+        // over. If it were ever dropped again, the count below says so instead of hiding it.
+        viewModel.send("try again")
+        val messages = awaitAssistantReply(conversation, expectedCount = 3)
 
         assertEquals("assistant", messages.last().role)
         assertEquals("hi", messages.last().content)
@@ -743,25 +794,26 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }
+        awaitAssistantReply(conversation, expectedCount = 2)
         assertEquals(ChatError.ContextWindowFull, viewModel.error.value)
 
         engine.scriptedEvents = null
-        // Looped for the same reason as the test above; the redone reply is the default script's
-        // "hi", which is what tells it apart from the clipped one it replaces.
-        withTimeout(5_000) {
-            var last = chatRepository.observeMessages(conversation).first().last()
-            while (last.content != "hi" || last.stopReason == null) {
-                viewModel.regenerate()
-                delay(10)
-                last = chatRepository.observeMessages(conversation).first().last()
-            }
-        }
+        // Called once, for the reason the test above sends once — and the loop was covering a
+        // second race of its own here: the clipped row is written with its stop reason *before*
+        // [ChatViewModel.error] is raised, so the wait it used to follow could return with the
+        // banner not yet up, and `regenerate` was then a no-op on a job still winding down.
+        viewModel.regenerate()
+        val messages = awaitAssistantReply(conversation, expectedCount = 2)
 
         assertEquals(
             "the redone reply replaces the clipped one rather than being appended to it",
             2,
-            chatRepository.observeMessages(conversation).first().size,
+            messages.size,
+        )
+        assertEquals(
+            "and it is the redone one — the default script's \"hi\", not the clipped text",
+            "hi",
+            messages.last().content,
         )
         assertNull(
             "the window banner described the reply that was just thrown away",
@@ -796,7 +848,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2) { it.stopReason != null }.last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("the partial reply survives, unchanged", "here is the ", reply.content)
 
@@ -841,7 +893,7 @@ class ChatViewModelTest {
         chatRepository.setSampling(conversation, custom)
 
         newViewModel(conversation).send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         val sampling = engine.lastRequest!!.sampling
         assertEquals(0.1f, sampling.temperature, 1e-6f)
@@ -865,7 +917,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
 
         viewModel.send("first")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
         assertEquals(
             "an untouched conversation generates on the defaults",
             SamplingConfig().temperature,
@@ -875,7 +927,7 @@ class ChatViewModelTest {
 
         chatRepository.setSampling(conversation, SamplingConfig(temperature = 0.05f, stopSequences = listOf("STOP")))
         viewModel.send("second")
-        waitForAssistantReply(conversation, expectedCount = 4)
+        awaitAssistantReply(conversation, expectedCount = 4)
 
         assertEquals(0.05f, engine.lastRequest!!.sampling.temperature, 1e-6f)
         assertEquals(listOf("STOP"), engine.lastRequest!!.sampling.stopSequences)
@@ -891,7 +943,7 @@ class ChatViewModelTest {
 
         chatRepository.resetSampling(conversation)
         viewModel.send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         assertEquals(SamplingConfig().temperature, engine.lastRequest!!.sampling.temperature, 1e-6f)
         assertEquals(SamplingConfig().maxTokens, engine.lastRequest!!.sampling.maxTokens)
@@ -913,9 +965,7 @@ class ChatViewModelTest {
         assertTrue("precondition: the toggle shows while idle", viewModel.currentModelSupportsThinking.first())
 
         viewModel.send("hi")
-        withTimeout(5_000) {
-            while (inferenceQueue.state.value !is QueueState.Generating) delay(10)
-        }
+        awaitGenerating()
 
         assertTrue(
             "the loaded model is still loaded while it generates — the toggle must not disappear",
@@ -938,7 +988,7 @@ class ChatViewModelTest {
         chatRepository.setSampling(conversation, SamplingConfig(maxTokens = 300))
 
         newViewModel(conversation).send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         val sampling = engine.lastRequest!!.sampling
         val budget = sampling.reasoningBudget!!
@@ -964,7 +1014,7 @@ class ChatViewModelTest {
         chatRepository.setEnableThinking(conversation, enabled = false)
 
         newViewModel(conversation).send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         val sampling = engine.lastRequest!!.sampling
         assertNull("no split without thinking", sampling.reasoningBudget)
@@ -985,7 +1035,7 @@ class ChatViewModelTest {
         chatRepository.setEnableThinking(conversation, enabled = true)
 
         newViewModel(conversation).send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         val sampling = engine.lastRequest!!.sampling
         assertEquals("the blob still carries the knobs", 0.05f, sampling.temperature, 1e-6f)
@@ -1004,7 +1054,7 @@ class ChatViewModelTest {
         chatDao.updateConversation(chatDao.getConversation(conversation)!!.copy(samplingJson = "{\"temperature\":0.4,"))
 
         newViewModel(conversation).send("hi")
-        val reply = waitForAssistantReply(conversation, expectedCount = 2).last()
+        val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
 
         assertEquals("hi", reply.content)
         assertEquals(SamplingConfig().temperature, engine.lastRequest!!.sampling.temperature, 1e-6f)
@@ -1018,7 +1068,7 @@ class ChatViewModelTest {
         chatRepository.setSystemPrompt(conversation, "You answer in haiku.")
 
         newViewModel(conversation).send("hi")
-        waitForAssistantReply(conversation, expectedCount = 2)
+        awaitAssistantReply(conversation, expectedCount = 2)
 
         val first = engine.lastRequest!!.messages.first()
         assertEquals(MessageRole.System, first.role)
