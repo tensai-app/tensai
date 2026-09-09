@@ -51,6 +51,49 @@ class InlineMathTest {
     }
 
     @Test
+    fun aLoneVariableAndABareArithmeticLineAreMathsWithNoLatexInThemAtAll() {
+        // Measured on the device: of the 64 `$…$` runs in one phone's history, these 8 were the
+        // ones the marker rule turned away, and every one of them is maths. `$k$` names a
+        // variable, the rest are the arithmetic a model shows its work with.
+        assertEquals(listOf(MathSpan.Plain("k")), mathSpans("\$k\$"))
+        assertEquals(listOf(MathSpan.Plain("k = k+1")), mathSpans("\$k = k+1\$"))
+        assertEquals(listOf(MathSpan.Plain("340 + 68 = 408")), mathSpans("\$340 + 68 = 408\$"))
+        assertEquals(listOf(MathSpan.Plain("10 + 7")), mathSpans("\$10 + 7\$"))
+        // In the sentence they actually arrive in: nothing here needs a span of its own, so what
+        // the reader gains is exactly the two delimiters going away.
+        assertEquals(
+            listOf(MathSpan.Plain("On pose k = k+1 à chaque tour.")),
+            mathSpans("On pose \$k = k+1\$ à chaque tour."),
+        )
+    }
+
+    @Test
+    fun aPriceIsStillNotAFormulaHoweverItsDelimitersSit() {
+        // The bill for reading `$340 + 68 = 408$`: everything below is padded symmetrically, so
+        // the padding rule waves it all through and this one rule is the whole defence. Turning
+        // prose into a formula is worse than leaving a formula unread — "$5-$10" rendered as
+        // "5-10" is a price with its currency silently deleted.
+        for (prose in listOf(
+            "costs \$5 and \$7",
+            "costs \$5-\$10 today",
+            "the \$5/\$10 tier",
+            "costs US\$100 and CA\$100",
+            "tarif \$10-\$20 par \$mois",
+            "prices (\$5)(\$10)",
+            // French writes the sign after the amount, which pads both delimiters and leaves the
+            // operator at an end of the run.
+            "de 5 \$ + 10 \$ de taxes",
+            "de 5 \$ a 10 \$",
+            "export \$HOME before \$PATH",
+            // The structural exclusion covers a code span; this is the same shell written as
+            // prose, where nothing structural saves it and `PATH` sits tight between two dollars.
+            "echo \$PATH\$HOME",
+        )) {
+            assertEquals(listOf(MathSpan.Plain(prose)), mathSpans(prose))
+        }
+    }
+
+    @Test
     fun aShellVariableInACodeBlockIsNeverReachedAtAll() {
         // The exclusion is structural, not a rule inside mathSpans: a fenced block carries its
         // content as a literal with no Text child, so walking the tree the way MarkdownText does

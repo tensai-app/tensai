@@ -61,10 +61,17 @@ internal sealed interface MathSpan {
  * grows only along the layout-free edge and never past it.
  *
  * Three conservative rules keep ordinary prose out of this, and none of them may be traded for
- * another: each catches a class the other two miss.
+ * another: each catches a class the other two miss, and the classes are named here so the claim
+ * can be checked. "$5-$10" is padded symmetrically at both ends and only the first rule refuses
+ * it; "export $HOME_DIR before $PATH" carries a `_` and only the second does.
  *
- * A single `$` only opens a formula when the run between it and its closing `$` holds a `\`, `_`
- * or `^`. A price ("costs $5 and $7") carries no such marker and stays literal.
+ * A single `$` only opens a formula when the run between it and its closing `$` reads as maths —
+ * see [looksLikeMaths]. A `\`, `_` or `^` says so; so does a single atom, `$k$`; so does an
+ * operator with an operand on either side of it, `$k = k+1$`. What that leaves out is a price,
+ * and it leaves it out on purpose: "costs $5 and $7" holds `5 and ` between the delimiters, which
+ * names no operator, and "$5-$10" holds `5-`, whose operator has nothing to its right. Prose sets
+ * its `$` against the amount and its separator just before the next one, so the separator lands at
+ * an end of the run, where this does not read it.
  *
  * The padding must match at both ends — see [paddingIsSymmetric]. Models write `$ x_1 $` far more
  * often than `$x_1$`, so padding cannot disqualify a run; what it can do is tell maths from prose
@@ -73,7 +80,7 @@ internal sealed interface MathSpan {
  * A `$` with no partner at all stays literal, which is what every generation looks like while the
  * token after `$H_B` has not arrived yet, and a formula never spans a line break.
  *
- * `$$…$$` is unambiguous enough to skip the marker rule, but not the other two. What is left of a
+ * `$$…$$` is unambiguous enough to skip that first rule, but not the other two. What is left of a
  * run once its padding is trimmed is what gets read, so `$ x_1 $` draws no wider than `$x_1$`.
  *
  * Code is excluded structurally rather than by a rule here: [MarkdownText] only ever calls this
@@ -225,9 +232,48 @@ private fun findClosingDelimiter(source: String, contentStart: Int, delimiter: S
 private fun paddingIsSymmetric(raw: String): Boolean =
     raw.firstOrNull()?.isWhitespace() == raw.lastOrNull()?.isWhitespace()
 
-/** Whether a `$…$` run carries enough LaTeX to be worth reading as one — see [mathSpans]. */
+/**
+ * Whether a `$…$` run says enough for itself to be worth reading as maths (TEN-90, device QA).
+ *
+ * A `\`, `_` or `^` is the loudest way it can say so, and for a while it was the only one this
+ * accepted — until a phone's own history showed 8 of its 64 inline runs turned away for want of
+ * one: `$k$`, `$k = k+1$`, `$340 + 68 = 408$`, `$10 + 7$`. A lone variable and a line of arithmetic
+ * are maths in any hand, so two more shapes count: a run that is one atom — see [isAtom] — and a
+ * run that spells an operator with an operand on either side — see [hasInfixOperator].
+ *
+ * The [mathSpans] header lists what stays out; the short of it is that prose leaves its separator
+ * at an end of the run, never between two operands.
+ */
 private fun looksLikeMaths(formula: String, display: Boolean): Boolean =
-    display || formula.any { it == '\\' || it == '_' || it == '^' }
+    display ||
+        formula.any { it == '\\' || it == '_' || it == '^' } ||
+        formula.isAtom() ||
+        formula.hasInfixOperator()
+
+/**
+ * Whether this run is the one alphanumeric atom a variable is written as: a lone letter or digit,
+ * `$k$`, or anything carrying a digit, `$408$`, `$x1$`.
+ *
+ * A bare multi-letter word does not count, and that exclusion is the whole of the care here:
+ * `echo $PATH$HOME` written outside a code span leaves `PATH` between two dollars, tight at both
+ * ends, and nothing else in this file would refuse it.
+ */
+private fun String.isAtom(): Boolean =
+    all(Char::isLetterOrDigit) && (length == 1 || any(Char::isDigit))
+
+/**
+ * Whether this run spells one of `= + - * / < >` with an operand on either side of it.
+ *
+ * `k = k+1` does. The `5-` a price range leaves between the delimiters of "$5-$10" does not, and
+ * neither does the `+ 10` of "5 $ + 10 $ de taxes", the French postfix spelling: both put their
+ * operator at an end, because the amount owns the `$` next to it. Any operator in the run will do,
+ * so `-x + y` still reads on the strength of its `+`.
+ */
+private fun String.hasInfixOperator(): Boolean = indices.any { at ->
+    this[at] in "=+-*/<>" &&
+        take(at).any { !it.isWhitespace() } &&
+        drop(at + 1).any { !it.isWhitespace() }
+}
 
 /** Reads a formula's body, or `null` when any part of it is outside the vocabulary. */
 private fun readFormula(formula: String): List<MathSpan>? {
