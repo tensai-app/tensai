@@ -18,7 +18,6 @@ import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
@@ -189,16 +188,15 @@ class ModelDeleteGuardTest {
     }
 
     /**
-     * Starts a generation that never finishes on its own and returns once [queue] actually reads
-     * [QueueState.Generating] — polled rather than assumed, the same way `InferenceQueueTest` does
-     * it. Callers cancel the returned [Job].
+     * Starts a generation that never finishes on its own and returns once the engine's decode has
+     * actually begun — the engine says so ([FakeEngine.inDecode]) rather than the test asking the
+     * state over and over. [InferenceQueue] publishes [QueueState.Generating] under its mutex
+     * before it calls decode, so this point is past it (TEN-94). Callers cancel the returned [Job].
      */
     private suspend fun CoroutineScope.launchGenerationAndWaitUntilItIsRunning(): Job {
         val request = DecodeRequest(messages = listOf(ChatMessage(role = MessageRole.User, content = "hi")))
         val job = launch { queue.generate(request).collect { } }
-        withTimeout(TIMEOUT_MS) {
-            while (queue.state.value !is QueueState.Generating) delay(POLL_MS)
-        }
+        withTimeout(TIMEOUT_MS) { engine.inDecode.await() }
         return job
     }
 
@@ -252,6 +250,9 @@ class ModelDeleteGuardTest {
      * echoes back whatever [ModelLoadConfig.modelId] it was loaded with, as the real engine does.
      */
     private class FakeEngine : InferenceEngine {
+        /** Completed on entering the decode: the signal a test waits on instead of polling. */
+        val inDecode = CompletableDeferred<Unit>()
+
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             override val metadata = LoadedModelInfo(
                 name = MODEL_NAME,
@@ -262,6 +263,7 @@ class ModelDeleteGuardTest {
             )
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
+                inDecode.complete(Unit)
                 emit(DecodeEvent.Token("…"))
                 CompletableDeferred<Unit>().await()
                 emit(DecodeEvent.Done(DecodeStats(tokensGenerated = 1, tokPerSec = 1f, ttftMs = 1L)))
@@ -277,6 +279,5 @@ class ModelDeleteGuardTest {
         const val MODEL_ID = "model-1"
         const val MODEL_NAME = "resident-model"
         const val TIMEOUT_MS = 2_000L
-        const val POLL_MS = 5L
     }
 }

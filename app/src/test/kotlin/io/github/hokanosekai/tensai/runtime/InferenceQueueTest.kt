@@ -169,7 +169,8 @@ class InferenceQueueTest {
     @Test
     fun aRepeatLoadOfTheResidentModelLeavesTheGenerationInFlightAlone() = runBlocking {
         val decodeGate = CompletableDeferred<Unit>()
-        val engine = FakeEngine(decodeGate = decodeGate)
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = decodeGate, decodeEntered = inDecode)
         val queue = InferenceQueue(engine)
         val config = ModelLoadConfig(path = "/models/a.gguf")
         val loaded = queue.loadModel(config)
@@ -177,9 +178,7 @@ class InferenceQueueTest {
         val events = mutableListOf<DecodeEvent>()
 
         val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { events += it } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
 
         val again = withTimeout(2_000) { queue.loadModel(config) }
 
@@ -201,14 +200,13 @@ class InferenceQueueTest {
     @Test
     fun concurrentGenerateCallsRejectTheSecondWithQueueBusy() = runBlocking {
         val decodeGate = CompletableDeferred<Unit>()
-        val engine = FakeEngine(decodeGate = decodeGate)
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = decodeGate, decodeEntered = inDecode)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
         val firstJob = launch { queue.generate(newRequest()).collect { } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
 
         val secondEvents = queue.generate(newRequest()).toList()
         val rejected = secondEvents.singleOrNull() as? DecodeEvent.Error
@@ -243,14 +241,13 @@ class InferenceQueueTest {
      */
     @Test
     fun cancelActiveStopsAGenerationAndSettlesBackToModelReady() = runBlocking {
-        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = CompletableDeferred(), decodeEntered = inDecode)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
 
         val collectJob = launch { queue.generate(newRequest()).collect { } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
 
         queue.cancelActive()
 
@@ -268,15 +265,14 @@ class InferenceQueueTest {
      */
     @Test
     fun cancelActiveMarksTheStopSignalOfTheGenerationItCancels() = runBlocking {
-        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = CompletableDeferred(), decodeEntered = inDecode)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
         val stopSignal = GenerationStopSignal()
 
         val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
         assertFalse("nothing has been asked of it yet", stopSignal.wasRequested)
 
         queue.cancelActive()
@@ -293,15 +289,14 @@ class InferenceQueueTest {
      */
     @Test
     fun aGenerationCancelledByAModelSwapIsNotMarkedAsStopped() = runBlocking {
-        val engine = FakeEngine(decodeGate = CompletableDeferred())
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = CompletableDeferred(), decodeEntered = inDecode)
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
         val stopSignal = GenerationStopSignal()
 
         val collectJob = launch { queue.generate(newRequest(), stopSignal).collect { } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
 
         queue.loadModel(ModelLoadConfig(path = "/models/b.gguf"))
         withTimeout(2_000) { collectJob.join() }
@@ -353,13 +348,16 @@ class InferenceQueueTest {
      */
     @Test
     fun saveSessionReportsNotAttemptedRatherThanAFailureWhileGenerating() = runBlocking {
-        val engine = FakeLlamaKtEngine(saveTokens = 42, decodeGate = CompletableDeferred())
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeLlamaKtEngine(
+            saveTokens = 42,
+            decodeGate = CompletableDeferred(),
+            decodeEntered = inDecode,
+        )
         val queue = InferenceQueue(engine)
         queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
         val collectJob = launch { queue.generate(newRequest()).collect { } }
-        withTimeout(2_000) {
-            while (queue.state.value !is QueueState.Generating) delay(5)
-        }
+        withTimeout(2_000) { inDecode.await() }
 
         val outcome = queue.saveSession("/sessions/a.state")
 
@@ -779,6 +777,8 @@ class InferenceQueueTest {
         // Completed once a load is inside the uninterruptible native section below, which is the
         // only way a test can cancel the caller in the window TEN-82 is about.
         private val loadEntered: CompletableDeferred<Unit>? = null,
+        // Same idea for the decode — see [FakeLoadedModel.decodeEntered].
+        private val decodeEntered: CompletableDeferred<Unit>? = null,
     ) : InferenceEngine {
         var loadCallCount = 0
             private set
@@ -808,6 +808,7 @@ class InferenceQueueTest {
                         kvCacheType = config.kvCacheType,
                     ),
                     decodeGate,
+                    decodeEntered,
                     onFree = { freeCount++ },
                 )
             }
@@ -822,9 +823,15 @@ class InferenceQueueTest {
     private class FakeLoadedModel(
         override val metadata: LoadedModelInfo,
         private val decodeGate: CompletableDeferred<Unit>?,
+        // Completed on entering the decode, before the gate below is waited on. [InferenceQueue]
+        // publishes the active job and [QueueState.Generating] under its mutex *before* calling
+        // decode, so a test that awaits this is standing at a point where the queue is provably
+        // generating — no poll, and no guess about how fast the machine is (TEN-94).
+        private val decodeEntered: CompletableDeferred<Unit>? = null,
         private val onFree: () -> Unit = {},
     ) : LoadedModel {
         override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
+            decodeEntered?.complete(Unit)
             decodeGate?.await()
             emit(DecodeEvent.Done(DecodeStats(tokensGenerated = 0, tokPerSec = 0f, ttftMs = 0)))
         }
@@ -855,6 +862,8 @@ class InferenceQueueTest {
         // Same idea one layer out: holds the *decode* open so the queue can be observed on
         // [QueueState.Generating] while a save is issued against it (TEN-78).
         private val decodeGate: CompletableDeferred<Unit>? = null,
+        // And the matching signal that the decode has started — see [FakeLoadedModel.decodeEntered].
+        private val decodeEntered: CompletableDeferred<Unit>? = null,
     ) : LlamaKtEngine {
         val savedPaths = mutableListOf<String>()
         val loadedPaths = mutableListOf<String>()
@@ -867,6 +876,7 @@ class InferenceQueueTest {
                 kvCacheType = config.kvCacheType,
             ),
             decodeGate = decodeGate,
+            decodeEntered = decodeEntered,
         )
 
         override fun kvCacheUsedCells(): Int = 0
