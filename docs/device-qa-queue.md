@@ -746,3 +746,53 @@ classique). Le contraste entre les deux est ce qui donne la réponse.
 Ça coûte deux commandes et ça décide de la lecture de trois tickets, TEN-88,
 TEN-68 et TEN-92. Les protocoles §17 et §17 bis mesurent des `n_past` dont
 l'interprétation dépend entièrement de cette réponse.
+
+### 18 bis. Ce que la passe device du 2026-09-09 a donné, et ce qu'elle a raté
+
+**Rendu : vérifié bon.** Sur la conversation « Ecris la formule quadratique »,
+les deux blocs display rendent sous leurs labels en gras, l'inline n'a pas bougé,
+et le point que §18 donnait pour douteux est levé : `\quad` s'affiche bien en
+espace cadratin et `\text{et}` rend « et ». U+2003 passe dans TensaiSans.
+
+Le bloc de raisonnement, ouvert, rend aussi ses paragraphes et son math inline
+(TEN-89).
+
+**Ce que cette conversation ne montrait pas, et que l'utilisateur a vu ailleurs.**
+Dans « What is 2+2? », ce bloc s'affichait brut, délimiteurs compris :
+
+```
+$$
+\text{index} = (\text{hash}(key) + k^2) \mod \text{tableSize}
+$$
+```
+
+`\mod` n'était pas dans le vocabulaire, et une seule commande inconnue fait
+retomber toute la formule sur sa source. Corrigé en `10bdee2`.
+
+**La leçon de protocole, plus importante que le correctif** : une seule
+conversation ne suffit pas à valider un rendu. Le corpus entier se lit en base,
+et il fallait le faire d'abord :
+
+```sql
+SELECT c.title, m.role, length(m.content)
+FROM messages m JOIN conversations c ON c.id = m.conversationId
+WHERE m.content LIKE '%$$%' OR m.content LIKE '%' || char(92) || 'frac%';
+```
+
+Et le recensement des commandes réellement écrites, qui dit quoi ajouter :
+
+```bash
+sqlite3 tensai.db "SELECT content FROM messages WHERE role='assistant';
+                   SELECT coalesce(thinking,'') FROM messages;" > corpus.txt
+grep -oE '\\[a-zA-Z]+' corpus.txt | sort | uniq -c | sort -rn
+```
+
+Au 2026-09-09, sur 129 Ko : `\times` 20, `\text` 10, `\quad` 2, `\mod` 1. Rien
+d'autre. À rejouer après chaque session d'usage réel — c'est ce recensement qui
+dit si le vocabulaire dérive, et non l'impression laissée par un écran.
+
+**Piège de mesure rencontré, à ne pas repayer** : le tag logcat de la couche
+`rn-*` est **`RNLlama`**, pas `TensaiJNI`. Un filtre `TensaiJNI:V "*:S"` tait
+`loadPrompt`, `Input processed` et l'avertissement de §19. Prendre les deux tags.
+Et `LOG_VERBOSE` est compilé out (`RNLLAMA_VERBOSE != 1`), donc `prompt ingested`
+ne sortira jamais : c'est `Input processed`, en `LOG_INFO`, qu'il faut chercher.
