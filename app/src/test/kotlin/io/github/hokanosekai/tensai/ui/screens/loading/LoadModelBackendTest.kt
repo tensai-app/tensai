@@ -22,12 +22,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -138,9 +137,14 @@ class LoadModelBackendTest {
         )
     }
 
-    private suspend fun awaitLoad(): ModelLoadConfig = withTimeout(5_000) {
-        while (engine.lastConfig == null) delay(10)
-        engine.lastConfig!!
+    /**
+     * [LoadModelViewModel.start] is fire-and-forget on [scope], which this test owns — so joining
+     * the job it launched is the load being over, rather than polling for it under a budget that
+     * turns a slow machine into a failed test (TEN-42, same fix as `SettingsViewModelTest`).
+     */
+    private suspend fun awaitLoad(): ModelLoadConfig {
+        scope.coroutineContext.job.children.toList().forEach { it.join() }
+        return requireNotNull(engine.lastConfig) { "the load finished without reaching the engine" }
     }
 
     private fun model(file: File, architecture: String) = ModelEntity(

@@ -25,12 +25,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -214,20 +213,26 @@ class LoadModelContextTest {
         )
     }
 
-    private suspend fun awaitLoad(): ModelLoadConfig = withTimeout(5_000) {
-        while (engine.lastConfig == null) delay(10)
-        engine.lastConfig!!
+    /**
+     * [LoadModelViewModel.start] is fire-and-forget on [scope], which this test owns — so joining
+     * the jobs it launched is the load being over, rather than polling for it under a budget that
+     * turns a slow machine into a failed test (TEN-42, same fix as `SettingsViewModelTest`).
+     */
+    private suspend fun awaitViewModel() {
+        scope.coroutineContext.job.children.toList().forEach { it.join() }
     }
 
-    private suspend inline fun <reified T : LoadUiState> LoadModelViewModel.awaitState(): T =
-        withTimeout(5_000) {
-            var current = state.value
-            while (current !is T) {
-                delay(10)
-                current = state.value
-            }
-            current
-        }
+    private suspend fun awaitLoad(): ModelLoadConfig {
+        awaitViewModel()
+        return requireNotNull(engine.lastConfig) { "the load finished without reaching the engine" }
+    }
+
+    /** The state a settled [LoadModelViewModel] came to rest in — see [awaitViewModel]. */
+    private suspend inline fun <reified T : LoadUiState> LoadModelViewModel.awaitState(): T {
+        awaitViewModel()
+        return state.value as? T
+            ?: throw AssertionError("expected ${T::class.simpleName}, was ${state.value}")
+    }
 
     /**
      * The reference device's Gemma-4-E2B-It: 2.9 GB of weights, and a KV cache measured at ~17 MiB

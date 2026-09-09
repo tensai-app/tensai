@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -57,6 +56,8 @@ class SettingsViewModelTest {
     private lateinit var dir: File
     private lateinit var storeJob: Job
     private lateinit var storeScope: CoroutineScope
+    private lateinit var viewModelJob: Job
+    private lateinit var viewModelScope: CoroutineScope
 
     private lateinit var themeStore: DataStore<Preferences>
     private lateinit var languageStore: DataStore<Preferences>
@@ -72,6 +73,11 @@ class SettingsViewModelTest {
         dir = Files.createTempDirectory("tensai-settings-vm-test").toFile()
         storeJob = Job()
         storeScope = CoroutineScope(storeJob + Dispatchers.IO)
+        // Deliberately *not* the store scope: this one holds nothing but the coroutines the view
+        // model launches, so joining its children is exactly "the writes are done" and nothing
+        // else. See [awaitWrites].
+        viewModelJob = Job()
+        viewModelScope = CoroutineScope(viewModelJob + Dispatchers.IO)
         themeStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "theme.preferences_pb") }
         languageStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "language.preferences_pb") }
         backendStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "backend.preferences_pb") }
@@ -84,6 +90,7 @@ class SettingsViewModelTest {
 
     @After
     fun tearDown() = runBlocking {
+        viewModelJob.cancelAndJoin()
         storeJob.cancelAndJoin()
         dir.deleteRecursively()
         Unit
@@ -129,17 +136,14 @@ class SettingsViewModelTest {
         val viewModel = newViewModel()
 
         viewModel.setThemeMode(ThemeMode.Dark)
+        awaitWrites()
 
         // A second, independent repository over the same store — the same instance `MainActivity`
         // collects, since RuntimeGraph hands out one. No restart, no invalidation: the value
         // simply arrives on the next emission of the flow the theme is already collected from,
-        // which is what "applied live" means at this level. (Awaited rather than read once: the
-        // write runs on the view model's scope, so the tap and the emission are not the same
-        // instant — on screen that gap is a frame.)
-        assertEquals(
-            ThemeMode.Dark,
-            withTimeout(10_000) { ThemeRepository(themeStore).themeMode.first { it == ThemeMode.Dark } },
-        )
+        // which is what "applied live" means at this level. (On screen the tap and the emission
+        // are not the same instant — that gap is a frame; here it is [awaitWrites].)
+        assertEquals(ThemeMode.Dark, ThemeRepository(themeStore).themeMode.first())
     }
 
     @Test
@@ -147,11 +151,9 @@ class SettingsViewModelTest {
         val viewModel = newViewModel()
 
         viewModel.setBackend(BackendPreference.Cpu)
+        awaitWrites()
 
-        assertEquals(
-            BackendPreference.Cpu,
-            withTimeout(10_000) { BackendRepository(backendStore).preference.first { it == BackendPreference.Cpu } },
-        )
+        assertEquals(BackendPreference.Cpu, BackendRepository(backendStore).preference.first())
         assertEquals(
             "and it comes back out of the view model too, rather than being written and forgotten",
             BackendPreference.Cpu,
@@ -164,11 +166,9 @@ class SettingsViewModelTest {
         val viewModel = newViewModel()
 
         viewModel.setLanguage(AppLanguage.French)
+        awaitWrites()
 
-        assertEquals(
-            AppLanguage.French,
-            withTimeout(10_000) { LanguageRepository(languageStore).language.first { it == AppLanguage.French } },
-        )
+        assertEquals(AppLanguage.French, LanguageRepository(languageStore).language.first())
     }
 
     // ---- storage ----
@@ -228,11 +228,34 @@ class SettingsViewModelTest {
         assertNull(sessionDao.getByConversation("nothing"))
     }
 
+    /**
+     * Waits for the work [SettingsViewModel] launched on [viewModelScope] to finish.
+     *
+     * The setters are fire-and-forget — `scope.launch { repository.set… }` — so the tap returns
+     * long before the store has been written. Without this, an assertion right after the tap is a
+     * race between the test thread and the write, and the only thing settling it is which of the
+     * two the machine happens to run first. Polling the flow with a timeout does not remove that
+     * race, it just gives the write a head start and calls a slow machine a bug.
+     *
+     * [viewModelJob] has no children but those coroutines (the DataStores run on [storeJob]), and
+     * each of them completes only once `DataStore.edit` has returned — which is *after* the value
+     * has been written and published to the cache the next read serves from. So joining them is
+     * the write being finished, not a guess at how long it takes, and every assertion that follows
+     * one can be a single read rather than a wait.
+     */
+    private suspend fun awaitWrites() {
+        viewModelJob.children.toList().forEach { it.join() }
+    }
+
     /** [SettingsViewModel.clearSessions] launches on the view model's scope — wait for its result. */
     private suspend fun awaitClear(viewModel: SettingsViewModel): PurgeReport {
         val report = CompletableDeferred<PurgeReport>()
         viewModel.clearSessions { report.complete(it) }
-        return withTimeout(10_000) { report.await() }
+        awaitWrites()
+        // The purge coroutine is over; if it ended without calling back, that is the bug, and it
+        // should read as one rather than hang the suite on a `await()` that will never return.
+        assertTrue("clearSessions finished without reporting", report.isCompleted)
+        return report.await()
     }
 
     private fun newViewModel(
@@ -241,7 +264,7 @@ class SettingsViewModelTest {
         queueState: Flow<QueueState> = flowOf(QueueState.Idle),
         fileSize: (String) -> Long? = { 100L },
     ) = SettingsViewModel(
-        scope = storeScope,
+        scope = viewModelScope,
         themeRepository = ThemeRepository(themeStore),
         languageRepository = LanguageRepository(languageStore),
         backendRepository = BackendRepository(backendStore),
