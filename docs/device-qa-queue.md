@@ -550,3 +550,126 @@ pas de la perf mais de la qualité de sortie — et sans seed, aucune mesure de
 qualité n'est reproductible. À traiter avant toute comparaison A/B de sampling.
 
 ---
+
+## 16. TEN-91 — un GGUF corrompu doit refuser l'import, pas tuer le process
+
+Le correctif rend `nativeReadGgufMetadata` incapable de laisser une exception C++
+traverser la frontière JNI. La preuve demande un fichier qui déclenche le défaut,
+et ce fichier est fabriqué, pas trouvé : un `.gguf` minimal dont
+`general.name` contient une séquence d'octets qui n'est pas de l'UTF-8 valide.
+Le builder le laisse en fixture dans le dépôt, chemin donné dans son rapport.
+
+**Attention avant de commencer** : ce ticket a deux chemins d'atteinte et le
+second est le dangereux.
+
+1. **Import.** Pousser la fixture sur le device et l'importer par le sélecteur
+   de fichiers. Attendu : la carte d'erreur « ce n'est probablement pas un
+   fichier GGUF » (`ImportFailure`, TEN-39), l'app debout, aucun `Fatal signal`
+   dans logcat.
+
+2. **Backfill au démarrage.** C'est celui qui brique l'app, et c'est celui qu'il
+   ne faut **pas** provoquer sur l'installation de l'utilisateur avant d'avoir
+   vérifié le point 1. `KvCacheShapeBackfill` relit l'en-tête de chaque modèle
+   en base quand `TENSAI_KV_SHAPE_VERSION` a changé — un fichier corrompu en base
+   tue alors le process à chaque lancement, en boucle, sans écran ni message.
+   Ne le tester qu'après avoir confirmé que le point 1 tient, et savoir d'avance
+   comment sortir : supprimer la ligne du modèle corrompu en base, jamais
+   `pm clear` (efface les modèles, 6,5 Go).
+
+Filtre logcat utile :
+
+```
+adb logcat -c && adb logcat | grep -E 'readMetadata|Fatal signal|type_error|terminate'
+```
+
+Attendu : zéro `Fatal signal`, zéro `terminate`, et un message d'erreur nommé
+côté Kotlin.
+
+---
+
+## 17. TEN-92 — la session sauvegardée doit contenir ce que le cache contient
+
+Le correctif borne `n_tokens` par `n_past` à la sauvegarde. L'écart n'apparaît
+que sur une génération qui **ne finit pas par EOS** : stop word ou budget de
+tokens atteint (écart de 1), ou annulation mi-graphe (écart de tout ce qui
+restait à décoder).
+
+**Protocole**, dans cet ordre — l'ordre compte, le cas EOS ne prouve rien :
+
+1. Générer une réponse volontairement close par le budget de tokens. Le
+   `stopReason` persisté en base doit dire `ResponseBudgetExhausted` ou
+   `TokenBudget`, pas `Eos`. Ne pas se fier au bouton Envoyer pour savoir si la
+   génération est finie — lire `stopReason` en base.
+2. Mettre l'app en arrière-plan pour déclencher la sauvegarde, relever la taille
+   du fichier `.llamastate`.
+3. Redémarrer à froid, rouvrir la conversation, envoyer un message.
+4. Lire la ligne que le natif journalise déjà :
+
+```
+adb logcat | grep -E 'nativeLoadSession|Input processed'
+```
+
+Attendu : `loaded N tokens` puis un `n_past` **stable d'une restauration à
+l'autre**. Avant le correctif, chaque cycle sauvegarde/restauration décale d'un
+cran de plus, donc la dérive se voit en répétant les points 1 à 4 deux fois de
+suite et en comparant les deux `n_past`.
+
+**Ce que ce test ne prouve pas** : que le préfixe réutilisé est *grand*. Il sera
+petit sur un modèle qui raisonne, et c'est TEN-88, pas ce ticket. Ici on vérifie
+seulement qu'il ne **glisse** pas.
+
+## 18. TEN-90 — les blocs display, deuxième passe
+
+Première passe : l'inline rend (`ax² + bx + c = 0`, `x₁ et x₂` lus à l'écran),
+les blocs `$$…$$` restaient bruts. Cause trouvée avec un `cat -A` du message
+stocké : deux espaces en fin de ligne après le label en gras font un hard line
+break, donc commonmark met le `StrongEmphasis` du label et tout le bloc dans
+**un seul paragraphe**, et la règle tout-ou-rien du paragraphe faisait décliner
+la formule. La règle porte désormais sur la portée entre les délimiteurs.
+
+À vérifier à l'écran, sur la conversation « Combien font 17 x 24 ? Explique » :
+
+- les deux blocs sous leurs labels en gras sont rendus, le label restant gras ;
+- l'inline n'a pas bougé (il marchait déjà, c'est le contrôle de non-régression
+  qui compte le plus ici) ;
+- `\quad` entre deux équations d'une même ligne.
+
+**Le point douteux est `\quad`.** Il est rendu par U+2003 (`InlineMath.kt:368`),
+et rien ne dit que TensaiSans porte ce glyphe. Le repli de police d'Android
+couvre normalement les espaces sans laisser de tofu, mais c'est une hypothèse,
+pas une mesure. Si le cadratin s'affiche en carré ou disparaît, la correction
+est une ligne dans la table de `InlineMath.kt` — pas la peine d'aller chercher
+plus loin.
+
+Ce que cette passe ne peut pas casser : décliner laisse le LaTeX brut à
+l'écran, ce qui est laid mais honnête. Le seul défaut qui justifierait un revert
+serait une formule **rendue différemment de ce que le modèle a écrit**, et c'est
+ce que l'assertion `x = ` + `$PATH` + ` + 1` garde en JVM.
+
+### 17 bis. Le court-circuit `Unchanged` devient vivant pour la première fois
+
+Trouvé en corrigeant TEN-92, et c'est un second défaut que le correctif révèle
+plutôt qu'un effet de bord.
+
+`SessionRepository.save` court-circuite quand rien n'a bougé : même
+conversation, même `modelId`, même `nCtx`, même `kvCacheType`, et surtout même
+compte de tokens. Le compte vivant remonte à `nativeKvCacheUsedCells`, donc à
+`n_past`. Le compte stocké, lui, valait `embd.size()`.
+
+Sur une génération close par stop word ou par `n_predict` — le cas courant — les
+deux diffèrent de 1 **par construction**. L'égalité était donc systématiquement
+fausse et la dedup ne s'est **jamais** déclenchée depuis qu'elle existe : chaque
+sauvegarde réécrivait plusieurs centaines de Mo pour rien.
+
+Avec le clamp, les deux côtés lisent le même nombre.
+
+À vérifier sur device, en même temps que §17 :
+
+- deux sauvegardes d'affilée **sans génération entre les deux** doivent donner
+  un `SaveResult.Unchanged` et **aucune** réécriture du fichier. Comparer le
+  `mtime` du `.llamastate` avant et après suffit.
+
+Le seul risque connu est bénin et n'est pas traité : régénérer une réponse de
+longueur identique au token près ferait sauter la sauvegarde et laisserait un
+fichier qui décrit l'ancienne réponse. Le préfixe commun du prefill suivant
+rattrape ça par un prefill plus long, pas par de la corruption.
