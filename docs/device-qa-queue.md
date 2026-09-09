@@ -686,3 +686,63 @@ Le seul risque connu est bénin et n'est pas traité : régénérer une réponse
 longueur identique au token près ferait sauter la sauvegarde et laisserait un
 fichier qui décrit l'ancienne réponse. Le préfixe commun du prefill suivant
 rattrape ça par un prefill plus long, pas par de la corruption.
+
+## 19. Le cache de préfixe est-il vidé en entier à chaque tour ? Un grep répond
+
+Sorti d'une recherche externe sur TEN-88, le 2026-09-09. **C'est la mesure la
+moins chère de ce document et potentiellement la plus importante.**
+
+`rn-completion.cpp:158` réutilise le préfixe commun en retirant du cache tout ce
+qui suit :
+
+```cpp
+bool cache_remove_success = llama_memory_seq_rm(kv, 0, n_past, -1);
+
+// For hybrid models (LFM-2, Granite, Mamba, etc.), partial cache removal may fail
+if (!cache_remove_success) {
+    LOG_WARNING("Partial cache removal failed (likely hybrid/recurrent model), doing full cache clear");
+    llama_memory_clear(kv, false);
+    embd.clear();
+    n_past = 0;
+```
+
+Or `common/common.h:911-915` définit quatre capacités de contexte, dont
+`COMMON_CONTEXT_SEQ_RM_TYPE_FULL` = « ne sait retirer que des séquences
+entières ». Elle est déterminée par **sonde à l'exécution**
+(`common/common.cpp:1459`), pas par métadonnée de modèle. **Rien dans notre
+arbre ne consulte cette sonde** : on appelle `seq_rm` et on lit son booléen.
+
+Si le contexte est `FULL`, alors **toute divergence, même d'un token, vide le
+cache en entier** et le prefill repart de zéro. La réutilisation de préfixe ne
+fonctionne alors jamais, pour aucune raison, indépendamment du raisonnement.
+
+La famille concernée en amont est celle des modèles hybrides, récurrents et
+**SWA**. Gemma-4 utilise une attention à fenêtre glissante (`llama_kv_cache_iswa`,
+voir §1 et TEN-18). Ça ne prouve rien, ça désigne un suspect.
+
+### La mesure
+
+```
+adb logcat -c
+# une conversation de deux tours, même modèle, sans redémarrer l'app
+adb logcat -d | grep -E "Partial cache removal|prompt ingested, n_past"
+```
+
+Deux issues, et elles ne veulent pas dire la même chose du tout :
+
+- **le warning apparaît** : la réutilisation de préfixe n'existe pas sur ce
+  modèle. C'est un défaut bien plus grave que TEN-88, ça explique TEN-68 mieux
+  que la re-segmentation BPE, et ça rend le système de sessions entièrement
+  inutile pour ce modèle. À ficher immédiatement.
+- **le warning n'apparaît pas** et `n_past` est non nul : le retrait partiel
+  marche, le seul problème est bien la divergence du raisonnement de TEN-88, et
+  l'analyse de ce ticket tient.
+
+À faire sur **Gemma-4** (suspect, SWA) **et** sur Qwen3 (témoin, attention
+classique). Le contraste entre les deux est ce qui donne la réponse.
+
+### Pourquoi ça se fait avant tout le reste
+
+Ça coûte deux commandes et ça décide de la lecture de trois tickets, TEN-88,
+TEN-68 et TEN-92. Les protocoles §17 et §17 bis mesurent des `n_past` dont
+l'interprétation dépend entièrement de cette réponse.
