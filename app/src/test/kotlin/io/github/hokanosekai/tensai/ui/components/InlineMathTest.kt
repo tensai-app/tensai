@@ -1,11 +1,14 @@
 package io.github.hokanosekai.tensai.ui.components
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.Node
 import org.commonmark.node.Text as MarkdownTextNode
 import org.commonmark.parser.Parser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -188,18 +191,77 @@ class InlineMathTest {
     }
 
     @Test
-    fun aParagraphHoldingAnythingButTextAndBreaksIsDeclined() {
+    fun aNodeThatIsNotTextBetweenTheDelimitersDeclines() {
+        // The all-or-nothing rule covers the span between the delimiters, not the paragraph — but
+        // inside that span it is as strict as ever.
         assertNull(
             "an inline code span keeps its structural exclusion, display block or not",
             displayFormula("\$\$\n`echo \$PATH`\n\$\$"),
         )
         assertNull(
-            "emphasis means this paragraph is prose that happens to start with $$",
-            displayFormula("$$\n**a** = b\n$$"),
+            // Dropping the code node instead of declining would leave `x =  + 1`, which reads as a
+            // perfectly plausible formula and is not what the model wrote. Decline is the only
+            // honest answer.
+            "a code span among real content must decline the whole formula, not be skipped",
+            displayFormula("\$\$\nx = `\$PATH` + 1\n\$\$"),
+        )
+        assertNull(
+            "emphasis inside the formula is not something this draws",
+            displayFormula("\$\$\n**a** = b\n\$\$"),
         )
         assertNull(
             "a second formula in the same paragraph is not one display block",
             displayFormula("\$\$\na = b\n\$\$ and \$\$c = d\$\$"),
+        )
+    }
+
+    @Test
+    fun aBoldLabelAboveTheBlockNoLongerCostsTheFormulaItsRendering() {
+        // Device QA. Two trailing spaces after the label make a hard break, so commonmark puts the
+        // label's StrongEmphasis and the whole block in one paragraph. Scoping the rule to what
+        // lies between the delimiters is what lets the label be a label and the formula a formula.
+        val markdown = "**Formule quadratique :**  \n\$\$\nax_1^2 + bx_1 + c = 0\n\$\$\n"
+
+        assertEquals(
+            listOf(
+                MathSpan.Plain("Formule quadratique :"),
+                MathSpan.Plain("ax"),
+                MathSpan.Subscript("1"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" + bx"),
+                MathSpan.Subscript("1"),
+                MathSpan.Plain(" + c = 0"),
+            ),
+            paragraphSpans(markdown),
+        )
+    }
+
+    @Test
+    fun theLabelAndItsFormulaAreOneStringWithTheLineBreakStillBetweenThem() {
+        // MathSpan says what is read; it cannot say what is *drawn* between the label and the
+        // formula, and the joint is the whole of what this diff adds. So this asserts on the
+        // string paragraphAroundMaths actually builds — the same call the composable makes, with
+        // colours it does not otherwise care about.
+        val paragraph = paragraphOf("**Formule quadratique :**  \n\$\$\nax_1^2 + bx_1 + c = 0\n\$\$\n")
+        val scope = displayMathScope(paragraph)
+        assertNotNull(scope)
+
+        val drawn = paragraphAroundMaths(paragraph, scope!!, Color.Unspecified, Color.Unspecified)
+
+        assertEquals(
+            "the hard break survives as a real newline, and nothing on either side is swallowed",
+            "Formule quadratique :\nax12 + bx1 + c = 0",
+            drawn.text,
+        )
+        assertEquals(
+            "the label is still drawn bold, not flattened into the formula",
+            listOf("Formule quadratique :"),
+            drawn.spanStyles.filter { it.item.fontWeight == FontWeight.Bold }.map { drawn.text.substring(it.start, it.end) },
+        )
+        assertEquals(
+            "the subscripts and the superscript keep their own shifted spans inside that string",
+            listOf("1", "2", "1"),
+            drawn.spanStyles.filter { it.item.baselineShift != null }.map { drawn.text.substring(it.start, it.end) },
         )
     }
 
@@ -307,25 +369,34 @@ class InlineMathTest {
      * same projection the renderer builds — without needing a device to build it.
      */
     private fun drawnSpans(markdown: String): List<MathSpan> =
-        textLiterals(parser.parse(markdown)).flatMap { mathSpans(it) }
+        literalsBetween(parser.parse(markdown).firstChild, stopAt = null).flatMap { mathSpans(it) }
 
     /**
-     * What `MarkdownParagraph` would draw for [markdown]'s last block: the display reading first,
-     * the run-by-run one when it declines. Same two lines as the composable.
+     * What `MarkdownParagraph` would draw for [markdown]'s last block: the copy before the opening
+     * delimiter, the formula, then the copy after the closing one — and the plain run-by-run
+     * reading when there is no display scope at all. Same shape as the composable.
      */
     private fun paragraphSpans(markdown: String): List<MathSpan> {
         val paragraph = parser.parse(markdown).lastChild
-        return displayMathSpans(paragraph) ?: textLiterals(paragraph).flatMap { mathSpans(it) }
+        val scope = displayMathScope(paragraph)
+            ?: return literalsBetween(paragraph.firstChild, stopAt = null).flatMap { mathSpans(it) }
+        return literalsBetween(paragraph.firstChild, stopAt = scope.open).flatMap { mathSpans(it) } +
+            scope.spans +
+            literalsBetween(scope.close.next, stopAt = null).flatMap { mathSpans(it) }
     }
 
-    private fun displayFormula(markdown: String): List<MathSpan>? =
-        displayMathSpans(parser.parse(markdown).lastChild)
+    /** [markdown]'s last block, which every display-block sample here is. */
+    private fun paragraphOf(markdown: String): Node = parser.parse(markdown).lastChild
 
-    private fun textLiterals(node: Node): List<String> {
+    private fun displayFormula(markdown: String): List<MathSpan>? =
+        displayMathScope(parser.parse(markdown).lastChild)?.spans
+
+    /** Every text literal from [start] up to, but not including, [stopAt] — mirrors the renderer's walk. */
+    private fun literalsBetween(start: Node?, stopAt: Node?): List<String> {
         val literals = mutableListOf<String>()
-        var child = node.firstChild
-        while (child != null) {
-            if (child is MarkdownTextNode) literals += child.literal else literals += textLiterals(child)
+        var child = start
+        while (child != null && child !== stopAt) {
+            if (child is MarkdownTextNode) literals += child.literal else literals += literalsBetween(child.firstChild, null)
             child = child.next
         }
         return literals

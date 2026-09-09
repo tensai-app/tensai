@@ -159,21 +159,50 @@ private fun MarkdownBlock(node: Node, color: Color, style: TextStyle, headings: 
 }
 
 /**
- * A paragraph, which is either one display formula on its own lines or ordinary inline copy.
+ * A paragraph, drawn around its display formula when it has one and as ordinary inline copy
+ * otherwise.
  *
- * [displayMathSpans] is asked first and answers `null` for everything that is not the former, so
- * the common path is unchanged. Shared with [MarkdownList] so a formula inside a list item reads
- * the same as one at the top level.
+ * [displayMathScope] answers `null` for everything that is not a `$$…$$` run spread over several
+ * inline nodes, so the common path is unchanged. When it does answer, the copy before the opening
+ * delimiter and after the closing one is still drawn the normal way — that is what keeps a bold
+ * label above the formula, `**Formule quadratique :**`, from costing the formula its rendering.
+ *
+ * Shared with [MarkdownList] so a formula inside a list item reads the same as one at the top.
  */
 @Composable
 private fun MarkdownParagraph(node: Node, color: Color, style: TextStyle, modifier: Modifier = Modifier) {
-    val display = displayMathSpans(node)
-    val text = if (display != null) {
-        buildAnnotatedString { appendMathSpans(display) }
-    } else {
+    val scope = displayMathScope(node)
+    val text = if (scope == null) {
         node.inlineAnnotatedString()
+    } else {
+        paragraphAroundMaths(
+            node = node,
+            scope = scope,
+            codeBackground = MaterialTheme.colorScheme.surfaceVariant,
+            linkColor = MaterialTheme.colorScheme.primary,
+        )
     }
     if (text.isNotBlank()) Text(text = text, style = style, color = color, modifier = modifier)
+}
+
+/**
+ * The joint: [node]'s copy up to the opening delimiter, then [scope]'s formula, then the copy
+ * after the closing one — one string, because they are one paragraph.
+ *
+ * Split out of [MarkdownParagraph] and free of any composable so a JVM test can assert on the
+ * string this actually builds rather than on the spans that go into it. What that buys is the one
+ * thing spans cannot show: the `'\n'` [appendInlineNodes] draws for the hard break between a bold
+ * label and its formula. See `InlineMathTest`.
+ */
+internal fun paragraphAroundMaths(
+    node: Node,
+    scope: DisplayMathScope,
+    codeBackground: Color,
+    linkColor: Color,
+): AnnotatedString = buildAnnotatedString {
+    appendInlineNodes(node.firstChild, codeBackground, linkColor, stopAt = scope.open)
+    appendMathSpans(scope.spans)
+    appendInlineNodes(scope.close.next, codeBackground, linkColor)
 }
 
 /**
@@ -338,9 +367,19 @@ private fun Node.inlineAnnotatedString(): AnnotatedString {
     return buildAnnotatedString { appendInlineNodes(firstChild, inlineCodeBackground, linkColor) }
 }
 
-private fun AnnotatedString.Builder.appendInlineNodes(start: Node?, codeBackground: Color, linkColor: Color) {
+/**
+ * Appends the inline nodes from [start] up to, but not including, [stopAt] — `null` meaning "to
+ * the end of the run". [stopAt] is what lets a paragraph's copy be drawn around a display formula
+ * rather than instead of it, see [MarkdownParagraph].
+ */
+private fun AnnotatedString.Builder.appendInlineNodes(
+    start: Node?,
+    codeBackground: Color,
+    linkColor: Color,
+    stopAt: Node? = null,
+) {
     var node = start
-    while (node != null) {
+    while (node != null && node !== stopAt) {
         when (node) {
             is MarkdownTextNode -> appendMaths(node.literal)
             is SoftLineBreak -> append(' ')

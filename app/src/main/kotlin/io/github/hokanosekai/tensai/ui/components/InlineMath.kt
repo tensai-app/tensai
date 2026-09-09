@@ -67,7 +67,7 @@ internal sealed interface MathSpan {
  * for commonmark `Text` nodes, and a fenced block or an inline `` `…` `` carries its content as a
  * literal with no `Text` child, so `$PATH` inside a `bash` block cannot reach this function.
  *
- * See [displayMathSpans] for the other shape maths arrive in, `$$` alone on its own lines.
+ * See [displayMathScope] for the other shape maths arrive in, `$$` alone on its own lines.
  */
 internal fun mathSpans(literal: String): List<MathSpan> {
     if (literal.isEmpty()) return emptyList()
@@ -107,7 +107,16 @@ internal fun mathSpans(literal: String): List<MathSpan> {
 }
 
 /**
- * Reads a paragraph that is *entirely* one display formula, or returns `null` (TEN-90).
+ * A `$$…$$` run that spans several of one paragraph's inline nodes (TEN-90) — what [MarkdownText]
+ * draws as maths, and where in the paragraph to draw it.
+ *
+ * [open] and [close] are the text nodes holding the delimiters. Everything before [open] and
+ * everything after [close] is the paragraph's ordinary inline content and is rendered as such.
+ */
+internal class DisplayMathScope(val open: Node, val close: Node, val spans: List<MathSpan>)
+
+/**
+ * Finds the one display formula in [paragraph], or returns `null` (TEN-90).
  *
  * The standard way to write block maths puts the delimiters on their own lines:
  *
@@ -117,49 +126,60 @@ internal fun mathSpans(literal: String): List<MathSpan> {
  * $$
  * ```
  *
- * commonmark makes that one paragraph holding `Text("$$")`, a `SoftLineBreak`, the body, another
- * break and `Text("$$")` — three separate runs. [mathSpans] works one run at a time and so can
- * never see an opening and its closing together; the characters simply never meet. Hence this
- * second entry point, which flattens the paragraph back to its source, line breaks included,
- * before looking for the delimiters.
+ * commonmark makes that `Text("$$")`, a `SoftLineBreak`, the body, another break and `Text("$$")`
+ * — separate runs. [mathSpans] works one run at a time and so can never see an opening and its
+ * closing together; the characters simply never meet. Hence this second entry point.
  *
- * It is deliberately all-or-nothing. The paragraph must hold nothing but text and line breaks —
- * an emphasis, a link or an inline `` `…` `` anywhere in it and this declines, which is what keeps
- * the structural code exclusion [mathSpans] relies on intact. The delimiters must be the first and
- * last things in it, and there must be no other `$` between them. A formula still streaming has no
- * closing `$$` yet and so declines too, leaving the source on screen until it completes.
+ * The all-or-nothing rule applies to the **span between the delimiters**, not to the paragraph
+ * (device QA). Models label their formulas — `**Formule quadratique :**` then a hard break then
+ * the block — and commonmark puts that label's `StrongEmphasis` in the same paragraph. Refusing
+ * the whole paragraph over a bold node that has nothing to do with the formula threw away the
+ * commonest shape there is. So: only the nodes strictly between [open] and [close] must be text
+ * and line breaks. A `Code` node among them still declines, which is how the structural exclusion
+ * survives — `$PATH` in an inline code span between two `$$` is not a formula and never becomes
+ * one.
+ *
+ * The delimiters must each be the whole of their own text node. `$$ a = b $$` written inline
+ * inside a run is not this shape; [mathSpans] already reads that one.
  *
  * Declining means the paragraph renders run by run through [mathSpans], which is the pre-existing
  * behaviour: the reader sees the LaTeX. Nothing here can make a paragraph render *wrong*, only
- * unrendered.
+ * unrendered. A formula still streaming has no closing `$$` yet and so declines too.
  */
-internal fun displayMathSpans(paragraph: Node): List<MathSpan>? {
-    val source = flattenedText(paragraph)?.trim() ?: return null
-    if (source.length < 5 || !source.startsWith("$$") || !source.endsWith("$$")) return null
+internal fun displayMathScope(paragraph: Node): DisplayMathScope? {
+    val children = inlineChildren(paragraph)
+    val openIndex = children.indexOfFirst { it.isDisplayDelimiter() }
+    val closeIndex = children.indexOfLast { it.isDisplayDelimiter() }
+    if (openIndex < 0 || closeIndex <= openIndex) return null
 
-    val body = source.substring(2, source.length - 2)
-    if ('$' in body) return null
-
-    // A body that wraps over several lines is one formula: the breaks are layout, not content.
-    // Anything that genuinely needs its own lines (a `\\` row separator, an `&` alignment) is
-    // outside the vocabulary and falls out of readFormula as null anyway.
-    val oneLine = body.replace('\n', ' ').replace('\r', ' ').trim()
-    if (oneLine.isEmpty()) return null
-    return readFormula(oneLine)
-}
-
-/** A paragraph's source, breaks included, or `null` when it holds any inline node but those. */
-private fun flattenedText(paragraph: Node): String? {
-    val source = StringBuilder()
-    var child = paragraph.firstChild ?: return null
-    while (true) {
-        when (child) {
-            is MarkdownTextNode -> source.append(child.literal)
-            is SoftLineBreak, is HardLineBreak -> source.append('\n')
+    val body = StringBuilder()
+    for (index in openIndex + 1 until closeIndex) {
+        when (val child = children[index]) {
+            is MarkdownTextNode -> body.append(child.literal)
+            // The breaks are layout, not content: one formula wrapped over several lines. Anything
+            // that genuinely needs its own line (a `\\` row, an `&` alignment) is outside the
+            // vocabulary and falls out of readFormula as null anyway.
+            is SoftLineBreak, is HardLineBreak -> body.append(' ')
             else -> return null
         }
-        child = child.next ?: return source.toString()
     }
+
+    val formula = body.toString().trim()
+    if (formula.isEmpty() || '$' in formula) return null
+    val spans = readFormula(formula) ?: return null
+    return DisplayMathScope(children[openIndex], children[closeIndex], spans)
+}
+
+private fun Node.isDisplayDelimiter(): Boolean = this is MarkdownTextNode && literal.trim() == "$$"
+
+private fun inlineChildren(node: Node): List<Node> {
+    val children = mutableListOf<Node>()
+    var child = node.firstChild
+    while (child != null) {
+        children += child
+        child = child.next
+    }
+    return children
 }
 
 /** The index of the `$`/`$$` that closes a formula opened at [contentStart], or `null`. */
