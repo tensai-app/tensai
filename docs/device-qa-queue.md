@@ -441,9 +441,22 @@ document) et compter les threads entre deux classes :
 adb shell ps -T <pid> | grep llama-kt-engine | wc -l
 ```
 
-Attendu : **0 ou 1**, jamais croissant avec le nombre de classes exécutées. Avant
-TEN-66 chaque test en laissait un ; deux ont été observés vivants pendant le gel
-de TEN-55.
+Attendu : **`1 + (n_threads - 1)` par moteur vivant**, soit **2** sur le device de
+référence, et surtout **jamais croissant** avec le nombre de classes exécutées.
+C'est la non-croissance qui prouve quelque chose, pas la valeur absolue.
+
+Ce document annonçait « 0 ou 1 », et c'était faux. Un seul moteur produit deux
+threads de ce nom : `LlamaKtEngineImpl.kt:71` crée l'executor mono-thread
+`llama-kt-engine`, puis `ggml-cpu.c:3283` crée `n_threads - 1` workers par
+`pthread_create` **sans leur poser de nom**, et sous Linux un thread hérite du
+`comm` de son créateur. Le créateur, ici, est l'executor.
+
+Conséquence pour TEN-55 : les « deux threads observés vivants pendant le gel »
+n'étaient pas la preuve de deux moteurs fuités qu'on y a lue. Un moteur suffit à
+les expliquer. Voir le commentaire du 2026-09-09 sur ce ticket.
+
+Mesuré le 2026-09-09, app lancée sans modèle chargé : **0**. Cohérent, le
+threadpool ggml n'existe pas avant un chargement.
 
 **Ce qui n'est pas couvert et qui m'inquiète plus que le compte** : `close()`
 appelle `llamaEngine.interrupt()` depuis le thread appelant, alors qu'un
