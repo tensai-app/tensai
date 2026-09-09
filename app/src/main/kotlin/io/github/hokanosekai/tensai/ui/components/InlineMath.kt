@@ -34,18 +34,31 @@ internal sealed interface MathSpan {
  * else untouched**: a wrong rendering is worse than a missing one, so `$\int_0^1 f(x)dx$` stays
  * exactly as the model wrote it.
  *
- * What is read:
+ * What is read — every entry below is one Unicode glyph, or one word, or a baseline shift, and
+ * nothing on the list needs the page laid out in two dimensions:
  * - the operators `\times \cdot \div \pm \mp \le \leq \ge \geq \ne \neq \approx \infty`,
+ * - the relations, arrows, set and logic signs that are one glyph apiece — `\to \Rightarrow
+ *   \equiv \in \subseteq \cup \forall \neg \land \partial \langle` and their neighbours; [Symbols]
+ *   holds the list,
+ * - the operator names, `\mod \bmod \log \ln \sin \max \gcd` and the rest, which come out as the
+ *   word they are and lean on the source's own spaces exactly as `\times` does: `a \mod b` is
+ *   `a mod b`,
  * - the Greek letters, lower and upper case, including the `\var…` shapes,
  * - the spacing commands `\, \; \: \ `, plus `\quad` and `\qquad` as em spaces,
  * - single subscripts and superscripts, `H_B`, `x^2`, `x_{10}`,
  * - `\frac{a}{b}`, flattened to `a/b` and parenthesised when a side is not a single atom,
  * - `\text{…}`, whose body is taken verbatim — it is what the models here reach for to label a
- *   term, `\text{index} = …`, and dropping the wrapper is the whole of rendering it.
+ *   term, `\text{index} = …`, and dropping the wrapper is the whole of rendering it — and
+ *   `\mathrm{…}` the same way, but only for a body with no space in it, because math mode swallows
+ *   those and `\mathrm{a b}` sets `ab`.
  *
- * Anything outside that — matrices, integrals, sums with bounds, `\begin`/`\end`, `&` alignments,
- * `\sqrt`, `\mathrm`, an unknown command, a stray `{` — makes the *whole* formula fall back to its
- * literal source.
+ * Anything outside that — matrices, integrals, sums and limits with bounds, `\sqrt`, `\pmod`,
+ * `\begin`/`\end`, `&` alignments, an unknown command, a stray `{` — makes the *whole* formula
+ * fall back to its literal source. What decides is not the length of the list but that one
+ * criterion: a radical that has to stretch over its argument, a bound sitting under its operator,
+ * a matrix's rows are all two-dimensional, and Unicode with two baseline shifts cannot draw them.
+ * Drawing them approximately is the single outcome worse than not drawing them at all, so the list
+ * grows only along the layout-free edge and never past it.
  *
  * Three conservative rules keep ordinary prose out of this, and none of them may be traded for
  * another: each catches a class the other two miss.
@@ -234,9 +247,13 @@ private fun readFormula(formula: String): List<MathSpan>? {
                         index = denominator.end
                     }
 
-                    "text" -> {
+                    "text", "mathrm" -> {
                         val body = readGroup(formula, command.end) ?: return null
                         if (body.body.isEmpty() || !body.body.all(::isOrdinary)) return null
+                        // `\text` keeps its spaces; `\mathrm` is math mode and drops them, so
+                        // `\mathrm{a b}` sets "ab" and taking the body verbatim would draw a
+                        // formula the source does not have. Refuse that one rather than guess.
+                        if (command.name == "mathrm" && ' ' in body.body) return null
                         plain.append(body.body)
                         index = body.end
                     }
@@ -357,7 +374,10 @@ private fun List<MathSpan>.mergeAdjacentPlain(): List<MathSpan> {
     return merged
 }
 
-/** The one-for-one commands, the whole vocabulary of them — see [mathSpans] for why it is this short. */
+/**
+ * The one-for-one commands, the whole vocabulary of them — a command belongs here when it maps to
+ * a fixed piece of text and needs no layout of its own. See [mathSpans] for why that is the line.
+ */
 private val Symbols: Map<String, String> = mapOf(
     "times" to "×", "cdot" to "·", "div" to "÷", "pm" to "±", "mp" to "∓",
     "le" to "≤", "leq" to "≤", "ge" to "≥", "geq" to "≥",
@@ -366,6 +386,32 @@ private val Symbols: Map<String, String> = mapOf(
     // \quad is a wide space, and models use it to separate two equations on one line — a single
     // space would run them together, so it gets the em space it means.
     "quad" to "\u2003", "qquad" to "\u2003\u2003",
+    // Arrows and relations.
+    "to" to "→", "rightarrow" to "→", "leftarrow" to "←", "leftrightarrow" to "↔",
+    "Rightarrow" to "⇒", "Leftarrow" to "⇐", "Leftrightarrow" to "⇔",
+    "implies" to "⇒", "iff" to "⇔", "mapsto" to "↦",
+    "equiv" to "≡", "sim" to "∼", "cong" to "≅", "propto" to "∝", "ll" to "≪", "gg" to "≫",
+    // Sets and logic.
+    "in" to "∈", "notin" to "∉", "subset" to "⊂", "subseteq" to "⊆",
+    "supset" to "⊃", "supseteq" to "⊇", "cup" to "∪", "cap" to "∩",
+    "setminus" to "∖", "emptyset" to "∅", "varnothing" to "∅",
+    "forall" to "∀", "exists" to "∃", "neg" to "¬", "land" to "∧", "lor" to "∨",
+    // The remaining single glyphs.
+    "ldots" to "…", "dots" to "…", "cdots" to "⋯",
+    "partial" to "∂", "nabla" to "∇", "perp" to "⊥", "parallel" to "∥", "angle" to "∠",
+    "circ" to "∘", "oplus" to "⊕", "otimes" to "⊗", "langle" to "⟨", "rangle" to "⟩",
+    // The operator names — the class this ticket was opened for. A hash-table formula spells
+    // `(\text{hash}(key) + k^2) \mod \text{tableSize}`, and that one missing word cost the whole
+    // block its rendering. They are words rather than glyphs, and like `\times` they take their
+    // spacing from the source: `a \mod b` reads `a mod b`. `\lim`, `\sup` and `\inf` are
+    // deliberately absent — they are only ever written with a bound that belongs *under* them,
+    // which is the layout this cannot draw.
+    "mod" to "mod", "bmod" to "mod", "log" to "log", "ln" to "ln", "exp" to "exp",
+    "sin" to "sin", "cos" to "cos", "tan" to "tan", "sec" to "sec", "csc" to "csc", "cot" to "cot",
+    "arcsin" to "arcsin", "arccos" to "arccos", "arctan" to "arctan",
+    "sinh" to "sinh", "cosh" to "cosh", "tanh" to "tanh",
+    "max" to "max", "min" to "min", "gcd" to "gcd", "lcm" to "lcm",
+    "deg" to "deg", "det" to "det", "dim" to "dim",
     "alpha" to "α", "beta" to "β", "gamma" to "γ", "delta" to "δ",
     "epsilon" to "ε", "varepsilon" to "ε", "zeta" to "ζ", "eta" to "η",
     "theta" to "θ", "vartheta" to "ϑ", "iota" to "ι", "kappa" to "κ",

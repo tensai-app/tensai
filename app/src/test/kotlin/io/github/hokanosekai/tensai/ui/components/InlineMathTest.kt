@@ -363,6 +363,99 @@ class InlineMathTest {
         )
     }
 
+    @Test
+    fun theModulusBlockFromTheDeviceIsReadInsteadOfLeftAsSource() {
+        // Verbatim from the reported conversation. `\mod` was the only command in the whole
+        // corpus outside the vocabulary, and one missing word made readFormula decline, which made
+        // displayMathScope decline, which put the `$$` delimiters themselves on the reader's
+        // screen.
+        val markdown = "\$\$\n\\text{index} = (\\text{hash}(key) + k^2) \\mod \\text{tableSize}\n\$\$\n"
+
+        assertEquals(
+            listOf(
+                MathSpan.Plain("index = (hash(key) + k"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(") mod tableSize"),
+            ),
+            paragraphSpans(markdown),
+        )
+    }
+
+    @Test
+    fun operatorNamesComeOutAsWordsAndTakeTheirSpacingFromTheSource() {
+        // `\mod` is a word, not a glyph, and like `\times` it leans on the spaces already in the
+        // source — which is exactly why it needs no layout and can be in the vocabulary at all.
+        assertEquals(listOf(MathSpan.Plain("17 mod 5 = 2")), mathSpans("\$17 \\bmod 5 = 2\$"))
+        assertEquals(
+            listOf(MathSpan.Plain("log"), MathSpan.Subscript("2"), MathSpan.Plain("(n) = max(a, b)")),
+            mathSpans("\$\\log_2(n) = \\max(a, b)\$"),
+        )
+        assertEquals(
+            listOf(
+                MathSpan.Plain("sin"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" x + cos"),
+                MathSpan.Superscript("2"),
+                MathSpan.Plain(" x = 1"),
+            ),
+            mathSpans("\$\\sin^2 x + \\cos^2 x = 1\$"),
+        )
+    }
+
+    @Test
+    fun theSingleGlyphSymbolsCoverSetsLogicAndArrows() {
+        assertEquals(
+            listOf(MathSpan.Plain("∀ x ∈ A, x ∉ B ⇒ A ∩ B = ∅")),
+            mathSpans("\$\\forall x \\in A, x \\notin B \\Rightarrow A \\cap B = \\emptyset\$"),
+        )
+        // The spacing around ⟨ ⟩ is the source's own, same as everywhere else here: this maps
+        // commands to glyphs and never inserts a space of its own.
+        assertEquals(
+            listOf(MathSpan.Plain("f : A → B ⇔ ⟨ x, y ⟩ ≠ ∂")),
+            mathSpans("\$f : A \\to B \\Leftrightarrow \\langle x, y \\rangle \\ne \\partial\$"),
+        )
+    }
+
+    @Test
+    fun mathrmIsUnwrappedLikeTextButOnlyWhereMathModeWouldNotEatASpace() {
+        assertEquals(listOf(MathSpan.Plain("d/dx")), mathSpans("\$\\frac{\\mathrm{d}}{\\mathrm{d}x}\$"))
+        assertEquals(
+            listOf(MathSpan.Plain("E = mc"), MathSpan.Superscript("2")),
+            mathSpans("\$E = \\mathrm{mc}^2\$"),
+        )
+        // LaTeX sets `\mathrm{km h}` as "kmh" — math mode drops the space. Drawing "km h" would be
+        // a formula the source does not have, so the wrapper is refused instead of diverging.
+        val spaced = "\$\\mathrm{km h}^{-1}\$"
+        assertEquals(listOf(MathSpan.Plain(spaced)), mathSpans(spaced))
+    }
+
+    @Test
+    fun aWiderVocabularyStillRefusesEverythingThatNeedsThePageInTwoDimensions() {
+        for (source in listOf(
+            "\$\\sqrt{2}\$",
+            "\$\\sqrt{a^2 + b^2}\$",
+            "\$\\int_0^1 f(x)dx\$",
+            "\$\\sum_{i=0}^{n} a_i\$",
+            "\$\\prod_{k=1}^{n} k\$",
+            // \lim is the reason \max and \min are in the vocabulary and it is not: its bound sits
+            // *under* it, and there is no baseline shift that draws that.
+            "\$\\lim_{x \\to 0} \\frac{\\sin x}{x}\$",
+            // The congruence spelling, which parenthesises its argument rather than naming an
+            // operator — a different mechanism, so it is out until something asks for it.
+            "\$a \\equiv b \\pmod{n}\$",
+            "\$\\mathbb{R}^n\$",
+            "\$\\vec{v} \\cdot \\vec{w}\$",
+        )) {
+            assertEquals(
+                "a longer vocabulary must not become a licence to render approximately",
+                listOf(MathSpan.Plain(source)),
+                mathSpans(source),
+            )
+        }
+        assertNull(displayFormula("\$\$\n\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}\n\$\$"))
+        assertNull(displayFormula("\$\$\n\\begin{pmatrix} a & b \\end{pmatrix}\n\$\$"))
+    }
+
     /**
      * The spans `MarkdownText` would draw for [markdown]: it calls [mathSpans] for commonmark
      * `Text` nodes and for nothing else, so collecting those literals in document order is the
