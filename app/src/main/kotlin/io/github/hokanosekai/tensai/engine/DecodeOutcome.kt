@@ -20,9 +20,13 @@ internal object DecodeOutcome {
 
     /**
      * @param budgetStopReason set when [ReasoningBudgetTracker] cut the decode short itself; it saw
-     *   the ending first-hand and so outranks anything inferred here.
+     *   the ending first-hand and so outranks anything inferred here. Except a negative
+     *   [tokensPredicted], which says there was no ending to see.
      * @param tokensPredicted tokens llama.cpp actually sampled, as returned by `completion()`.
-     *   **Not** a count of token callbacks — see this object's KDoc.
+     *   **Not** a count of token callbacks — see this object's KDoc. Negative is not a count at
+     *   all: it means a C++ exception escaped the decode and `tensai_jni.cpp`'s JNI guard answered
+     *   with a sentinel instead of letting it kill the process (TEN-91). Answered with
+     *   [StopReason.Failed] here.
      * @param nPredict the cap llama.cpp was given, which TEN-65 may have clipped below what the
      *   caller asked for.
      * @param clipped whether that clip actually happened. Decides which of the two "ran out of
@@ -37,7 +41,24 @@ internal object DecodeOutcome {
         nPredict: Int,
         clipped: Boolean,
         phaseStopReason: StopReason?,
-    ): StopReason = budgetStopReason ?: when {
+    ): StopReason = when {
+        // Ahead of `budgetStopReason`, and ahead of everything else: a negative count means the
+        // decode never reached an ending to have a reason for. The reasoning tracker's own verdict
+        // describes a budget it was watching being spent, which is not what happened either.
+        //
+        // First because of what the next branch would otherwise do with it. `-1 < nPredict` holds
+        // for every cap there is, so a crashed decode would fall straight into
+        // [StopReason.Complete] and be persisted, and later replayed into every prompt, as a reply
+        // the model chose to end. That is the exact failure mode TEN-79 named for a different
+        // cause, arriving by a new route.
+        //
+        // [StopReason.Failed] is what the app layer already calls this, and its contract holds:
+        // engines report a failure by emitting [DecodeEvent.Error], which is what
+        // [LlamaKtEngineImpl.decode] does on a negative count — it never builds a [DecodeStats]
+        // around this value. The branch is here rather than only there so that "negative" cannot
+        // read as "finished" through any caller, present or future.
+        tokensPredicted < 0 -> StopReason.Failed
+        budgetStopReason != null -> budgetStopReason
         // Stopped before the cap: end-of-sequence, or a stop sequence matched. The two are
         // indistinguishable from out here and deliberately merged (see [StopReason.Complete]).
         tokensPredicted < nPredict -> StopReason.Complete

@@ -455,23 +455,51 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         val tokensPredicted =
                             llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
 
-                        val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
-                        val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
-                        val tokPerSec = tokensPredicted * 1000f / elapsedMs
-                        val stopReason = DecodeOutcome.stopReason(
-                            budgetStopReason = budgetStopReason,
-                            tokensPredicted = tokensPredicted,
-                            nPredict = nPredict,
-                            clipped = clipped,
-                            phaseStopReason = budgetTracker?.currentPhaseStopReason(),
-                        )
-                        // Reached on a cancellation too, and deliberately: `awaitClose`'s
-                        // interrupt() unblocks completion() rather than throwing, so the normal
-                        // path runs to here with the channel already closed and this `trySend`
-                        // silently fails. That is the intended outcome (a cancelled decode owes its
-                        // collector no terminal event), and it is why this is `trySend` and not
-                        // `send`. Not dead code: it is the one place a completed decode reports.
-                        trySend(DecodeEvent.Done(DecodeStats(tokensPredicted, tokPerSec, ttftMs, stopReason)))
+                        // A negative count is not a count (TEN-91): a C++ exception escaped the
+                        // decode and `tensai_jni.cpp`'s JNI guard answered with a sentinel rather
+                        // than letting it unwind into the VM and kill the process. Before that
+                        // guard existed there was nothing to handle here, because there was no
+                        // process left to handle it.
+                        //
+                        // Reported as an error, not as a `Done`, because it is one. `-1` is below
+                        // every `nPredict`, so letting it through to `stopReason` below would have
+                        // read as `StopReason.Complete` and told the user their reply had finished
+                        // normally. Tokens already streamed stay streamed — the collector keeps
+                        // whatever text arrived, and loses only the ending, which is the same deal
+                        // the OOM and exception branches below offer.
+                        //
+                        // An `if/else` rather than an early return: the `refreshKvUsedCells()` and
+                        // `close()` below the `try` are what end this flow, and returning out of
+                        // the coroutine would skip both.
+                        if (tokensPredicted < 0) {
+                            trySend(
+                                DecodeEvent.Error(
+                                    InferenceException(
+                                        "Decode failed in the native engine " +
+                                            "(completion returned $tokensPredicted)",
+                                    ),
+                                ),
+                            )
+                        } else {
+                            val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
+                            val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
+                            val tokPerSec = tokensPredicted * 1000f / elapsedMs
+                            val stopReason = DecodeOutcome.stopReason(
+                                budgetStopReason = budgetStopReason,
+                                tokensPredicted = tokensPredicted,
+                                nPredict = nPredict,
+                                clipped = clipped,
+                                phaseStopReason = budgetTracker?.currentPhaseStopReason(),
+                            )
+                            // Reached on a cancellation too, and deliberately: `awaitClose`'s
+                            // interrupt() unblocks completion() rather than throwing, so the normal
+                            // path runs to here with the channel already closed and this `trySend`
+                            // silently fails. That is the intended outcome (a cancelled decode owes
+                            // its collector no terminal event), and it is why this is `trySend` and
+                            // not `send`. Not dead code: it is the one place a completed decode
+                            // reports.
+                            trySend(DecodeEvent.Done(DecodeStats(tokensPredicted, tokPerSec, ttftMs, stopReason)))
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e

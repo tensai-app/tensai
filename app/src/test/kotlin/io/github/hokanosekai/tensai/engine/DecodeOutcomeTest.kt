@@ -161,6 +161,80 @@ class DecodeOutcomeTest {
         assertEquals(StopReason.Complete, reason)
     }
 
+    // ---------------------------------------------------------------------------------------
+    // TEN-91: a decode that died in the native engine must not read as one that finished.
+    //
+    // `tensai_jni.cpp` used to let a C++ exception unwind into the VM, which killed the process —
+    // so there was no wrong answer to give, only no process. Now the JNI guard catches it and
+    // answers with a sentinel, which puts a value where there wasn't one, and the whole question
+    // becomes what this derivation does with it.
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * The sentinel is negative precisely so it cannot pass for a count, because every non-negative
+     * one it could have used means something true. `0` is the worst of them: it is what the early
+     * exits in `nativeCompletion` legitimately return, and `0 < nPredict` for every cap there is,
+     * so a crashed decode would land on [StopReason.Complete] and be persisted, read back, and
+     * replayed into every later prompt as a reply the model chose to end.
+     *
+     * That is TEN-79's defect arriving by a new road, which is why it is pinned on the same
+     * derivation rather than only where the sentinel is produced.
+     */
+    @Test
+    fun aDecodeThatDiedInTheNativeEngineIsNotReportedAsComplete() {
+        val reason = DecodeOutcome.stopReason(
+            budgetStopReason = null,
+            tokensPredicted = -1,
+            nPredict = 64,
+            clipped = false,
+            phaseStopReason = null,
+        )
+
+        assertEquals(StopReason.Failed, reason)
+    }
+
+    /**
+     * The one case that outranks everything else in this derivation still loses to it.
+     *
+     * [aTrackedBudgetStopOutranksEverythingElse] holds because a tracker that cut the decode short
+     * watched the ending happen. Here nothing did: the decode was still running when the native
+     * side threw, so whatever phase the tracker had reached describes a budget being spent, not a
+     * reply ending. Reporting it would name a plausible ending for a decode that never had one.
+     */
+    @Test
+    fun theNativeFailureSentinelOutranksEvenATrackedBudgetStop() {
+        val reason = DecodeOutcome.stopReason(
+            budgetStopReason = StopReason.ReasoningBudgetExhausted,
+            tokensPredicted = -1,
+            nPredict = 64,
+            clipped = true,
+            phaseStopReason = StopReason.ResponseBudgetExhausted,
+        )
+
+        assertEquals(StopReason.Failed, reason)
+    }
+
+    /**
+     * `LlamaKtEngineImpl.decode` tests `< 0`, not `== -1`, and so does the derivation: the guard in
+     * `tensai_jni.cpp` is one `jint` fallback today, and pinning the exact value here would make
+     * this suite pass while a second guard returning some other negative sentinel walked straight
+     * back into [StopReason.Complete].
+     */
+    @Test
+    fun anyNegativeCountIsAFailureNotJustMinusOne() {
+        for (count in listOf(-1, -2, -64, Int.MIN_VALUE)) {
+            val reason = DecodeOutcome.stopReason(
+                budgetStopReason = null,
+                tokensPredicted = count,
+                nPredict = 64,
+                clipped = false,
+                phaseStopReason = null,
+            )
+
+            assertEquals("tokensPredicted = $count", StopReason.Failed, reason)
+        }
+    }
+
     /** Sanity: the split really does add up to the sum the engine hands llama.cpp as `nPredict`. */
     @Test
     fun theReasoningSplitIsTheCapTheDerivationComparesAgainst() {
