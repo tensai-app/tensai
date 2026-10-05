@@ -68,7 +68,7 @@ mois sans savoir si l'image du runner a bougé sous nos pieds.
 
 #### Le cache des shaders
 
-136 fichiers `*.comp.cpp` (202 Mo) plus `ggml-vulkan-shaders.hpp`, régénérés par
+132 fichiers `*.comp.cpp` (134 Mo) plus `ggml-vulkan-shaders.hpp`, régénérés par
 la section Vulkan de `bootstrap.sh`. TEN-93 a établi que cette génération est
 déterministe : le générateur trie avant d'écrire, il n'y a ni timestamp ni chemin
 absolu dans la sortie, et aucun `GGML_VULKAN_*_GLSLC_SUPPORT` n'est passé au
@@ -94,7 +94,7 @@ toolchain. La version du NDK, elle, est lue dans le `build.gradle.kts` de
 `llama.kt` plutôt que recopiée dans le workflow : une seule source de vérité.
 
 Le `restore` et le `save` sont deux étapes distinctes, avec entre les deux une
-vérification que le jeu compte bien 136 fichiers. Elle vaut aussi au hit : un
+vérification que le jeu compte bien 132 fichiers. Elle vaut aussi au hit : un
 cache tronqué se voit là, pas trois minutes plus tard dans une erreur de link
 illisible.
 
@@ -158,7 +158,7 @@ Deux jeux d'artefacts que le build natif exige sont dans le `.gitignore` de
 
 | Artefact | Ignoré par | Produit par |
 |---|---|---|
-| `cpp/ggml-vulkan/shaders/*.comp.cpp` (136 fichiers, 202 Mo) + `ggml-vulkan-shaders.hpp` | règle explicite | `scripts/bootstrap.sh` § Vulkan |
+| `cpp/ggml-vulkan/shaders/*.comp.cpp` (132 fichiers, 134 Mo) + `ggml-vulkan-shaders.hpp` | règle explicite | `scripts/bootstrap.sh` § Vulkan |
 | `jniLibs/arm64-v8a/libOpenCL.so` | `*.so` | `scripts/build-opencl.sh` |
 
 Le lint tombait sur la même erreur : `:app:lintDebug` dépend de
@@ -171,7 +171,7 @@ le [README](../README.md#build-from-source), et l'étape « Generate Vulkan
 shaders » du workflow en est la transcription : **les deux sont à garder en
 phase**, il n'y a pas de script partagé qui l'imposerait.
 
-Rien n'est committé : les 202 Mo de sources générées restent hors de
+Rien n'est committé : les 134 Mo de sources générées restent hors de
 l'historique.
 
 ### Tests instrumentés — hors CI, définitivement

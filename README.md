@@ -28,7 +28,7 @@ both, once.
 ./third_party/llama.kt/scripts/build-opencl.sh
 ```
 
-**2. Vulkan SPIR-V shaders**: 136 `.comp.cpp` files (202 MB) plus
+**2. Vulkan SPIR-V shaders**: 132 `.comp.cpp` files (134 MB) plus
 `ggml-vulkan-shaders.hpp`. `scripts/bootstrap.sh` produces them as part of a
 full re-vendoring of `cpp/`; if you only want to build, its Vulkan section on
 its own is enough:

@@ -2,7 +2,7 @@ name: Native
 
 # Le job JVM de ci.yml compile le Kotlin et fait tourner les 409 tests, mais il
 # ne touche jamais au natif : un clone frais n'en est pas capable sans régénérer
-# 202 Mo de shaders SPIR-V et libOpenCL.so, tous deux gitignorés (TEN-93).
+# 134 Mo de shaders SPIR-V et libOpenCL.so, tous deux gitignorés (TEN-93).
 # Ce workflow-ci fait exactement ça, et il est filtré par chemins parce que le
 # dépôt est privé et que ~8 min de runner par commit Kotlin ne se justifient pas.
 #
@@ -178,7 +178,7 @@ jobs:
           test -s "$OUT/ggml-vulkan-shaders.hpp"
           n=$(find "$OUT/shaders" -name '*.comp.cpp' | wc -l)
           echo "$n fichiers .comp.cpp"
-          [ "$n" -eq 136 ] || { echo "attendu 136"; exit 1; }
+          [ "$n" -eq 132 ] || { echo "attendu 132"; exit 1; }
 
       - name: Save generated Vulkan shaders
         if: steps.shader-cache.outputs.cache-hit != 'true'
