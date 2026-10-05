@@ -12,7 +12,7 @@ depuis TEN-87, les deux amonts sont couplés et doivent bouger ensemble.
 | | |
 |---|---|
 | **TEN-13** | récupère le fix upstream `#25245` et permet de dropper `patches/0001` |
-| **TEN-88** | *peut-être* : voir la question ouverte plus bas, ce n'est pas acquis |
+| **TEN-88** | rien : les templates de Gemma-4 et Qwen3 retirent le raisonnement des tours passés (vérifié, voir plus bas) |
 | Général | 213 commits de llama.cpp, dont les corrections de la période |
 
 ---
@@ -95,6 +95,14 @@ bump reste justifié par TEN-13 seul, et TEN-88 doit chercher ailleurs.
 
 **Ne pas vendre ce bump comme la solution de TEN-88 tant que ce point n'est pas
 tranché.**
+
+**Tranché le 2026-10-05 : non.** Templates extraits des GGUF du device.
+Qwen3 ne rejoue `reasoning_content` que pour les messages assistant situés après
+le dernier vrai message utilisateur (`loop.index0 > ns.last_query_index`), Gemma-4
+que sur un tour d'appel d'outil après le dernier message utilisateur. Un tour de
+conversation antérieur est rendu sans raisonnement, par construction, et la
+détection de `caps.cpp` répondrait faux pour les deux. **Le bump se justifie par
+TEN-13 seul.**
 
 ---
 
