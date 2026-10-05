@@ -155,7 +155,7 @@
 
     <!-- Loading > failure dialogs. See io.github.hokanosekai.tensai.ui.screens.loading.LoadFailure. -->
     <string name="load_failed_title">Couldn\'t load this model</string>
-    <string name="load_failed_unreadable">This file couldn\'t be read as a model. Re-importing it usually fixes that.</string>
+    <string name="load_failed_unreadable">This file may be damaged, or it isn\'t a model this app can run. Re-importing only helps if your copy was damaged.</string>
     <string name="load_failed_busy">Something else was still using the model. Give it a moment and try again.</string>
     <string name="load_failed_unknown">Loading stopped before it finished.</string>
 

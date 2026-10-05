@@ -68,7 +68,16 @@ sealed class LoadUiState {
      * and precisely the "no technical jargon in an error state" this ticket rules out. The
      * throwable is not kept at all — see [LoadFailure] for why classifying beats carrying.
      */
-    data class GenericFailed(val model: ModelEntity, val failure: LoadFailure) : LoadUiState()
+    data class GenericFailed(
+        val model: ModelEntity,
+        val failure: LoadFailure,
+        /**
+         * Whether the failed attempt offloaded to a GPU, so that "Retry on CPU" would change
+         * anything (TEN-100). Not just `backend != Cpu`: the engine runs [BackendHint.Auto] on CPU
+         * when the device has no GPU backend, and [BackendHint.Gpu] silently falls back the same way.
+         */
+        val canRetryOnCpu: Boolean,
+    ) : LoadUiState()
 }
 
 /**
@@ -199,7 +208,11 @@ class LoadModelViewModel(
                 // the intent where the decision is, rather than leaving it to the classifier.
                 throw e
             } catch (e: Exception) {
-                _state.value = LoadUiState.GenericFailed(model, LoadFailure.of(e))
+                _state.value = LoadUiState.GenericFailed(
+                    model,
+                    LoadFailure.of(e),
+                    canRetryOnCpu = config.backend != BackendHint.Cpu && (profile.hasVulkan || profile.hasOpenCl),
+                )
             } finally {
                 progressJob.cancel()
             }

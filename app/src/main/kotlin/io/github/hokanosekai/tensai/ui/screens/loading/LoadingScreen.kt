@@ -114,6 +114,7 @@ fun LoadingScreen(
                 failure = state.failure,
                 onRetry = viewModel::retry,
                 onRetryOnCpu = viewModel::retryOnCpu,
+                canRetryOnCpu = state.canRetryOnCpu,
                 onClose = onBack,
             )
         }
@@ -228,6 +229,7 @@ private fun GenericFailDialog(
     failure: LoadFailure,
     onRetry: () -> Unit,
     onRetryOnCpu: () -> Unit,
+    canRetryOnCpu: Boolean,
     onClose: () -> Unit,
 ) {
     AlertDialog(
@@ -251,7 +253,9 @@ private fun GenericFailDialog(
             // Simple chip-row equivalent for the CPU-retry override — two text actions rather
             // than a dedicated FilterChip row, to keep this dialog's default M3 layout.
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onRetryOnCpu) { Text("Retry on CPU") }
+                if (canRetryOnCpu) {
+                    TextButton(onClick = onRetryOnCpu) { Text("Retry on CPU") }
+                }
                 TextButton(onClick = onClose) { Text("Close") }
             }
         },
