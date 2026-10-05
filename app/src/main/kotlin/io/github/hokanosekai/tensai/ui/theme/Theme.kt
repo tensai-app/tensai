@@ -38,6 +38,17 @@ private fun lightScheme() = lightColorScheme(
 )
 
 /**
+ * Whether this preference renders the app dark right now. Shared with `MainActivity`, which needs
+ * the same answer for the system bars' icon colour (TEN-99) and must not drift from the scheme.
+ */
+@Composable
+fun ThemeMode.isDark(): Boolean = when (this) {
+    ThemeMode.System -> isSystemInDarkTheme()
+    ThemeMode.Dark -> true
+    ThemeMode.Light -> false
+}
+
+/**
  * Violet is an accent spice: actions, selection, AI-active states, the brand glyph.
  * Never a large surface fill.
  */
@@ -46,11 +57,7 @@ fun TensaiTheme(
     themeMode: ThemeMode = ThemeMode.System,
     content: @Composable () -> Unit,
 ) {
-    val isDark = when (themeMode) {
-        ThemeMode.System -> isSystemInDarkTheme()
-        ThemeMode.Dark -> true
-        ThemeMode.Light -> false
-    }
+    val isDark = themeMode.isDark()
 
     val colorScheme = if (isDark) darkScheme() else lightScheme()
 

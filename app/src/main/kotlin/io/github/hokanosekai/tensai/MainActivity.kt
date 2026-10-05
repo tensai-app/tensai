@@ -1,10 +1,13 @@
 package io.github.hokanosekai.tensai
 
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +25,7 @@ import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate
 import io.github.hokanosekai.tensai.ui.theme.TensaiTheme
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
+import io.github.hokanosekai.tensai.ui.theme.isDark
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -58,6 +62,20 @@ class MainActivity : ComponentActivity() {
             // goes through `LocalContext` because that is what `stringResource` resolves against
             // — see [withAppLanguage] for why it wraps rather than replaces the context.
             val localizedContext = remember(language, this) { withAppLanguage(language) }
+
+            // The system bars' icons follow the app's *effective* theme, not the phone's (TEN-99).
+            // The bare `enableEdgeToEdge()` above decides light or dark icons once, from the
+            // system setting, so picking "Light" on a dark phone left white clock and battery
+            // icons on a light background. Re-applying it whenever `isDark` flips keeps the bars
+            // in step with the hot theme switch of TEN-38. The scrims are activity's own defaults.
+            val isDark = themeMode.isDark()
+            DisposableEffect(isDark) {
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { isDark },
+                    navigationBarStyle = SystemBarStyle.auto(LIGHT_NAV_SCRIM, DARK_NAV_SCRIM) { isDark },
+                )
+                onDispose {}
+            }
 
             CompositionLocalProvider(LocalContext provides localizedContext) {
                 TensaiTheme(themeMode = themeMode) {
@@ -111,3 +129,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** `androidx.activity`'s `DefaultLightScrim` / `DefaultDarkScrim`, which it keeps private. */
+private val LIGHT_NAV_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
+private val DARK_NAV_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
