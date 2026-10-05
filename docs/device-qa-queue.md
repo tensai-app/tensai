@@ -376,6 +376,10 @@ timeout 300 adb shell am instrument -w \
   service de premier plan bloque la transition (`cannot transition from R to M,
   importance=fg-service`, mesuré le même jour).
 
+  **Pour avoir un verdict, lancer la suite classe par classe** (`-e class ...`) :
+  chaque classe tient sous la fenêtre de Hans, la suite complète non (~45 s
+  depuis JniUtf8BoundaryTest, gelée 1 fois sur 2 le 2026-10-05).
+
 ---
 
 ## 11. TEN-39 — les six états, et surtout les deux qu'on ne peut pas provoquer
