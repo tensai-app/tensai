@@ -355,12 +355,26 @@ timeout 300 adb shell am instrument -w \
 - **`TensaiDbMigrationTest`** — jamais exécuté depuis la migration v6 → v7.
   Son KDoc dit « all the way to the current version » mais le test s'arrête à la
   v4 : à passer à 7 pendant qu'on y est.
-- **TEN-55**, le gel de la suite complète. Intermittent, **2 runs sur 8**, toujours
-  sur `InferenceQueueTest.loadThenGenerate`, repéré via le tag `TestRunner`
-  (`started:` sans `finished:`). Aucun mécanisme in-process ne rend de verdict :
-  `withTimeout`, règle JUnit et `kill -3` sont restés muets avec `utime` **et**
-  `stime` strictement plats. Le runtime ART entier gèle. Compter 8 runs pour
-  caractériser quoi que ce soit.
+- **TEN-55, résolu le 2026-10-05 : ce n'est pas notre code.** Le gel de la suite
+  complète vient du freezer de ColorOS (`OplusHansManager`, service `hans`). Une
+  suite instrumentée tourne sans activité visible et, tant qu'aucun test n'a
+  démarré `InferenceService`, sans service de premier plan. Hans fait passer le
+  process de R à M puis à F en une trentaine de secondes, et F le gèle. Toutes
+  les threads restent alors dans `get_signal`, `utime`/`stime` plats, et
+  `kill -3` reste sans effet (d'où les mécanismes in-process restés muets). Le
+  log le dit en clair :
+
+  ```
+  adb logcat -d | grep OplusHansManager | grep hokanosekai
+  ... freeze uid: 10361 io.github.hokanosekai.tensai pids: [<pid>] scene: LcdOn
+  ```
+
+  Fréquence : 2 runs sur 8 quand la suite était plus lente, 1 sur 17 le
+  2026-10-05 (suite à ~40 s). Un run gelé se reconnaît à cette ligne, pas besoin
+  de le caractériser autrement : `am force-stop` le libère (`unfreeze ...
+  reason: UidGone`). L'app réelle n'est pas exposée : avec un modèle chargé, son
+  service de premier plan bloque la transition (`cannot transition from R to M,
+  importance=fg-service`, mesuré le même jour).
 
 ---
 
