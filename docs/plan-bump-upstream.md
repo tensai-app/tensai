@@ -160,8 +160,8 @@ là et que la cible est mauvaise.
 
 ### 5. Régénérer les shaders
 
-Procédure dans le README depuis TEN-93. La sortie est déterministe pour un
-couple (commit llama.cpp, version de glslc) donné, donc les 136 fichiers vont
+Script `third_party/llama.kt/scripts/gen-vulkan-shaders.sh <glslc>` (voir le README). La sortie est déterministe pour un
+couple (commit llama.cpp, version de glslc) donné, donc les fichiers (132 aujourd'hui) vont
 changer, puisque le commit change.
 
 ### 6. Vérifications hors device
@@ -206,7 +206,7 @@ revenir.
 | `bootstrap.sh` échoue sur un patch hérité | les sources ont bougé sous lui | lire lequel, décider s'il est encore pertinent |
 | `patches/0002` n'applique plus | `rn-completion.cpp` a changé | le regénérer, ne pas le forcer |
 | `assembleDebug` casse au link | API llama.cpp changée | c'est le coût normal d'un bump, lire l'erreur |
-| Les shaders ne se régénèrent pas | `vulkan-shaders-gen` a changé d'arguments | c'est TEN-96, la procédure existe en trois exemplaires |
+| Les shaders ne se régénèrent pas | `vulkan-shaders-gen` a changé d'arguments | corriger `gen-vulkan-shaders.sh` (copie unique, TEN-96) |
 | `n_ctx` change sur un modèle | la dérivation KV a bougé | c'est grave, TEN-18 et TEN-72 en dépendent |
 
 ---

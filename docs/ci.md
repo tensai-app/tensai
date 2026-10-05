@@ -69,7 +69,7 @@ mois sans savoir si l'image du runner a bougé sous nos pieds.
 #### Le cache des shaders
 
 132 fichiers `*.comp.cpp` (134 Mo) plus `ggml-vulkan-shaders.hpp`, régénérés par
-la section Vulkan de `bootstrap.sh`. TEN-93 a établi que cette génération est
+`gen-vulkan-shaders.sh` (appelé par `bootstrap.sh`). TEN-93 a établi que cette génération est
 déterministe : le générateur trie avant d'écrire, il n'y a ni timestamp ni chemin
 absolu dans la sortie, et aucun `GGML_VULKAN_*_GLSLC_SUPPORT` n'est passé au
 `CMakeLists.txt` de `vulkan-shaders-gen`, donc aucune autodétection des capacités
@@ -158,7 +158,7 @@ Deux jeux d'artefacts que le build natif exige sont dans le `.gitignore` de
 
 | Artefact | Ignoré par | Produit par |
 |---|---|---|
-| `cpp/ggml-vulkan/shaders/*.comp.cpp` (132 fichiers, 134 Mo) + `ggml-vulkan-shaders.hpp` | règle explicite | `scripts/bootstrap.sh` § Vulkan |
+| `cpp/ggml-vulkan/shaders/*.comp.cpp` (132 fichiers, 134 Mo) + `ggml-vulkan-shaders.hpp` | règle explicite | `scripts/gen-vulkan-shaders.sh` |
 | `jniLibs/arm64-v8a/libOpenCL.so` | `*.so` | `scripts/build-opencl.sh` |
 
 Le lint tombait sur la même erreur : `:app:lintDebug` dépend de
@@ -168,8 +168,8 @@ parce qu'il ne pouvait pas démarrer.
 `native.yml` régénère les deux dans le job, met les shaders en cache et laisse
 `build-opencl.sh` refaire le `.so` à chaque run. La procédure à la main est dans
 le [README](../README.md#build-from-source), et l'étape « Generate Vulkan
-shaders » du workflow en est la transcription : **les deux sont à garder en
-phase**, il n'y a pas de script partagé qui l'imposerait.
+shaders » du workflow appellent le même script,
+`third_party/llama.kt/scripts/gen-vulkan-shaders.sh <glslc>` : une seule copie.
 
 Rien n'est committé : les 134 Mo de sources générées restent hors de
 l'historique.

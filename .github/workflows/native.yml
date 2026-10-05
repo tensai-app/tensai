@@ -131,43 +131,12 @@ jobs:
         working-directory: third_party/llama.kt
         run: git submodule update --init --depth 1 third_party/llama.cpp
 
-      # Section Vulkan de bootstrap.sh, réduite à ce dont un build a besoin.
-      # Procédure documentée dans le README ; la garder en phase avec lui.
-      # Le jeu de variantes est figé par le CMakeLists de vulkan-shaders-gen —
-      # aucun GGML_VULKAN_*_GLSLC_SUPPORT n'est passé, donc pas d'autodétection
-      # des capacités de l'hôte, donc une sortie qui ne dépend que de la clé.
+      # Une seule copie de la procédure : scripts/gen-vulkan-shaders.sh dans
+      # llama.kt, aussi appelé par bootstrap.sh et le README. Le script écrit
+      # exactement les chemins mis en cache ci-dessus.
       - name: Generate Vulkan shaders
         if: steps.shader-cache.outputs.cache-hit != 'true'
-        env:
-          GLSLC: ${{ steps.toolchain.outputs.glslc }}
-        run: |
-          set -euo pipefail
-          KT=third_party/llama.kt
-          SRC=$KT/third_party/llama.cpp/ggml/src/ggml-vulkan/vulkan-shaders
-          OUT=$KT/llama-kt/src/main/cpp/ggml-vulkan
-          WORK="$RUNNER_TEMP/vk"
-          mkdir -p "$WORK/spv" "$WORK/out" "$OUT/shaders"
-
-          cmake -S "$SRC" -B "$WORK/gen" -DCMAKE_BUILD_TYPE=Release -Wno-dev >/dev/null
-          cmake --build "$WORK/gen" -j"$(nproc)" >/dev/null
-
-          "$WORK/gen/vulkan-shaders-gen" \
-            --output-dir "$WORK/spv" --target-hpp "$WORK/out/ggml-vulkan-shaders.hpp"
-
-          for comp in "$SRC"/*.comp; do
-            "$WORK/gen/vulkan-shaders-gen" \
-              --glslc "$GLSLC" --source "$comp" --output-dir "$WORK/spv" \
-              --target-hpp "$WORK/out/ggml-vulkan-shaders.hpp" \
-              --target-cpp "$WORK/out/$(basename "$comp").cpp"
-          done
-
-          cp "$WORK/out/ggml-vulkan-shaders.hpp" "$OUT/"
-          for f in "$WORK/out"/*.comp.cpp; do
-            sed 's|#include "ggml-vulkan-shaders.hpp"|#include "../ggml-vulkan-shaders.hpp"|g' \
-              "$f" > "$OUT/shaders/$(basename "$f")"
-          done
-
-          rm -rf "$WORK"
+        run: third_party/llama.kt/scripts/gen-vulkan-shaders.sh "${{ steps.toolchain.outputs.glslc }}"
 
       # Vaut pour le hit comme pour le miss : un cache tronqué se verrait ici,
       # pas trois minutes plus tard dans une erreur de link illisible.

@@ -30,37 +30,15 @@ both, once.
 
 **2. Vulkan SPIR-V shaders**: 132 `.comp.cpp` files (134 MB) plus
 `ggml-vulkan-shaders.hpp`. `scripts/bootstrap.sh` produces them as part of a
-full re-vendoring of `cpp/`; if you only want to build, its Vulkan section on
-its own is enough:
+full re-vendoring of `cpp/`; if you only want to build, run the shader script
+on its own, with the path to your `glslc`:
 
 ```bash
-KT=third_party/llama.kt
-SRC=$KT/third_party/llama.cpp/ggml/src/ggml-vulkan/vulkan-shaders
-OUT=$KT/llama-kt/src/main/cpp/ggml-vulkan
-mkdir -p /tmp/vk-spv /tmp/vk-out "$OUT/shaders"
-
-cmake -S "$SRC" -B /tmp/vk-gen -DCMAKE_BUILD_TYPE=Release -Wno-dev
-cmake --build /tmp/vk-gen -j"$(nproc)"
-
-/tmp/vk-gen/vulkan-shaders-gen \
-  --output-dir /tmp/vk-spv --target-hpp /tmp/vk-out/ggml-vulkan-shaders.hpp
-
-for comp in "$SRC"/*.comp; do
-  /tmp/vk-gen/vulkan-shaders-gen \
-    --glslc "$(which glslc)" --source "$comp" --output-dir /tmp/vk-spv \
-    --target-hpp /tmp/vk-out/ggml-vulkan-shaders.hpp \
-    --target-cpp "/tmp/vk-out/$(basename "$comp").cpp"
-done
-
-cp /tmp/vk-out/ggml-vulkan-shaders.hpp "$OUT/"
-for f in /tmp/vk-out/*.comp.cpp; do
-  sed 's|#include "ggml-vulkan-shaders.hpp"|#include "../ggml-vulkan-shaders.hpp"|g' \
-    "$f" > "$OUT/shaders/$(basename "$f")"
-done
+./third_party/llama.kt/scripts/gen-vulkan-shaders.sh "$(which glslc)"
 ```
 
 Measured: 70 s on 22 cores, 106 s on 4, peaking around 1.1 GB resident across 16
-concurrent `glslc`, and 250 MB of intermediates under `/tmp`. The output is
+concurrent `glslc`, and 250 MB of intermediates under `/tmp` (removed on exit). The output is
 byte-for-byte deterministic for a given `llama.cpp` commit and `glslc` build, so
 it caches well. A different `glslc` version yields valid but different SPIR-V.
 
@@ -72,8 +50,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 CI does the same thing, in `.github/workflows/native.yml`: it regenerates both
-and caches the shaders. Keep that workflow and the snippet above in step with
-each other, see [docs/ci.md](docs/ci.md).
+and caches the shaders. It calls the same script, with the NDK `glslc`. See [docs/ci.md](docs/ci.md).
 
 Target hardware: arm64-v8a only, minSdk 29.
 
