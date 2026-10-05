@@ -441,9 +441,15 @@ document) et compter les threads entre deux classes :
 adb shell ps -T <pid> | grep llama-kt-engine | wc -l
 ```
 
-Attendu : **`1 + (n_threads - 1)` par moteur vivant**, soit **2** sur le device de
-référence, et surtout **jamais croissant** avec le nombre de classes exécutées.
-C'est la non-croissance qui prouve quelque chose, pas la valeur absolue.
+Attendu : **1 par moteur vivant au repos**, et **jamais croissant** avec le
+nombre de classes exécutées. C'est la non-croissance qui prouve quelque chose, pas
+la valeur absolue. Pendant un calcul, `n_threads - 1` workers s'y ajoutent (voir
+plus bas) : ne compter qu'entre deux calculs.
+
+Corrigé le 2026-10-05. Ce document attendait 2 permanents. Mesuré sur Qwen3-1.7B
+(`n_threads=2`, llama.cpp `99f3dc322`) : 1 au repos, 2 pendant le decode, et le
+second change de TID à chaque relevé. ggml-cpu crée ses workers à chaque calcul
+de graphe, il n'y a pas de pool persistant (pas d'OpenMP dans notre build).
 
 Ce document annonçait « 0 ou 1 », et c'était faux. Un seul moteur produit deux
 threads de ce nom : `LlamaKtEngineImpl.kt:71` crée l'executor mono-thread
