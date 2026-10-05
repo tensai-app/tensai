@@ -29,7 +29,9 @@ class ChatRepository(private val dao: ChatDao) {
 
     /**
      * Creates an empty conversation bound to [modelId] (nullable — see [ConversationEntity.modelId])
-     * and returns its id.
+     * and returns its id. The title starts empty (TEN-105): "untitled" is a display concern, so the
+     * UI renders it with the localized `drawer_new_chat` string instead of an English literal
+     * frozen into the row.
      */
     suspend fun createConversation(modelId: String?): String {
         val id = UUID.randomUUID().toString()
@@ -37,7 +39,7 @@ class ChatRepository(private val dao: ChatDao) {
         dao.insertConversation(
             ConversationEntity(
                 id = id,
-                title = "New chat",
+                title = "",
                 modelId = modelId,
                 samplingJson = null,
                 systemPrompt = null,

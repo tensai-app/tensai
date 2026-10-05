@@ -121,6 +121,7 @@ fun TensaiDrawerContent(
             // conversations pile up (TEN-59). weight(1f) also keeps that bottom block against the
             // bottom edge when there are only a handful, which is what the old trailing Spacer did.
             val currentConversations = conversations
+            val untitledLabel = stringResource(R.string.drawer_new_chat)
             LazyColumn(modifier = Modifier.weight(1f)) {
                 when {
                     currentConversations == null -> Unit // initial Room query hasn't emitted yet.
@@ -129,7 +130,7 @@ fun TensaiDrawerContent(
                         NavigationDrawerItem(
                             label = {
                                 Text(
-                                    text = conversation.title,
+                                    text = conversationLabel(conversation.title, untitledLabel),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -196,6 +197,13 @@ fun TensaiDrawerContent(
         }
     }
 }
+
+/**
+ * What a "Recents" row shows for a conversation [title] (TEN-105): the title itself, or
+ * [untitledLabel] (the localized "New chat") while it is still blank, i.e. before the first message
+ * names it. The row stores no display text for that state, so the label follows the app language.
+ */
+internal fun conversationLabel(title: String, untitledLabel: String): String = title.ifBlank { untitledLabel }
 
 /**
  * "Recents" empty state (TEN-39, state 1) — no conversation created yet.

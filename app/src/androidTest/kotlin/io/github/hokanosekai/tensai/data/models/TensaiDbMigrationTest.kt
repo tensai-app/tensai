@@ -203,6 +203,46 @@ class TensaiDbMigrationTest {
         cursor.close()
     }
 
+    /**
+     * TEN-105: an empty conversation still carrying the old English "New chat" placeholder comes
+     * out untitled (`''`), which the drawer renders in the app language. A conversation that has
+     * messages keeps its title even when it reads "New chat": that one was named after its first
+     * message, which happened to be that text. Any other title is left alone.
+     */
+    @Test
+    fun migrate8To9ClearsThePlaceholderTitleOfEmptyConversationsOnly() {
+        helper.createDatabase(testDbName, 8).apply {
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('empty', 'New chat', null, null, null, 1000, 1000, 1)",
+            )
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('named', 'New chat', null, null, null, 1000, 1000, 1)",
+            )
+            execSQL(
+                "INSERT INTO messages (id, conversationId, role, content, thinking, toolCallsJson, " +
+                    "tokensGenerated, tokPerSec, ttftMs, createdAt, stopReason) VALUES " +
+                    "('m1', 'named', 'user', 'New chat', null, null, null, null, null, 1000, null)",
+            )
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('other', 'Parse a GGUF header', null, null, null, 1000, 1000, 1)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 9, true, TensaiDbMigrations.MIGRATION_8_9)
+
+        fun titleOf(id: String): String = migrated.query("SELECT title FROM conversations WHERE id = '$id'").use {
+            assertTrue("expected conversation $id to still be there", it.moveToFirst())
+            it.getString(0)
+        }
+        assertEquals("", titleOf("empty"))
+        assertEquals("New chat", titleOf("named"))
+        assertEquals("Parse a GGUF header", titleOf("other"))
+    }
+
     /** The full chain still lands a v1 row on v8 intact, not just the single hop above. */
     @Test
     fun modelRowSurvivesV1ToV8() {

@@ -10,7 +10,8 @@ import androidx.room.PrimaryKey
  * @param id stable identifier — used as the nav arg for
  *   [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat].
  * @param title auto-derived from the first user message (truncated, see
- *   [ChatRepository.appendUserMessage]) — "New chat" until then.
+ *   [ChatRepository.appendUserMessage]), empty until then (TEN-105). Empty means untitled: the UI
+ *   shows the localized "New chat" string for it, nothing display-facing is stored here.
  * @param modelId the [io.github.hokanosekai.tensai.data.models.ModelEntity] this conversation was
  *   started against, or `null` if no model was loaded at creation time. Not a hard foreign key —
  *   the model can be deleted later while the conversation (and its history) remains.

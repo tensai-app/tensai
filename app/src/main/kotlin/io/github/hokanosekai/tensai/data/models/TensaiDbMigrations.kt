@@ -138,6 +138,26 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v8 -> v9 (TEN-105): no schema change, a data fix. [ConversationEntity.title] used to start as
+     * the English literal "New chat", which then showed in the drawer whatever the app language.
+     * New rows now start empty and the UI renders the localized string for an empty title; this
+     * brings the rows already stored in line, so "untitled" is one state (`''`) rather than two.
+     *
+     * Only conversations with no message are touched. Those are exactly the ones still carrying the
+     * default: [ChatRepository.appendUserMessage] replaces the title on the first message, so a row
+     * with messages and the title "New chat" is one whose first message was literally that text,
+     * and it keeps it.
+     */
+    val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "UPDATE `conversations` SET `title` = '' WHERE `title` = 'New chat' " +
+                    "AND NOT EXISTS (SELECT 1 FROM `messages` WHERE `messages`.`conversationId` = `conversations`.`id`)",
+            )
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -147,5 +167,6 @@ object TensaiDbMigrations {
         MIGRATION_5_6,
         MIGRATION_6_7,
         MIGRATION_7_8,
+        MIGRATION_8_9,
     )
 }
