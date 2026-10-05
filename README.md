@@ -54,6 +54,26 @@ and caches the shaders. It calls the same script, with the NDK `glslc`. See [doc
 
 Target hardware: arm64-v8a only, minSdk 29.
 
+### APK size
+
+Budget: **under 50 MB** for the release APK, models excluded. Measured on
+2026-10-05: **48.0 MB**.
+
+| Part | Size |
+|---|---|
+| `libllamakt.so`, stripped | 43.5 MB, of which 33.7 MB are the embedded Vulkan shaders |
+| `classes.dex` (R8) | 2.7 MB |
+| `libc++_shared.so` and the rest | ~1.8 MB |
+
+Native libs are stored uncompressed, the Android default since API 23: the
+loader maps them straight from the APK, so nothing is extracted on install.
+Compressing them (`packaging.jniLibs.useLegacyPackaging = true`) would bring the
+download to about 18 MB, at the cost of a 43 MB extracted copy on the device.
+The download is a one-off; the copy stays. Hence the default.
+
+The app module declares the same `ndkVersion` as llama-kt so AGP can strip the
+native libs: without it the release shipped them with full debug info, 164 MB.
+
 ## Architecture
 
 The app consumes [llama.kt](https://github.com/hokanosekai/llama.kt) (Kotlin/JNI binding for llama.cpp) as a git submodule (`third_party/llama.kt`), included as the `:llama-kt` Gradle module.

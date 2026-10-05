@@ -8,6 +8,11 @@ plugins {
 android {
     namespace = "io.github.hokanosekai.tensai"
     compileSdk = 35
+    // Same NDK as llama-kt. The app module packages the native libs, and AGP strips them with
+    // its own module's NDK: without this it looked for its default NDK, which isn't installed,
+    // logged "Unable to strip ... packaging them as they are" and shipped libllamakt.so with
+    // full debug info, 158 MB instead of 43 MB (TEN-41).
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "io.github.hokanosekai.tensai"
