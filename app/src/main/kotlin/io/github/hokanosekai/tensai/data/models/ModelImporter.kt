@@ -103,6 +103,22 @@ internal class ModelImporter(
                 throw ModelMetadataException(sourceName, e)
             }
 
+            // A header that parses is not a model that loads (TEN-98). A GGUF with zero tensors
+            // reads as paramCount 0, and llama.cpp needs `<arch>.block_count` for every LLM arch,
+            // so blockCount 0 means it can never load either, yet the old code imported it and
+            // the Models screen called it "Runs well" (the TEN-91 fixture, 260 bytes). Same
+            // classification as an unparseable header, so the same message and the same cleanup.
+            // Real models clear it easily: Gemma-4 E2B 4.6e9 params / 35 blocks, Phi-4-mini
+            // 3.8e9 / 32, Qwen3-1.7B 1.7e9 / 28.
+            if (info.paramCount <= 0 || info.blockCount <= 0) {
+                throw ModelMetadataException(
+                    sourceName,
+                    IllegalStateException(
+                        "GGUF has no usable model: paramCount=${info.paramCount}, blockCount=${info.blockCount}",
+                    ),
+                )
+            }
+
             val entity = ModelEntity(
                 id = UUID.randomUUID().toString(),
                 displayName = info.name.takeIf { it.isNotBlank() } ?: sourceName.removeSuffix(".gguf"),

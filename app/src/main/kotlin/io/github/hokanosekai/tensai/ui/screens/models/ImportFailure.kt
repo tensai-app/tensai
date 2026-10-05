@@ -34,7 +34,10 @@ sealed interface ImportFailure {
      */
     data class NotEnoughSpace(val neededBytes: Long, val freeBytes: Long) : ImportFailure
 
-    /** The file copied fine but its GGUF header didn't parse — it is probably not a GGUF at all. */
+    /**
+     * The file copied fine but isn't a loadable model: its GGUF header didn't parse, or it parsed
+     * with no tensors / no block count (TEN-98). Either way it is probably not a usable GGUF.
+     */
     data class NotAModelFile(val fileName: String) : ImportFailure
 
     /** The copy itself broke partway (source went away, storage error, …). The partial copy is gone. */

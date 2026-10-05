@@ -166,6 +166,35 @@ class ModelImporterTest {
     }
 
     /**
+     * TEN-98: a header that parses but describes no model (zero tensors, the TEN-91 fixture) can
+     * never load, so it is refused like an unparseable one and nothing is kept.
+     */
+    @Test
+    fun aGgufWithZeroParametersIsRejectedAndLeavesNothingBehind() = runBlocking {
+        importer = newImporter(readMetadata = { ggufInfo(paramCount = 0) })
+        assertRejectedAsNotAModel()
+    }
+
+    /** Same for a missing block count: llama.cpp requires `<arch>.block_count`. */
+    @Test
+    fun aGgufWithZeroBlocksIsRejectedAndLeavesNothingBehind() = runBlocking {
+        importer = newImporter(readMetadata = { ggufInfo(blockCount = 0) })
+        assertRejectedAsNotAModel()
+    }
+
+    private suspend fun assertRejectedAsNotAModel() {
+        try {
+            importer.import("model.gguf", 64, plentyOfSpace, { ByteArrayInputStream(ByteArray(64)) }) {}
+            fail("expected ModelMetadataException")
+        } catch (expected: ModelMetadataException) {
+            assertEquals("model.gguf", expected.fileName)
+        }
+
+        assertEquals("the copy must be removed", emptyList<String>(), filesOnDisk())
+        assertTrue("no row may be inserted", dao.rows.isEmpty())
+    }
+
+    /**
      * The reservation is a real file from the moment it is made, so the empty file it leaves
      * behind has to be cleaned up on the same path as a half-written one. This is the case the
      * atomic-creation approach opens and this is where it is closed: the failure here happens
@@ -383,14 +412,14 @@ class ModelImporterTest {
         }
     }
 
-    private fun ggufInfo() = GgufInfo(
+    private fun ggufInfo(paramCount: Long = 1_700_000_000, blockCount: Long = 28) = GgufInfo(
         architecture = "qwen3",
         name = "",
         quantLabel = "Q4_K_M",
         contextLength = 4096,
         embeddingLength = 2048,
-        blockCount = 28,
-        paramCount = 1_700_000_000,
+        blockCount = blockCount,
+        paramCount = paramCount,
         vocabSize = 151_936,
         fileSizeBytes = 0,
         supportsThinking = true,
