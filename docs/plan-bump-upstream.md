@@ -127,6 +127,10 @@ git -C third_party/llama.cpp checkout 99f3dc32296f825fec94f202da1e9fede1e78cf9
 
 Le SHA de llama.rn v0.12.6 se lit par `gh api repos/mybigday/llama.rn/git/refs/tags/v0.12.6`.
 
+**Commiter le gitlink de llama.cpp dans llama.kt avant l'étape 2.** `bootstrap.sh`
+lit le pin voulu dans `HEAD` : un checkout non commité le fait échouer (TEN-103),
+alors qu'avant il remettait l'ancien llama.cpp en silence.
+
 ### 2. Lancer `bootstrap.sh`
 
 C'est la première exécution complète depuis TEN-87. Le script vérifie désormais
