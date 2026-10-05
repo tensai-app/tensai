@@ -35,8 +35,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
@@ -155,7 +157,7 @@ fun OnboardingScreen(
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 if (step != OnboardingStep.Ready) {
-                    TextButton(onClick = ::skip) { Text("Skip") }
+                    TextButton(onClick = ::skip) { Text(stringResource(R.string.onboarding_skip)) }
                 } else {
                     Spacer(modifier = Modifier.height(48.dp))
                 }
@@ -208,14 +210,14 @@ private fun WelcomeStep(onContinue: () -> Unit, modifier: Modifier = Modifier) {
             modifier = Modifier.padding(top = 24.dp),
         )
         Text(
-            text = "A local AI agent, running fully on your phone. Nothing leaves the device.",
+            text = stringResource(R.string.onboarding_welcome_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 12.dp),
         )
         Button(onClick = onContinue, modifier = Modifier.padding(top = 32.dp)) {
-            Text("Get started")
+            Text(stringResource(R.string.onboarding_get_started))
         }
     }
 }
@@ -234,17 +236,16 @@ private fun ImportStep(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(text = "Bring a model", style = MaterialTheme.typography.headlineSmall)
+        Text(text = stringResource(R.string.onboarding_import_title), style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = "tensai runs GGUF models straight off your storage. Download one on your " +
-                "computer, copy it to the phone, then pick it here.",
+            text = stringResource(R.string.onboarding_import_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
         )
 
         Text(
-            text = "Good starting points",
+            text = stringResource(R.string.onboarding_suggestions_title),
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(top = 20.dp),
         )
@@ -286,7 +287,7 @@ private fun ImportStep(
                 modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
             )
             Text(
-                text = "Copying into tensai…",
+                text = stringResource(R.string.onboarding_copying),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
@@ -321,7 +322,7 @@ private fun ImportStep(
                 }
             }
             Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                Text("Continue")
+                Text(stringResource(R.string.onboarding_continue))
             }
         } else {
             OutlinedButton(
@@ -329,7 +330,7 @@ private fun ImportStep(
                 enabled = importProgress == null,
                 modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
             ) {
-                Text("Import a GGUF file")
+                Text(stringResource(R.string.models_import))
             }
         }
     }
@@ -345,9 +346,9 @@ private fun PreferencesStep(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(text = "How should it run?", style = MaterialTheme.typography.headlineSmall)
+        Text(text = stringResource(R.string.onboarding_setup_title), style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = "You can change both later, in Settings.",
+            text = stringResource(R.string.onboarding_setup_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
@@ -356,48 +357,48 @@ private fun PreferencesStep(
         // `SettingsViewModel` takes the very same [ThemeRepository]/[BackendRepository] this step
         // does, through `RuntimeGraph`) — there is one answer per preference in this app, not one
         // per screen that offers it.
-        Text(text = "Backend", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 24.dp))
+        Text(text = stringResource(R.string.onboarding_backend), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 24.dp))
         ChoiceCard(
-            title = "Auto",
-            subtitle = "Recommended — picks CPU or GPU per model",
+            title = stringResource(R.string.settings_backend_auto),
+            subtitle = stringResource(R.string.settings_backend_auto_subtitle),
             selected = backend == BackendPreference.Auto,
             onClick = { onBackendChange(BackendPreference.Auto) },
         )
         ChoiceCard(
-            title = "CPU",
-            subtitle = "Fastest for most dense models on this class of phone",
+            title = stringResource(R.string.settings_backend_cpu),
+            subtitle = stringResource(R.string.settings_backend_cpu_subtitle),
             selected = backend == BackendPreference.Cpu,
             onClick = { onBackendChange(BackendPreference.Cpu) },
         )
         ChoiceCard(
-            title = "GPU",
-            subtitle = "Vulkan offload, when the device has it",
+            title = stringResource(R.string.onboarding_backend_gpu),
+            subtitle = stringResource(R.string.onboarding_backend_gpu_subtitle),
             selected = backend == BackendPreference.Gpu,
             onClick = { onBackendChange(BackendPreference.Gpu) },
         )
 
-        Text(text = "Theme", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 24.dp))
+        Text(text = stringResource(R.string.settings_theme), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 24.dp))
         ChoiceCard(
-            title = "System",
-            subtitle = "Follows your phone's day/night setting",
+            title = stringResource(R.string.settings_theme_system),
+            subtitle = stringResource(R.string.settings_theme_system_subtitle),
             selected = theme == ThemeMode.System,
             onClick = { onThemeChange(ThemeMode.System) },
         )
         ChoiceCard(
-            title = "Calm Night",
-            subtitle = "Dark, always",
+            title = stringResource(R.string.settings_theme_dark),
+            subtitle = stringResource(R.string.settings_theme_dark_subtitle),
             selected = theme == ThemeMode.Dark,
             onClick = { onThemeChange(ThemeMode.Dark) },
         )
         ChoiceCard(
-            title = "Light",
-            subtitle = "Light, always",
+            title = stringResource(R.string.settings_theme_light),
+            subtitle = stringResource(R.string.settings_theme_light_subtitle),
             selected = theme == ThemeMode.Light,
             onClick = { onThemeChange(ThemeMode.Light) },
         )
 
         Button(onClick = onContinue, modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) {
-            Text("Continue")
+            Text(stringResource(R.string.onboarding_continue))
         }
     }
 }
@@ -411,20 +412,21 @@ private fun ReadyStep(model: ModelEntity?, onStart: () -> Unit, modifier: Modifi
     ) {
         KanjiGlyph(size = 96.dp, glow = true)
         Text(
-            text = model?.let { "${it.displayName} is ready" } ?: "You're set",
+            text = model?.let { stringResource(R.string.onboarding_ready_title, it.displayName) }
+                ?: stringResource(R.string.onboarding_ready_title_no_model),
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 24.dp),
         )
         Text(
-            text = "Loading a model takes a few seconds — it stays in memory afterwards.",
+            text = stringResource(R.string.onboarding_ready_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 12.dp),
         )
         Button(onClick = onStart, modifier = Modifier.padding(top = 32.dp)) {
-            Text("Start chatting")
+            Text(stringResource(R.string.onboarding_start_chatting))
         }
     }
 }

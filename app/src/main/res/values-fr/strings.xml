@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     French translation of values/strings.xml (TEN-41). Same keys, same placeholders: StringsParityTest
+     fails the build if either drifts.
+
+     Conventions: neutral product UI register, actions in the infinitive, no "vous"/"tu" when a
+     neutral phrasing exists. French typography: a non-breaking space ( ) before : ; ? ! and %,
+     and inside « ». Technical terms French developers use as-is stay as-is (GGUF, token, prompt,
+     backend, CPU, GPU, Vulkan, KV cache).
+-->
+<resources>
+
+    <!-- Greetings. -->
+    <string name="home_greeting_morning">Bonjour.</string>
+    <string name="home_greeting_afternoon">Bon après-midi.</string>
+    <string name="home_greeting_evening">Bonsoir.</string>
+    <string name="home_greeting_night">Toujours debout.</string>
+
+    <string name="home_subtitle">Tout ici tourne sur cet appareil.</string>
+
+    <!-- Suggestion chips: both label and prompt. -->
+    <string name="home_suggestion_summarize_log">Résumer un log</string>
+    <string name="home_suggestion_explain_error">Expliquer cette erreur</string>
+    <string name="home_suggestion_draft_reply">Rédiger une réponse</string>
+    <string name="home_suggestion_commit_message">Écrire un message de commit</string>
+
+    <string name="home_pill_load_model">Charger %1$s pour commencer…</string>
+    <string name="home_pill_no_model">Importer un modèle pour commencer</string>
+
+    <!-- ==================== Settings (TEN-38) ==================== -->
+
+    <string name="settings_group_appearance">Apparence</string>
+    <string name="settings_group_inference">Inférence</string>
+    <string name="settings_group_storage">Stockage</string>
+    <string name="settings_group_about">À propos</string>
+
+    <string name="settings_theme">Thème</string>
+    <string name="settings_theme_system">Système</string>
+    <string name="settings_theme_system_subtitle">Suit le réglage jour/nuit du téléphone</string>
+    <string name="settings_theme_dark">Nuit calme</string>
+    <string name="settings_theme_dark_subtitle">Sombre, toujours</string>
+    <string name="settings_theme_light">Clair</string>
+    <string name="settings_theme_light_subtitle">Clair, toujours</string>
+
+    <string name="settings_language">Langue</string>
+    <string name="settings_language_system">Système</string>
+
+    <string name="settings_backend">Backend par défaut</string>
+    <string name="settings_backend_auto">Auto</string>
+    <string name="settings_backend_auto_subtitle">Recommandé : choisit CPU ou GPU selon le modèle</string>
+    <string name="settings_backend_cpu">CPU</string>
+    <string name="settings_backend_cpu_subtitle">Le plus rapide pour la plupart des modèles denses sur cette gamme de téléphones</string>
+    <string name="settings_backend_gpu">Vulkan</string>
+    <string name="settings_backend_gpu_subtitle">Calcul déporté sur le GPU, si l\'appareil le prend en charge</string>
+
+    <string name="settings_context_size">Taille du contexte</string>
+    <plurals name="settings_context_size_value">
+        <item quantity="one">%1$d token</item>
+        <item quantity="many">%1$d tokens</item>
+        <item quantity="other">%1$d tokens</item>
+    </plurals>
+    <string name="settings_kv_cache">Type de KV cache</string>
+    <string name="settings_kv_cache_value">%1$s · %2$s</string>
+    <string name="settings_inference_chosen_auto">auto</string>
+    <string name="settings_inference_in_use">Utilisé par %1$s</string>
+    <string name="settings_inference_planned">Prévu pour %1$s, choisi à chaque chargement selon la mémoire libre</string>
+    <string name="settings_inference_no_model">Aucun modèle chargé ni présent sur l\'appareil</string>
+
+    <string name="settings_storage_models">Modèles</string>
+    <string name="settings_storage_models_usage">%1$s sur %2$s</string>
+    <string name="settings_storage_manage_models">Gérer les modèles</string>
+    <string name="settings_storage_sessions">Sessions enregistrées</string>
+    <!-- French "one" covers 0 and 1. -->
+    <plurals name="settings_storage_sessions_usage">
+        <item quantity="one">%1$s pour %2$d session</item>
+        <item quantity="many">%1$s pour %2$d sessions</item>
+        <item quantity="other">%1$s pour %2$d sessions</item>
+    </plurals>
+    <string name="settings_storage_sessions_empty">Rien d\'enregistré</string>
+    <string name="settings_storage_sessions_explainer">Les sessions enregistrées permettent de reprendre une conversation sans relire tout son historique. Les effacer libère de l\'espace ; les conversations elles-mêmes sont conservées.</string>
+    <string name="settings_storage_clear">Effacer</string>
+    <string name="settings_storage_clear_title">Effacer les sessions enregistrées ?</string>
+    <string name="settings_storage_clear_body">Tous les états de conversation enregistrés seront supprimés de cet appareil. Les conversations et les modèles ne sont pas touchés, et une réponse en cours de génération continue : elle devra simplement relire son historique à sa prochaine ouverture.</string>
+    <string name="settings_storage_clear_confirm">Effacer</string>
+    <string name="settings_storage_clear_cancel">Annuler</string>
+    <string name="settings_storage_cleared">Effacé : %1$s libérés</string>
+    <string name="settings_storage_cleared_nothing">Rien à effacer</string>
+
+    <string name="settings_version">Version</string>
+    <string name="settings_licenses">Licences open source</string>
+    <string name="settings_license_line">%1$s · %2$s</string>
+
+    <!-- ==================== Empty states and errors (TEN-39) ==================== -->
+
+    <string name="drawer_recents_empty">Aucune discussion pour l\'instant</string>
+
+    <string name="model_compat_runs_well">Fonctionne bien</string>
+    <string name="model_compat_tight_fit">Juste</string>
+    <string name="model_compat_wont_fit">Ne tiendra pas</string>
+    <string name="model_compat_explanation">nécessite ~%1$s, le téléphone dispose de %2$s</string>
+    <string name="model_compat_load_anyway">Charger quand même</string>
+
+    <string name="models_storage_low_title">Stockage presque plein</string>
+    <string name="models_storage_low_body">Plus que %1$s disponibles, et les modèles présents occupent %2$s chacun en moyenne.</string>
+    <string name="models_storage_free_up">Libérer de l\'espace</string>
+
+    <string name="import_failed_title">L\'import n\'a pas abouti</string>
+    <string name="import_failed_already_imported">%1$s fait déjà partie des modèles.</string>
+    <string name="import_failed_no_space">Ce fichier nécessite %1$s et seuls %2$s sont libres. Supprimer un modèle et réessayer.</string>
+    <string name="import_failed_not_a_model">%1$s n\'est pas un fichier de modèle GGUF, ou la copie est endommagée.</string>
+    <string name="import_failed_copy_interrupted">La copie de %1$s s\'est arrêtée avant la fin. Rien n\'a été conservé.</string>
+    <string name="import_failed_unknown">L\'import s\'est arrêté avant la fin. Rien n\'a été conservé.</string>
+    <string name="import_failed_retry">Réessayer</string>
+    <string name="import_failed_dismiss">Ignorer</string>
+
+    <string name="load_failed_title">Impossible de charger ce modèle</string>
+    <string name="load_failed_unreadable">Ce fichier est peut-être endommagé, ou ce n\'est pas un modèle que l\'application sait exécuter. Le réimporter n\'aide que si la copie était endommagée.</string>
+    <string name="load_failed_busy">Le modèle était encore utilisé par autre chose. Patienter un instant et réessayer.</string>
+    <string name="load_failed_unknown">Le chargement s\'est arrêté avant la fin.</string>
+
+    <string name="chat_generation_failed">Cette réponse n\'a pas abouti. Réessayer ?</string>
+    <string name="chat_generation_failed_retry">Réessayer</string>
+    <string name="chat_generation_failed_dismiss">Ignorer</string>
+
+    <string name="chat_reply_failed">échec de la génération</string>
+    <string name="chat_reply_stopped">interrompue</string>
+
+    <!-- ==================== Server, V2 preview (TEN-40) ==================== -->
+
+    <string name="server_title">Serveur d\'API</string>
+    <string name="server_explainer">Exposer les modèles sur le réseau local et discuter depuis n\'importe quel appareil</string>
+    <string name="server_coming_in_v2">Prévu pour la V2</string>
+    <string name="server_serve_on_lan">Servir sur le LAN</string>
+
+    <!-- ==================== Strings moved out of composables (TEN-41) ==================== -->
+
+    <!-- Shared actions. -->
+    <string name="action_back">Retour</string>
+    <string name="action_cancel">Annuler</string>
+    <string name="action_close">Fermer</string>
+    <string name="action_dismiss">Ignorer</string>
+
+    <!-- Navigation: drawer, top bars. -->
+    <string name="nav_models">Modèles</string>
+    <string name="nav_settings">Paramètres</string>
+    <string name="nav_server">Serveur</string>
+    <string name="drawer_new_chat">Nouvelle discussion</string>
+    <string name="drawer_recents">Récentes</string>
+    <string name="top_bar_no_model">aucun modèle</string>
+    <string name="top_bar_open_menu">Ouvrir le menu</string>
+
+    <!-- Chat input pill. -->
+    <string name="input_placeholder">Écrire à tensai…</string>
+    <string name="input_send">Envoyer</string>
+    <string name="input_stop">Arrêter</string>
+
+    <!-- Chat screen and its conversation settings sheet. -->
+    <string name="chat_jump_to_latest">Aller au dernier message</string>
+    <string name="chat_no_model_loaded">Aucun modèle chargé</string>
+    <string name="chat_load_a_model">Charger un modèle</string>
+    <string name="chat_context_full">Cette conversation est pleine : démarrer une nouvelle discussion pour continuer</string>
+    <string name="chat_thinking_toggle">Réflexion</string>
+    <string name="chat_regenerate">Régénérer</string>
+    <string name="chat_settings_title">Paramètres de la conversation</string>
+    <string name="chat_settings_system_prompt">Prompt système</string>
+    <string name="chat_settings_system_prompt_none">Aucun</string>
+    <string name="chat_settings_temperature">Température</string>
+    <string name="chat_settings_max_tokens">Tokens max</string>
+    <string name="chat_settings_reset_sampling">Réinitialiser l\'échantillonnage</string>
+    <string name="chat_settings_stop_sequences">Séquences d\'arrêt</string>
+    <string name="chat_settings_stop_sequences_help">Une par ligne, %1$d au maximum. Les espaces comptent.</string>
+
+    <!-- Per-reply stats chip suffixes. -->
+    <string name="chat_stats_cut_reasoning">coupé pendant le raisonnement</string>
+    <string name="chat_stats_cut_limit">coupé à la limite</string>
+    <string name="chat_stats_cut_context">coupé, conversation pleine</string>
+
+    <!-- Reasoning block above a reply. -->
+    <string name="thinking_active">Réflexion…</string>
+    <string name="thinking_done">Raisonnement</string>
+    <string name="thinking_expand">Développer</string>
+    <string name="thinking_collapse">Réduire</string>
+
+    <!-- Code blocks in a reply. -->
+    <string name="markdown_copy_code">Copier le code</string>
+    <string name="markdown_code_copied">Copié</string>
+
+    <!-- Models list, model card and model detail. -->
+    <string name="models_import">Importer un fichier GGUF</string>
+    <string name="models_empty_title">Aucun modèle pour l\'instant</string>
+    <string name="models_empty_body">Importer un fichier GGUF pour commencer.</string>
+    <string name="model_load">Charger le modèle</string>
+    <string name="model_delete">Supprimer le modèle</string>
+    <string name="model_remove">Retirer</string>
+    <string name="model_loaded_badge">chargé</string>
+    <string name="model_file_missing">Fichier manquant</string>
+    <string name="model_removed">Ce modèle a été supprimé.</string>
+    <string name="model_delete_named">Supprimer « %1$s »</string>
+    <string name="model_delete_confirm_title">Supprimer « %1$s » ?</string>
+    <string name="model_delete_confirm_body">Le fichier du modèle sera supprimé de cet appareil. Cette action est irréversible.</string>
+    <string name="model_delete_confirm">Supprimer</string>
+    <string name="model_delete_in_use">Impossible de supprimer « %1$s » tant qu\'il est chargé.</string>
+    <string name="model_param_count">%1$s paramètres</string>
+    <string name="model_detail_file_missing">Fichier manquant : le réimporter pour utiliser ce modèle.</string>
+    <string name="model_detail_architecture">Architecture</string>
+    <string name="model_detail_parameters">Paramètres</string>
+    <string name="model_detail_quantization">Quantification</string>
+    <string name="model_detail_context_length">Longueur de contexte</string>
+    <plurals name="model_detail_context_length_value">
+        <item quantity="one">%1$d token</item>
+        <item quantity="many">%1$d tokens</item>
+        <item quantity="other">%1$d tokens</item>
+    </plurals>
+    <string name="model_detail_file_size">Taille du fichier</string>
+    <string name="model_detail_thinking">Mode réflexion</string>
+    <string name="model_detail_supported">Pris en charge</string>
+    <string name="model_detail_not_supported">Non pris en charge</string>
+    <string name="model_detail_recommended_backend">Backend recommandé</string>
+    <string name="model_detail_estimated_memory">Mémoire estimée</string>
+    <string name="model_detail_saved_sessions">Sessions enregistrées</string>
+    <string name="model_detail_coming_soon">Bientôt disponible.</string>
+
+    <!-- Loading screen and its dialogs. -->
+    <string name="loading_progress">chargement en mémoire · %1$s / %2$s GB</string>
+    <string name="loading_continue_in_background">Continuer en arrière-plan</string>
+    <string name="loading_file_missing_body">Le fichier de ce modèle est manquant : le réimporter pour charger « %1$s ».</string>
+    <string name="loading_back_to_models">Retour aux modèles</string>
+    <string name="loading_blocked_title">« %1$s » ne tiendra probablement pas en mémoire</string>
+    <string name="loading_see_smaller_models">Voir des modèles plus légers</string>
+    <string name="loading_oom_title">Mémoire insuffisante</string>
+    <string name="loading_oom_body">%1$s ne tient pas en mémoire. Essayer une quantification plus légère.</string>
+    <string name="loading_retry">Réessayer</string>
+    <string name="loading_retry_on_cpu">Réessayer sur CPU</string>
+
+    <!-- First-run onboarding (TEN-36). -->
+    <string name="onboarding_skip">Passer</string>
+    <string name="onboarding_welcome_body">Un agent IA local, qui tourne entièrement sur le téléphone. Rien ne quitte l\'appareil.</string>
+    <string name="onboarding_get_started">Commencer</string>
+    <string name="onboarding_import_title">Ajouter un modèle</string>
+    <string name="onboarding_import_body">tensai exécute les modèles GGUF directement depuis le stockage. En télécharger un sur un ordinateur, le copier sur le téléphone, puis le sélectionner ici.</string>
+    <string name="onboarding_suggestions_title">Bons points de départ</string>
+    <string name="onboarding_copying">Copie dans tensai…</string>
+    <string name="onboarding_continue">Continuer</string>
+    <string name="onboarding_setup_title">Comment l\'exécuter ?</string>
+    <string name="onboarding_setup_body">Ces deux choix restent modifiables plus tard, dans Paramètres.</string>
+    <string name="onboarding_backend">Backend</string>
+    <string name="onboarding_backend_gpu">GPU</string>
+    <string name="onboarding_backend_gpu_subtitle">Calcul déporté via Vulkan, si l\'appareil le prend en charge</string>
+    <string name="onboarding_ready_title">%1$s est prêt</string>
+    <string name="onboarding_ready_title_no_model">Tout est prêt</string>
+    <string name="onboarding_ready_body">Le chargement d\'un modèle prend quelques secondes, puis il reste en mémoire.</string>
+    <string name="onboarding_start_chatting">Commencer à discuter</string>
+
+    <!-- Foreground-service notification (InferenceService). -->
+    <string name="notification_channel_name">Inférence</string>
+    <string name="notification_channel_description">État du chargement des modèles et de la génération</string>
+    <string name="notification_loading_title">Chargement du modèle…</string>
+    <string name="notification_loading_progress">%1$d %%</string>
+    <string name="notification_ready_title">%1$s chargé</string>
+    <string name="notification_ready_text">Prêt · toucher pour ouvrir</string>
+    <string name="notification_action_unload">Décharger</string>
+    <string name="notification_generating_title">%1$s réfléchit…</string>
+    <string name="notification_action_stop">Arrêter</string>
+    <string name="notification_idle_title">Inactif</string>
+
+</resources>

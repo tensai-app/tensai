@@ -88,7 +88,7 @@ internal fun ModelCard(
                 if (isLoaded) {
                     Surface(shape = TensaiShapes.extraLarge, color = MaterialTheme.tensaiTints.primary12) {
                         Text(
-                            text = "loaded",
+                            text = stringResource(R.string.model_loaded_badge),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -98,7 +98,7 @@ internal fun ModelCard(
                 IconButton(onClick = { onDeleteClick(fileExists) }, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete \"${model.displayName}\"",
+                        contentDescription = stringResource(R.string.model_delete_named, model.displayName),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -137,7 +137,7 @@ internal fun ModelCard(
                 }
             } else if (fileExists) {
                 Button(onClick = onLoadClick, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                    Text("Load model")
+                    Text(stringResource(R.string.model_load))
                 }
             } else {
                 Button(
@@ -148,7 +148,7 @@ internal fun ModelCard(
                     ),
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 ) {
-                    Text("Remove")
+                    Text(stringResource(R.string.model_remove))
                 }
             }
         }
@@ -161,7 +161,7 @@ private fun MissingFileBadge(modifier: Modifier = Modifier) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
         Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
         Text(
-            text = "File missing",
+            text = stringResource(R.string.model_file_missing),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

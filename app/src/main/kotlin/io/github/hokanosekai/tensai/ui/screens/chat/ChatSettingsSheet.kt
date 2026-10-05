@@ -28,8 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.SamplingRanges
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
@@ -98,7 +100,7 @@ fun ChatSettingsSheet(
                 .padding(bottom = 32.dp),
         ) {
             Text(
-                text = "Conversation settings",
+                text = stringResource(R.string.chat_settings_title),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
@@ -109,8 +111,8 @@ fun ChatSettingsSheet(
                     promptDraft = it
                     onSystemPromptChange(it)
                 },
-                label = { Text("System prompt") },
-                placeholder = { Text("None") },
+                label = { Text(stringResource(R.string.chat_settings_system_prompt)) },
+                placeholder = { Text(stringResource(R.string.chat_settings_system_prompt_none)) },
                 minLines = 2,
                 maxLines = 6,
                 textStyle = MaterialTheme.typography.bodyMedium,
@@ -123,7 +125,7 @@ fun ChatSettingsSheet(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 ) {
                     Text(
-                        text = "Thinking",
+                        text = stringResource(R.string.chat_thinking_toggle),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
@@ -135,7 +137,7 @@ fun ChatSettingsSheet(
 
             key(resetSeed) {
                 FloatSetting(
-                    label = "Temperature",
+                    label = stringResource(R.string.chat_settings_temperature),
                     initial = draft.temperature,
                     range = SamplingRanges.Temperature,
                     onCommit = { commit(draft.copy(temperature = it)) },
@@ -159,7 +161,7 @@ fun ChatSettingsSheet(
                     onCommit = { commit(draft.copy(topK = it)) },
                 )
                 IntSetting(
-                    label = "Max tokens",
+                    label = stringResource(R.string.chat_settings_max_tokens),
                     initial = draft.maxTokens,
                     range = SamplingRanges.MaxTokens,
                     onCommit = { commit(draft.copy(maxTokens = it)) },
@@ -181,7 +183,7 @@ fun ChatSettingsSheet(
             ) {
                 // Named for what it touches: the system prompt above is deliberately not reset,
                 // see ChatRepository.resetSampling.
-                Text("Reset sampling to defaults")
+                Text(stringResource(R.string.chat_settings_reset_sampling))
             }
         }
     }
@@ -307,8 +309,10 @@ private fun StopSequencesField(initial: List<String>, onCommit: (List<String>) -
             text = it
             onCommit(stopSequencesFromText(it))
         },
-        label = { Text("Stop sequences") },
-        supportingText = { Text("One per line, up to ${SamplingRanges.MaxStopSequences}. Spaces count.") },
+        label = { Text(stringResource(R.string.chat_settings_stop_sequences)) },
+        supportingText = {
+            Text(stringResource(R.string.chat_settings_stop_sequences_help, SamplingRanges.MaxStopSequences))
+        },
         textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = TensaiMono),
         modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(vertical = 8.dp),
     )

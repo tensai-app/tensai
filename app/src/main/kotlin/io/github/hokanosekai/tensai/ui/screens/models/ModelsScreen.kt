@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
@@ -86,13 +87,14 @@ fun ModelsScreen(
     var pendingDelete by remember { mutableStateOf<ModelEntity?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     fun deleteModel(model: ModelEntity) {
         scope.launch {
             try {
                 repository.deleteModel(model.id)
             } catch (e: ModelInUseException) {
-                snackbarHostState.showSnackbar(e.message ?: "Cannot delete this model.")
+                snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, model.displayName))
             }
         }
     }
@@ -187,7 +189,7 @@ fun ModelsScreen(
                             onClick = ::launchImport,
                             modifier = Modifier.fillMaxWidth().padding(16.dp),
                         ) {
-                            Text("Import a GGUF file")
+                            Text(stringResource(R.string.models_import))
                         }
                     }
                 }
@@ -196,18 +198,18 @@ fun ModelsScreen(
             pendingDelete?.let { model ->
                 AlertDialog(
                     onDismissRequest = { pendingDelete = null },
-                    title = { Text("Delete \"${model.displayName}\"?") },
-                    text = { Text("This removes the model file from this device. This can't be undone.") },
+                    title = { Text(stringResource(R.string.model_delete_confirm_title, model.displayName)) },
+                    text = { Text(stringResource(R.string.model_delete_confirm_body)) },
                     confirmButton = {
                         TextButton(onClick = {
                             pendingDelete = null
                             deleteModel(model)
                         }) {
-                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.model_delete_confirm), color = MaterialTheme.colorScheme.error)
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                        TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.action_cancel)) }
                     },
                 )
             }
@@ -355,18 +357,18 @@ private fun EmptyModelsState(onImportClick: () -> Unit, modifier: Modifier = Mod
     ) {
         KanjiGlyph(size = 72.dp, modifier = Modifier.alpha(0.4f))
         Text(
-            text = "No models yet",
+            text = stringResource(R.string.models_empty_title),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            text = "Import a GGUF file to get started.",
+            text = stringResource(R.string.models_empty_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
         OutlinedButton(onClick = onImportClick, modifier = Modifier.padding(top = 20.dp)) {
-            Text("Import a GGUF file")
+            Text(stringResource(R.string.models_import))
         }
     }
 }

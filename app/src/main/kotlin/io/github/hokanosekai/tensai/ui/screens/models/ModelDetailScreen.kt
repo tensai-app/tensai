@@ -31,7 +31,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -57,6 +61,7 @@ fun ModelDetailScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(deleteError) {
@@ -71,7 +76,7 @@ fun ModelDetailScreen(
             models == null -> Unit // initial Room query hasn't emitted yet.
             model == null -> {
                 Text(
-                    text = "This model was removed.",
+                    text = stringResource(R.string.model_removed),
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.align(Alignment.Center),
                 )
@@ -111,7 +116,7 @@ fun ModelDetailScreen(
                         ) {
                             Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
                             Text(
-                                text = "File missing — re-import it to use this model.",
+                                text = stringResource(R.string.model_detail_file_missing),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -119,14 +124,26 @@ fun ModelDetailScreen(
                     }
 
                     Column(modifier = Modifier.padding(top = 20.dp)) {
-                        MetadataRow("Architecture", model.architecture)
-                        MetadataRow("Parameters", formatParamCount(model.paramCount))
-                        MetadataRow("Quantization", model.quantLabel)
-                        MetadataRow("Context length", "${model.contextLength} tokens")
-                        MetadataRow("File size", formatFileSize(model.sizeBytes))
-                        MetadataRow("Thinking mode", if (model.supportsThinking) "Supported" else "Not supported")
-                        MetadataRow("Recommended backend", compatibility.recommendedBackend.name)
-                        WrappingMetadataRow("Estimated memory", compatExplanation(compatibility))
+                        MetadataRow(stringResource(R.string.model_detail_architecture), model.architecture)
+                        MetadataRow(stringResource(R.string.model_detail_parameters), formatParamCount(model.paramCount))
+                        MetadataRow(stringResource(R.string.model_detail_quantization), model.quantLabel)
+                        MetadataRow(
+                            stringResource(R.string.model_detail_context_length),
+                            pluralStringResource(
+                                R.plurals.model_detail_context_length_value,
+                                model.contextLength.toInt(),
+                                model.contextLength,
+                            ),
+                        )
+                        MetadataRow(stringResource(R.string.model_detail_file_size), formatFileSize(model.sizeBytes))
+                        MetadataRow(
+                            stringResource(R.string.model_detail_thinking),
+                            stringResource(
+                                if (model.supportsThinking) R.string.model_detail_supported else R.string.model_detail_not_supported,
+                            ),
+                        )
+                        MetadataRow(stringResource(R.string.model_detail_recommended_backend), compatibility.recommendedBackend.name)
+                        WrappingMetadataRow(stringResource(R.string.model_detail_estimated_memory), compatExplanation(compatibility))
                     }
 
                     Button(
@@ -134,7 +151,7 @@ fun ModelDetailScreen(
                         enabled = fileExists,
                         modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
                     ) {
-                        Text("Load model")
+                        Text(stringResource(R.string.model_load))
                     }
 
                     TextButton(
@@ -142,7 +159,7 @@ fun ModelDetailScreen(
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     ) {
-                        Text("Delete model")
+                        Text(stringResource(R.string.model_delete))
                     }
 
                     HorizontalDivider(
@@ -151,9 +168,9 @@ fun ModelDetailScreen(
                     )
 
                     // TODO(TEN-34): list this model's saved sessions here.
-                    Text(text = "Saved sessions", style = MaterialTheme.typography.titleMedium)
+                    Text(text = stringResource(R.string.model_detail_saved_sessions), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Coming soon.",
+                        text = stringResource(R.string.model_detail_coming_soon),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
@@ -163,8 +180,8 @@ fun ModelDetailScreen(
                 if (showDeleteConfirm) {
                     AlertDialog(
                         onDismissRequest = { showDeleteConfirm = false },
-                        title = { Text("Delete \"${model.displayName}\"?") },
-                        text = { Text("This removes the model file from this device. This can't be undone.") },
+                        title = { Text(stringResource(R.string.model_delete_confirm_title, model.displayName)) },
+                        text = { Text(stringResource(R.string.model_delete_confirm_body)) },
                         confirmButton = {
                             TextButton(onClick = {
                                 showDeleteConfirm = false
@@ -173,15 +190,15 @@ fun ModelDetailScreen(
                                         repository.deleteModel(model.id)
                                         onDeleted()
                                     } catch (e: ModelInUseException) {
-                                        deleteError = e.message
+                                        deleteError = context.getString(R.string.model_delete_in_use, model.displayName)
                                     }
                                 }
                             }) {
-                                Text("Delete", color = MaterialTheme.colorScheme.error)
+                                Text(stringResource(R.string.model_delete_confirm), color = MaterialTheme.colorScheme.error)
                             }
                         },
                         dismissButton = {
-                            TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                            TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.action_cancel)) }
                         },
                     )
                 }

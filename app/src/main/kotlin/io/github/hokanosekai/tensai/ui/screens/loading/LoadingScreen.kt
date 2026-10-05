@@ -141,8 +141,11 @@ private fun LoadingContent(
             modifier = Modifier.padding(top = 20.dp),
         )
         Text(
-            text = "loading to memory · ${formatGb((progress * model.sizeBytes).toLong())} / " +
-                "${formatGb(model.sizeBytes)} GB",
+            text = stringResource(
+                R.string.loading_progress,
+                formatGb((progress * model.sizeBytes).toLong()),
+                formatGb(model.sizeBytes),
+            ),
             fontFamily = TensaiMono,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -152,7 +155,7 @@ private fun LoadingContent(
         Spacer(modifier = Modifier.weight(1f))
 
         TextButton(onClick = onContinueInBackground) {
-            Text("Continue in background")
+            Text(stringResource(R.string.loading_continue_in_background))
         }
     }
 }
@@ -160,9 +163,9 @@ private fun LoadingContent(
 @Composable
 private fun ModelNotFoundContent(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("This model was removed.", style = MaterialTheme.typography.bodyLarge)
+        Text(stringResource(R.string.model_removed), style = MaterialTheme.typography.bodyLarge)
         TextButton(onClick = onBack, modifier = Modifier.padding(top = 12.dp)) {
-            Text("Back")
+            Text(stringResource(R.string.action_back))
         }
     }
 }
@@ -171,10 +174,10 @@ private fun ModelNotFoundContent(onBack: () -> Unit, modifier: Modifier = Modifi
 private fun FileMissingDialog(model: ModelEntity, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("File missing") },
-        text = { Text("This model's file is missing — re-import it to load \"${model.displayName}\".") },
+        title = { Text(stringResource(R.string.model_file_missing)) },
+        text = { Text(stringResource(R.string.loading_file_missing_body, model.displayName)) },
         confirmButton = {
-            TextButton(onClick = onClose) { Text("Back to Models") }
+            TextButton(onClick = onClose) { Text(stringResource(R.string.loading_back_to_models)) }
         },
     )
 }
@@ -194,13 +197,13 @@ private fun BlockedDialog(
 ) {
     AlertDialog(
         onDismissRequest = onSeeSmallerModels,
-        title = { Text("\"${model.displayName}\" probably won't fit") },
+        title = { Text(stringResource(R.string.loading_blocked_title, model.displayName)) },
         text = { Text(compatExplanation(compatibility)) },
         confirmButton = {
             TextButton(onClick = onLoadAnyway) { Text(stringResource(R.string.model_compat_load_anyway)) }
         },
         dismissButton = {
-            TextButton(onClick = onSeeSmallerModels) { Text("See smaller models") }
+            TextButton(onClick = onSeeSmallerModels) { Text(stringResource(R.string.loading_see_smaller_models)) }
         },
     )
 }
@@ -209,13 +212,13 @@ private fun BlockedDialog(
 private fun OomDialog(model: ModelEntity, onSeeSmallerModels: () -> Unit, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("Not enough memory") },
-        text = { Text("${model.displayName} couldn't fit in memory. Try a smaller quant.") },
+        title = { Text(stringResource(R.string.loading_oom_title)) },
+        text = { Text(stringResource(R.string.loading_oom_body, model.displayName)) },
         confirmButton = {
-            TextButton(onClick = onSeeSmallerModels) { Text("See smaller models") }
+            TextButton(onClick = onSeeSmallerModels) { Text(stringResource(R.string.loading_see_smaller_models)) }
         },
         dismissButton = {
-            TextButton(onClick = onClose) { Text("Close") }
+            TextButton(onClick = onClose) { Text(stringResource(R.string.action_close)) }
         },
     )
 }
@@ -247,16 +250,16 @@ private fun GenericFailDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = onRetry) { Text("Retry") }
+            TextButton(onClick = onRetry) { Text(stringResource(R.string.loading_retry)) }
         },
         dismissButton = {
             // Simple chip-row equivalent for the CPU-retry override — two text actions rather
             // than a dedicated FilterChip row, to keep this dialog's default M3 layout.
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (canRetryOnCpu) {
-                    TextButton(onClick = onRetryOnCpu) { Text("Retry on CPU") }
+                    TextButton(onClick = onRetryOnCpu) { Text(stringResource(R.string.loading_retry_on_cpu)) }
                 }
-                TextButton(onClick = onClose) { Text("Close") }
+                TextButton(onClick = onClose) { Text(stringResource(R.string.action_close)) }
             }
         },
     )

@@ -96,7 +96,7 @@ fun TensaiDrawerContent(
             Spacer(modifier = Modifier.height(16.dp))
 
             NavigationDrawerItem(
-                label = { Text("New chat", color = MaterialTheme.colorScheme.primary) },
+                label = { Text(stringResource(R.string.drawer_new_chat), color = MaterialTheme.colorScheme.primary) },
                 icon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 selected = false,
                 shape = RectangleShape,
@@ -110,7 +110,7 @@ fun TensaiDrawerContent(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "Recents",
+                text = stringResource(R.string.drawer_recents),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp),
@@ -149,7 +149,7 @@ fun TensaiDrawerContent(
             )
 
             NavigationDrawerItem(
-                label = { Text("Models") },
+                label = { Text(stringResource(R.string.nav_models)) },
                 icon = { Icon(Icons.Default.Storage, contentDescription = null) },
                 selected = false,
                 shape = RectangleShape,
@@ -163,7 +163,7 @@ fun TensaiDrawerContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Server")
+                        Text(stringResource(R.string.nav_server))
                         Text(
                             text = "V2",
                             style = MaterialTheme.typography.labelSmall,
@@ -179,7 +179,7 @@ fun TensaiDrawerContent(
             )
 
             NavigationDrawerItem(
-                label = { Text("Settings") },
+                label = { Text(stringResource(R.string.nav_settings)) },
                 icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                 selected = false,
                 shape = RectangleShape,

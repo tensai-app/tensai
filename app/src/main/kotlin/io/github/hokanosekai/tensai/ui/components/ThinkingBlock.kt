@@ -36,9 +36,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -96,14 +98,14 @@ fun ThinkingBlock(
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        text = if (isActive) "Thinking…" else "Reasoning",
+                        text = stringResource(if (isActive) R.string.thinking_active else R.string.thinking_done),
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                     )
                     Icon(
                         imageVector = Icons.Default.ExpandMore,
-                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        contentDescription = stringResource(if (expanded) R.string.thinking_collapse else R.string.thinking_expand),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp).rotate(chevronRotation),
                     )

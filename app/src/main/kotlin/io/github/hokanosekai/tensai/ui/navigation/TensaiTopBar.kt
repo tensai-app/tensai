@@ -15,7 +15,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 
 /**
@@ -30,13 +32,13 @@ fun TensaiTopBar(
     onMenuClick: () -> Unit,
     onModelPillClick: () -> Unit,
     modifier: Modifier = Modifier,
-    modelLabel: String = "no model",
+    modelLabel: String = stringResource(R.string.top_bar_no_model),
 ) {
     CenterAlignedTopAppBar(
         modifier = modifier,
         navigationIcon = {
             IconButton(onClick = onMenuClick) {
-                Icon(imageVector = Icons.Default.Menu, contentDescription = "Open menu")
+                Icon(imageVector = Icons.Default.Menu, contentDescription = stringResource(R.string.top_bar_open_menu))
             }
         },
         title = {
@@ -71,7 +73,7 @@ fun TensaiDetailTopBar(
         title = { Text(text = title, style = MaterialTheme.typography.titleLarge) },
         navigationIcon = {
             IconButton(onClick = onBackClick) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),

@@ -49,8 +49,10 @@
     <!-- Appearance > language. One entry per io.github.hokanosekai.tensai.data.AppLanguage. -->
     <string name="settings_language">Language</string>
     <string name="settings_language_system">System</string>
-    <string name="settings_language_english">English</string>
-    <string name="settings_language_french">Français</string>
+    <!-- Each language names itself (an endonym), in every locale: someone who cannot read the
+         current one still has to find their own. Hence not translatable. -->
+    <string name="settings_language_english" translatable="false">English</string>
+    <string name="settings_language_french" translatable="false">Français</string>
 
     <!-- Inference > backend. One entry per io.github.hokanosekai.tensai.data.BackendPreference. -->
     <string name="settings_backend">Default backend</string>
@@ -64,12 +66,15 @@
     <!-- Inference > read-only rows. See io.github.hokanosekai.tensai.ui.screens.settings.InferenceFacts. -->
     <string name="settings_context_size">Context size</string>
     <!-- %1$d is a token count. -->
-    <string name="settings_context_size_value">%1$d tokens</string>
+    <plurals name="settings_context_size_value">
+        <item quantity="one">%1$d token</item>
+        <item quantity="other">%1$d tokens</item>
+    </plurals>
     <string name="settings_kv_cache">KV cache type</string>
     <!-- %1$s is a cache precision (f16, q8_0…), %2$s who chose it (settings_inference_chosen_auto). -->
     <string name="settings_kv_cache_value">%1$s · %2$s</string>
     <string name="settings_inference_chosen_auto">auto</string>
-    <string name="settings_inference_unknown">—</string>
+    <string name="settings_inference_unknown" translatable="false">—</string>
     <!-- %1$s is a model\'s display name. -->
     <string name="settings_inference_in_use">In use by %1$s</string>
     <string name="settings_inference_planned">Planned for %1$s — chosen per load from free memory</string>
@@ -181,5 +186,143 @@
     <string name="server_serve_on_lan">Serve on LAN</string>
     <string name="server_endpoint_example" translatable="false">http://192.168.1.42:8080/v1</string>
     <string name="server_token_example" translatable="false">Bearer ······</string>
+
+
+    <!-- ==================== Strings moved out of composables (TEN-41) ==================== -->
+
+    <!-- Shared actions. -->
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_dismiss">Dismiss</string>
+
+    <!-- Navigation: drawer, top bars. -->
+    <string name="nav_models">Models</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_server">Server</string>
+    <string name="drawer_new_chat">New chat</string>
+    <string name="drawer_recents">Recents</string>
+    <string name="top_bar_no_model">no model</string>
+    <string name="top_bar_open_menu">Open menu</string>
+
+    <!-- Chat input pill. -->
+    <string name="input_placeholder">Message tensai…</string>
+    <string name="input_send">Send</string>
+    <string name="input_stop">Stop</string>
+
+    <!-- Chat screen and its conversation settings sheet. Top P, Min P and Top K stay literal in code: they are parameter names, not words. -->
+    <string name="chat_jump_to_latest">Jump to the latest message</string>
+    <string name="chat_no_model_loaded">No model loaded</string>
+    <string name="chat_load_a_model">Load a model</string>
+    <string name="chat_context_full">This conversation is full: start a new chat to keep going</string>
+    <string name="chat_thinking_toggle">Thinking</string>
+    <string name="chat_regenerate">Regenerate</string>
+    <string name="chat_settings_title">Conversation settings</string>
+    <string name="chat_settings_system_prompt">System prompt</string>
+    <string name="chat_settings_system_prompt_none">None</string>
+    <string name="chat_settings_temperature">Temperature</string>
+    <string name="chat_settings_max_tokens">Max tokens</string>
+    <string name="chat_settings_reset_sampling">Reset sampling to defaults</string>
+    <string name="chat_settings_stop_sequences">Stop sequences</string>
+    <!-- %1$d is the maximum number of stop sequences. -->
+    <string name="chat_settings_stop_sequences_help">One per line, up to %1$d. Spaces count.</string>
+
+    <!-- Per-reply stats chip suffixes (the figures before them are units, not words). See TruncationReason. -->
+    <string name="chat_stats_cut_reasoning">cut off while reasoning</string>
+    <string name="chat_stats_cut_limit">cut off at limit</string>
+    <string name="chat_stats_cut_context">cut off, conversation full</string>
+
+    <!-- Reasoning block above a reply. -->
+    <string name="thinking_active">Thinking…</string>
+    <string name="thinking_done">Reasoning</string>
+    <string name="thinking_expand">Expand</string>
+    <string name="thinking_collapse">Collapse</string>
+
+    <!-- Code blocks in a reply. -->
+    <string name="markdown_copy_code">Copy code</string>
+    <string name="markdown_code_copied">Copied</string>
+
+    <!-- Models list, model card and model detail. %1$s in the *_named / *_title / in_use strings is a model's display name. -->
+    <string name="models_import">Import a GGUF file</string>
+    <string name="models_empty_title">No models yet</string>
+    <string name="models_empty_body">Import a GGUF file to get started.</string>
+    <string name="model_load">Load model</string>
+    <string name="model_delete">Delete model</string>
+    <string name="model_remove">Remove</string>
+    <string name="model_loaded_badge">loaded</string>
+    <string name="model_file_missing">File missing</string>
+    <string name="model_removed">This model was removed.</string>
+    <string name="model_delete_named">Delete “%1$s”</string>
+    <string name="model_delete_confirm_title">Delete “%1$s”?</string>
+    <string name="model_delete_confirm_body">This removes the model file from this device. This can\'t be undone.</string>
+    <string name="model_delete_confirm">Delete</string>
+    <string name="model_delete_in_use">Can\'t delete “%1$s” while it is loaded.</string>
+    <!-- %1$s is an already formatted parameter count such as 1.5B. -->
+    <string name="model_param_count">%1$s params</string>
+    <string name="model_detail_file_missing">File missing: re-import it to use this model.</string>
+    <string name="model_detail_architecture">Architecture</string>
+    <string name="model_detail_parameters">Parameters</string>
+    <string name="model_detail_quantization">Quantization</string>
+    <string name="model_detail_context_length">Context length</string>
+    <!-- %1$d is a token count. -->
+    <plurals name="model_detail_context_length_value">
+        <item quantity="one">%1$d token</item>
+        <item quantity="other">%1$d tokens</item>
+    </plurals>
+    <string name="model_detail_file_size">File size</string>
+    <string name="model_detail_thinking">Thinking mode</string>
+    <string name="model_detail_supported">Supported</string>
+    <string name="model_detail_not_supported">Not supported</string>
+    <string name="model_detail_recommended_backend">Recommended backend</string>
+    <string name="model_detail_estimated_memory">Estimated memory</string>
+    <string name="model_detail_saved_sessions">Saved sessions</string>
+    <string name="model_detail_coming_soon">Coming soon.</string>
+
+    <!-- Loading screen and its dialogs. %1$s is a model's display name. -->
+    <!-- %1$s and %2$s are sizes in GB, already formatted without their unit. -->
+    <string name="loading_progress">loading to memory · %1$s / %2$s GB</string>
+    <string name="loading_continue_in_background">Continue in background</string>
+    <string name="loading_file_missing_body">This model\'s file is missing: re-import it to load “%1$s”.</string>
+    <string name="loading_back_to_models">Back to Models</string>
+    <string name="loading_blocked_title">“%1$s” probably won\'t fit</string>
+    <string name="loading_see_smaller_models">See smaller models</string>
+    <string name="loading_oom_title">Not enough memory</string>
+    <string name="loading_oom_body">%1$s couldn\'t fit in memory. Try a smaller quant.</string>
+    <string name="loading_retry">Retry</string>
+    <string name="loading_retry_on_cpu">Retry on CPU</string>
+
+    <!-- First-run onboarding (TEN-36). Backend and theme choices reuse the settings_* strings above. -->
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_welcome_body">A local AI agent, running fully on your phone. Nothing leaves the device.</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_import_title">Bring a model</string>
+    <string name="onboarding_import_body">tensai runs GGUF models straight off your storage. Download one on your computer, copy it to the phone, then pick it here.</string>
+    <string name="onboarding_suggestions_title">Good starting points</string>
+    <string name="onboarding_copying">Copying into tensai…</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_setup_title">How should it run?</string>
+    <string name="onboarding_setup_body">You can change both later, in Settings.</string>
+    <string name="onboarding_backend">Backend</string>
+    <string name="onboarding_backend_gpu">GPU</string>
+    <string name="onboarding_backend_gpu_subtitle">Vulkan offload, when the device has it</string>
+    <!-- %1$s is the imported model's display name. -->
+    <string name="onboarding_ready_title">%1$s is ready</string>
+    <string name="onboarding_ready_title_no_model">You\'re set</string>
+    <string name="onboarding_ready_body">Loading a model takes a few seconds: it stays in memory afterwards.</string>
+    <string name="onboarding_start_chatting">Start chatting</string>
+
+    <!-- Foreground-service notification (InferenceService). Resolved through withAppLanguage, like the UI. -->
+    <string name="notification_channel_name">Inference</string>
+    <string name="notification_channel_description">Model loading and generation status</string>
+    <string name="notification_loading_title">Loading model…</string>
+    <!-- %1$d is a percentage, 0 to 100. -->
+    <string name="notification_loading_progress">%1$d%%</string>
+    <!-- %1$s is a model's name. -->
+    <string name="notification_ready_title">%1$s loaded</string>
+    <string name="notification_ready_text">Ready · tap to open</string>
+    <string name="notification_action_unload">Unload</string>
+    <string name="notification_generating_title">%1$s is thinking…</string>
+    <string name="notification_action_stop">Stop</string>
+    <string name="notification_idle_title">Idle</string>
 
 </resources>

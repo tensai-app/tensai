@@ -121,9 +121,9 @@ fun SettingsScreen(
                 label = stringResource(R.string.settings_context_size),
                 value = when (inference) {
                     is InferenceFacts.InUse ->
-                        stringResource(R.string.settings_context_size_value, inference.nCtx)
+                        pluralStringResource(R.plurals.settings_context_size_value, inference.nCtx, inference.nCtx)
                     is InferenceFacts.Planned ->
-                        stringResource(R.string.settings_context_size_value, inference.nCtx)
+                        pluralStringResource(R.plurals.settings_context_size_value, inference.nCtx, inference.nCtx)
                     InferenceFacts.Unknown -> stringResource(R.string.settings_inference_unknown)
                 },
                 caption = inference.caption(),

@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -13,8 +14,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -36,11 +39,12 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     else -> TensaiChrome.None // loading, onboarding
 }
 
-private fun detailTitleForRoute(route: String?): String = when {
-    route == TensaiDestination.Models.route || route?.startsWith("model/") == true -> "Models"
-    route == TensaiDestination.Settings.route -> "Settings"
-    route == TensaiDestination.Server.route -> "Server"
-    else -> ""
+@StringRes
+private fun detailTitleForRoute(route: String?): Int? = when {
+    route == TensaiDestination.Models.route || route?.startsWith("model/") == true -> R.string.nav_models
+    route == TensaiDestination.Settings.route -> R.string.nav_settings
+    route == TensaiDestination.Server.route -> R.string.nav_server
+    else -> null
 }
 
 /**
@@ -68,7 +72,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
     val modelPillLabel = queueState.residentModel
         ?.let { "${it.name} · ${it.nCtxEffective}" }
-        ?: "no model"
+        ?: stringResource(R.string.top_bar_no_model)
 
     val startDestination = when (onboardingEntry) {
         OnboardingEntry.None -> TensaiDestination.Home.route
@@ -109,7 +113,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                     )
 
                     TensaiChrome.Detail -> TensaiDetailTopBar(
-                        title = detailTitleForRoute(currentRoute),
+                        title = detailTitleForRoute(currentRoute)?.let { stringResource(it) }.orEmpty(),
                         onBackClick = { navController.popBackStack() },
                     )
 

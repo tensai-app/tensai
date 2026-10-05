@@ -111,7 +111,7 @@ fun MessageBubble(
                         IconButton(onClick = regenerate, modifier = Modifier.size(28.dp)) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Regenerate",
+                                contentDescription = stringResource(R.string.chat_regenerate),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -165,11 +165,11 @@ private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
         // TEN-61 tells them apart too — both stay a short suffix, not a sentence.
         val suffix = when (stats.truncation) {
             TruncationReason.None -> null
-            TruncationReason.Reasoning -> "cut off while reasoning"
-            TruncationReason.Response -> "cut off at limit"
+            TruncationReason.Reasoning -> stringResource(R.string.chat_stats_cut_reasoning)
+            TruncationReason.Response -> stringResource(R.string.chat_stats_cut_limit)
             // Not "at limit": the limit was never reached (TEN-79). Worded so a reader who is
             // about to go raise max-tokens doesn't — the banner above says the rest.
-            TruncationReason.Context -> "cut off, conversation full"
+            TruncationReason.Context -> stringResource(R.string.chat_stats_cut_context)
         }
         Text(
             text = if (suffix != null) "$figures · $suffix" else figures,

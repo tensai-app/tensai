@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
@@ -14,7 +15,11 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import io.github.hokanosekai.tensai.MainActivity
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.data.AppLanguage
+import io.github.hokanosekai.tensai.data.withAppLanguage
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -45,6 +50,17 @@ class InferenceService : Service() {
 
     private var observerJob: Job? = null
 
+    /**
+     * Where the notification's text is resolved (TEN-41). A notification has no Compose
+     * `LocalContext` to inherit the in-app language from, so the service applies the same
+     * [withAppLanguage] wrapper `MainActivity` does, re-derived on every [AppLanguage] change.
+     * Starts as the service itself (system locale) because the synchronous bootstrap post in
+     * [onCreate] cannot wait for the preference store; the observer re-posts under the stored
+     * language on its first emission.
+     */
+    @Volatile
+    private var localized: Context = this
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -55,7 +71,19 @@ class InferenceService : Service() {
         startForegroundCompat(buildNotification(RuntimeGraph.inferenceQueue.state.value))
 
         observerJob = RuntimeGraph.applicationScope.launch {
-            RuntimeGraph.inferenceQueue.state.collect { state ->
+            var currentLanguage: AppLanguage? = null
+            combine(
+                RuntimeGraph.inferenceQueue.state,
+                RuntimeGraph.languageRepository.language.distinctUntilChanged(),
+                ::Pair,
+            ).collect { (state, language) ->
+                if (language != currentLanguage) {
+                    currentLanguage = language
+                    localized = withAppLanguage(language)
+                    // Re-registering an existing channel id only updates its name and description,
+                    // which is exactly what a language change needs in the system settings.
+                    createNotificationChannel()
+                }
                 if (state is QueueState.Idle) {
                     ServiceCompat.stopForeground(this@InferenceService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -156,8 +184,12 @@ class InferenceService : Service() {
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "Inference", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Model loading and generation status"
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            localized.getString(R.string.notification_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = localized.getString(R.string.notification_channel_description)
             setSound(null, null)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -185,25 +217,25 @@ class InferenceService : Service() {
                 // requested model's name during Loading would mean threading it through
                 // QueueState, which is out of this ticket's scope.
                 builder
-                    .setContentTitle("Loading model…")
-                    .setContentText("${(state.progress * 100).toInt()}%")
+                    .setContentTitle(localized.getString(R.string.notification_loading_title))
+                    .setContentText(localized.getString(R.string.notification_loading_progress, (state.progress * 100).toInt()))
                     .setProgress(100, (state.progress * 100).toInt(), false)
             }
 
             is QueueState.ModelReady -> {
                 builder
-                    .setContentTitle("${state.info.name} loaded")
+                    .setContentTitle(localized.getString(R.string.notification_ready_title, state.info.name))
                     // LoadedModelInfo currently has no RAM-size field to surface here — see
                     // the ticket's "taille RAM si dispo" note; nothing to show yet.
-                    .setContentText("Ready · tap to open")
-                    .addAction(R.drawable.ic_launcher_monochrome, "Unload", actionPendingIntent(ACTION_UNLOAD))
+                    .setContentText(localized.getString(R.string.notification_ready_text))
+                    .addAction(R.drawable.ic_launcher_monochrome, localized.getString(R.string.notification_action_unload), actionPendingIntent(ACTION_UNLOAD))
             }
 
             is QueueState.Generating -> {
                 builder
-                    .setContentTitle("${state.info.name} is thinking…")
+                    .setContentTitle(localized.getString(R.string.notification_generating_title, state.info.name))
                     .setProgress(0, 0, true)
-                    .addAction(R.drawable.ic_launcher_monochrome, "Stop", actionPendingIntent(ACTION_STOP_GENERATION))
+                    .addAction(R.drawable.ic_launcher_monochrome, localized.getString(R.string.notification_action_stop), actionPendingIntent(ACTION_STOP_GENERATION))
             }
 
             QueueState.Idle -> {
@@ -211,7 +243,7 @@ class InferenceService : Service() {
                 // service before this would be posted. Only reachable from the
                 // synchronous bootstrap call in onCreate() if the service somehow starts
                 // while already Idle.
-                builder.setContentTitle("Idle")
+                builder.setContentTitle(localized.getString(R.string.notification_idle_title))
             }
         }
 

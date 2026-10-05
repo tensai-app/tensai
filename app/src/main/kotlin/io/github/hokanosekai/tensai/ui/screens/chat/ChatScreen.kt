@@ -210,7 +210,7 @@ fun ChatScreen(
             onStop = viewModel::stop,
             isGenerating = isGenerating,
             canStop = canStop,
-            modelLabel = modelInfo?.name?.let(::shortModelLabel) ?: "no model",
+            modelLabel = modelInfo?.name?.let(::shortModelLabel) ?: stringResource(R.string.top_bar_no_model),
             onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),
         )
@@ -258,7 +258,7 @@ private fun JumpToBottomButton(
         ) {
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Jump to the latest message",
+                contentDescription = stringResource(R.string.chat_jump_to_latest),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(8.dp).size(24.dp),
             )
@@ -281,11 +281,11 @@ private fun NoModelBanner(onNavigateToModels: () -> Unit, modifier: Modifier = M
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             Text(
-                text = "No model loaded",
+                text = stringResource(R.string.chat_no_model_loaded),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onNavigateToModels) { Text("Load a model") }
+            TextButton(onClick = onNavigateToModels) { Text(stringResource(R.string.chat_load_a_model)) }
         }
     }
 }
@@ -306,11 +306,11 @@ private fun ContextWindowFullBanner(onDismiss: () -> Unit, modifier: Modifier = 
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             Text(
-                text = "This conversation is full — start a new chat to keep going",
+                text = stringResource(R.string.chat_context_full),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onDismiss) { Text("Dismiss") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_dismiss)) }
         }
     }
 }
@@ -385,7 +385,7 @@ private fun ChatToolbarRow(
                 modifier = Modifier.padding(end = 6.dp),
             )
             Text(
-                text = "Thinking",
+                text = stringResource(R.string.chat_thinking_toggle),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(end = 8.dp),
@@ -395,7 +395,7 @@ private fun ChatToolbarRow(
         IconButton(onClick = onOpenSettings) {
             Icon(
                 imageVector = Icons.Default.Tune,
-                contentDescription = "Conversation settings",
+                contentDescription = stringResource(R.string.chat_settings_title),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

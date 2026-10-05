@@ -9,6 +9,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /** e.g. 7_000_000_000L -> "7B params", 1_100_000_000L -> "1.1B params". */
+@Composable
 internal fun formatParamCount(paramCount: Long): String {
     val billions = paramCount / 1_000_000_000.0
     val label = if (billions >= 10 || billions == billions.roundToInt().toDouble()) {
@@ -16,7 +17,7 @@ internal fun formatParamCount(paramCount: Long): String {
     } else {
         "%.1fB".format(billions)
     }
-    return "$label params"
+    return stringResource(R.string.model_param_count, label)
 }
 
 /** e.g. 4_400_000_000L -> "4.4 GB". */

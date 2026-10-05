@@ -39,7 +39,9 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
@@ -111,7 +113,7 @@ fun InputPill(
                     decorationBox = { innerField ->
                         if (value.isEmpty()) {
                             Text(
-                                text = "Message tensai…",
+                                text = stringResource(R.string.input_placeholder),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -128,7 +130,7 @@ fun InputPill(
                 ) {
                     Icon(
                         imageVector = if (canStop) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = if (canStop) "Stop" else "Send",
+                        contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }

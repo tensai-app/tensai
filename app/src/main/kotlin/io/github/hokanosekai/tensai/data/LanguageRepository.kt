@@ -22,10 +22,8 @@ private val Context.languageDataStore by preferencesDataStore(name = "tensai_lan
  * The entries are the app's shipped `res/values-*` locales plus [System], and they have to stay
  * in sync with them by hand: there is no way to enumerate an APK's own translations below API 33
  * without pulling in `androidx.appcompat` for its `LocaleConfig`, and one enum entry per locale
- * folder is a cheaper contract than a dependency. **TEN-41 is what actually puts strings behind
- * [French]** — until it lands, picking it changes the resolved [Locale] (and therefore date/number
- * formatting) but every string still resolves to the `values/` default, because that is the only
- * translation on disk.
+ * folder is a cheaper contract than a dependency. [French] resolves to `res/values-fr` (TEN-41);
+ * `StringsParityTest` keeps its keys and placeholders in step with `values/`.
  *
  * @param localeTag BCP 47 tag to force, or `null` for [System] — meaning "don't override anything",
  *   not "English": the device's own locale list keeps applying, including its fallback order.
