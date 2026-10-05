@@ -10,7 +10,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
-import io.github.hokanosekai.tensai.ui.screens.ServerScreenPlaceholder
+import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
@@ -163,7 +163,7 @@ fun TensaiNavGraph(
         }
 
         composable(TensaiDestination.Server.route) {
-            ServerScreenPlaceholder()
+            ServerScreen()
         }
     }
 }
