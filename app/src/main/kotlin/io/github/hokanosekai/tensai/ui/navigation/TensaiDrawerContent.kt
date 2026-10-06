@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -39,19 +38,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
-import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 /**
  * Drawer content: brand header, new chat, recents, destinations, device footer.
  *
- * @param onOpenConversation navigates to `chat/{id}` — called both for an existing conversation
- *   tapped from "Recents" and for the id created by "New chat".
+ * @param onOpenConversation navigates to `chat/{id}`: an existing conversation tapped from
+ *   "Recents", or the new-chat sentinel for "New chat", which opens a draft and creates no row
+ *   until its first message (TEN-106).
  */
 @Composable
 fun TensaiDrawerContent(
@@ -61,22 +59,6 @@ fun TensaiDrawerContent(
     chatRepository: ChatRepository = RuntimeGraph.chatRepository,
 ) {
     val conversations by chatRepository.observeConversations().collectAsState(initial = null)
-    val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val scope = rememberCoroutineScope()
-
-    // Straight off the load since TEN-80. Resolving it through the model list by display name gave
-    // the newest row sharing that name, so a new chat opened under the older of two quantisations
-    // was stamped with the other one's id — a wrong answer where this one cannot be wrong.
-    // `residentModel`, not `ModelReady` alone: a "New chat" started while a reply is streaming in
-    // another conversation would otherwise be created with a null modelId (TEN-76).
-    val loadedModelId = queueState.residentModel?.modelId
-
-    fun startNewChat() {
-        scope.launch {
-            val id = chatRepository.createConversation(loadedModelId)
-            onOpenConversation(id)
-        }
-    }
 
     ModalDrawerSheet(modifier = modifier) {
         Column(
@@ -103,7 +85,7 @@ fun TensaiDrawerContent(
                 colors = NavigationDrawerItemDefaults.colors(
                     unselectedContainerColor = MaterialTheme.tensaiTints.primary12,
                 ),
-                onClick = ::startNewChat,
+                onClick = { onOpenConversation(TensaiDestination.Chat.NEW_CONVERSATION_ID) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
 

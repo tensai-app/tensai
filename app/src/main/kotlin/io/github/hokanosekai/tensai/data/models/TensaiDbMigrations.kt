@@ -158,6 +158,35 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v9 -> v10 (TEN-106): no schema change, a data fix. Every way into a new chat used to insert
+     * its [ConversationEntity] row before any message, so a chat opened and left without sending
+     * stayed behind as an empty "New chat" in the drawer, for good (43 of 78 rows on the reference
+     * device). New chats are now drafts that only get a row on their first send; this deletes the
+     * empty rows already stored.
+     *
+     * "Empty" means no [io.github.hokanosekai.tensai.data.chat.MessageEntity] at all, whatever the
+     * title says. A conversation with only a user message (its reply failed before a first token)
+     * has a message and is kept.
+     *
+     * Nothing else references a conversation that could be left dangling: `messages` has no rows
+     * for these by definition, and there is no foreign key anywhere. `sessions` is keyed by
+     * conversation id but deliberately left alone. A session is only written after a generation,
+     * which needs a message, so an empty conversation should have none; and if one did, deleting
+     * its row here would orphan its `.llamastate` file, which a migration cannot delete and only
+     * Settings > Storage > Clear would ever sweep. Left in place, the row stays visible to
+     * [io.github.hokanosekai.tensai.data.session.SessionRepository]'s LRU eviction, which deletes
+     * row and file together.
+     */
+    val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "DELETE FROM `conversations` " +
+                    "WHERE NOT EXISTS (SELECT 1 FROM `messages` WHERE `messages`.`conversationId` = `conversations`.`id`)",
+            )
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -168,5 +197,6 @@ object TensaiDbMigrations {
         MIGRATION_6_7,
         MIGRATION_7_8,
         MIGRATION_8_9,
+        MIGRATION_9_10,
     )
 }

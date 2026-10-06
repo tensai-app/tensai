@@ -1,14 +1,12 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
@@ -61,11 +59,11 @@ fun TensaiNavGraph(
 
         composable(TensaiDestination.Home.route) {
             HomeScreen(
-                // The conversation already exists by the time this runs (Home created it), so
-                // unlike the load path below this navigates straight at a real id — no sentinel to
-                // resolve. Home is left on the stack: back from that first chat returns to it.
-                onNavigateToChat = { conversationId, prompt ->
-                    navController.navigate(TensaiDestination.Chat.route(conversationId, prompt))
+                // A new chat carrying the prompt: ChatScreen sends it, and that first send is what
+                // creates the conversation (TEN-106). Home is left on the stack: back from that
+                // first chat returns to it.
+                onNavigateToChat = { prompt ->
+                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID, prompt))
                 },
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToLoad = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
@@ -88,23 +86,13 @@ fun TensaiNavGraph(
                 .orEmpty()
             val initialPrompt = backStackEntry.arguments?.getString(TensaiDestination.Chat.ARG_PROMPT)
 
-            if (conversationId == TensaiDestination.Chat.NEW_CONVERSATION_ID) {
-                // Resolve the sentinel into a real, persisted conversation, then replace this
-                // backstack entry with the resolved id — see TensaiDestination.Chat.NEW_CONVERSATION_ID's
-                // KDoc. Nothing to render meanwhile; this is expected to resolve within one frame.
-                LaunchedEffect(Unit) {
-                    val id = RuntimeGraph.chatRepository.createConversation(modelId = null)
-                    navController.navigate(TensaiDestination.Chat.route(id)) {
-                        popUpTo(TensaiDestination.Chat.route) { inclusive = true }
-                    }
-                }
-            } else {
-                ChatScreen(
-                    conversationId = conversationId,
-                    onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
-                    initialPrompt = initialPrompt,
-                )
-            }
+            // The sentinel opens a draft, with no row until its first send (TEN-106): see
+            // TensaiDestination.Chat.NEW_CONVERSATION_ID.
+            ChatScreen(
+                conversationId = conversationId.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID },
+                onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                initialPrompt = initialPrompt,
+            )
         }
 
         composable(TensaiDestination.Models.route) {

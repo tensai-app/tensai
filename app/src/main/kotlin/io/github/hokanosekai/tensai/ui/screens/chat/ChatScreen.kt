@@ -60,8 +60,8 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  * (drawer hamburger, model pill in the top bar) is owned by `TensaiShell`; this composable is body
  * content only.
  *
- * @param conversationId always names an existing conversation — see [ChatViewModel]'s KDoc for why
- *   the "new chat" sentinel is resolved before this composable is ever reached.
+ * @param conversationId an existing conversation, or `null` for a new chat: a draft that gets its
+ *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
  * @param onNavigateToModels used both by [ChatError.NoModelLoaded]'s banner and by the input
  *   pill's model chip.
  * @param initialPrompt a first turn handed over by Home (TEN-37), sent once on arrival — see
@@ -70,12 +70,22 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  */
 @Composable
 fun ChatScreen(
-    conversationId: String,
+    conversationId: String?,
     onNavigateToModels: () -> Unit,
     modifier: Modifier = Modifier,
     initialPrompt: String? = null,
-    viewModel: ChatViewModel = remember(conversationId) { ChatViewModel(conversationId) },
 ) {
+    // A draft's row, once its first send created it (TEN-106). Saved so a screen rebuilt after
+    // process death reopens that conversation instead of an empty draft, the route itself still
+    // saying "new". Read only when the view model is built: it is that instance's own id coming
+    // back, never a reason to build another one.
+    var createdConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+    val viewModel = remember(conversationId) { ChatViewModel(conversationId ?: createdConversationId) }
+    val currentConversationId by viewModel.currentConversationId.collectAsState()
+    LaunchedEffect(currentConversationId) {
+        if (conversationId == null && currentConversationId != null) createdConversationId = currentConversationId
+    }
+
     val messages by viewModel.messages.collectAsState(initial = null)
     val error by viewModel.error.collectAsState()
     val queueState by viewModel.queueState.collectAsState()

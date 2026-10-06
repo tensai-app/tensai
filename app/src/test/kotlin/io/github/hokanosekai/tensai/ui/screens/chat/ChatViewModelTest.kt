@@ -122,7 +122,7 @@ class ChatViewModelTest {
      * rather than the receiver's job, so [awaitGeneration] has something to join that holds the
      * generations and nothing else.
      */
-    private fun CoroutineScope.newViewModel(conversationId: String) = ChatViewModel(
+    private fun CoroutineScope.newViewModel(conversationId: String?) = ChatViewModel(
         conversationId = conversationId,
         chatRepository = chatRepository,
         inferenceQueue = inferenceQueue,
@@ -1073,6 +1073,123 @@ class ChatViewModelTest {
         val first = engine.lastRequest!!.messages.first()
         assertEquals(MessageRole.System, first.role)
         assertEquals("You answer in haiku.", first.content)
+    }
+
+    /**
+     * TEN-106: a new chat is a draft. Opening one, reading everything the screen reads, and leaving
+     * it again, however many times, writes no conversation.
+     */
+    @Test
+    fun openingAndLeavingADraftCreatesNoConversation() = runBlocking {
+        loadFakeModel()
+
+        repeat(3) {
+            val viewModel = newViewModel(conversationId = null)
+            assertEquals(emptyList<ChatMessageUi>(), viewModel.messages.first())
+            assertEquals(SamplingConfig(), viewModel.sampling.first())
+            assertEquals("", viewModel.systemPrompt.first())
+            assertTrue(viewModel.enableThinking.first())
+            // Nothing to redo in a draft, and it must not be the thing that creates a row either.
+            viewModel.regenerate()
+            awaitGeneration()
+            assertNull(viewModel.currentConversationId.value)
+        }
+
+        assertEquals(0, chatDao.conversationCount())
+        assertNull("no generation was ever started", engine.lastRequest)
+    }
+
+    /** A send with no model loaded fails before anything is written, so it creates no row either. */
+    @Test
+    fun aDraftSendWithNoModelLoadedCreatesNoConversation() = runBlocking {
+        val viewModel = newViewModel(conversationId = null)
+
+        viewModel.send("hello")
+        awaitGeneration()
+
+        assertEquals(ChatError.NoModelLoaded, viewModel.error.value)
+        assertEquals(0, chatDao.conversationCount())
+    }
+
+    /** TEN-106: the first send creates exactly one row, bound to the loaded model, and the turn lands in it as before. */
+    @Test
+    fun theFirstSendOnADraftCreatesOneConversationHoldingTheTurn() = runBlocking {
+        loadFakeModel()
+        val viewModel = newViewModel(conversationId = null)
+
+        viewModel.send("  hello there  ")
+        awaitGeneration()
+
+        assertEquals(1, chatDao.conversationCount())
+        val id = viewModel.currentConversationId.value
+        val conversation = chatRepository.getConversation(id!!)!!
+        assertEquals("titled from the first message, as before", "hello there", conversation.title)
+        assertEquals("stamped with the model that answered", MODEL_ID, conversation.modelId)
+        val messages = awaitAssistantReply(id, expectedCount = 2)
+        assertEquals("user", messages[0].role)
+        assertEquals("hello there", messages[0].content)
+        assertEquals("assistant", messages[1].role)
+        assertEquals("the screen now follows the created row", 2, viewModel.messages.first().size)
+        assertEquals("the turn is reported against the created row", id, ActiveSessionTracker.current.value?.first)
+    }
+
+    /**
+     * Settings changed in the sheet before the first message are held by the draft, and the row the
+     * first send creates is born with them, so the very first generation already uses them.
+     */
+    @Test
+    fun settingsSetOnADraftSurviveIntoTheCreatedConversation() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val viewModel = newViewModel(conversationId = null)
+
+        viewModel.setSampling(SamplingConfig(temperature = 0.3f, maxTokens = 64))
+        viewModel.setSystemPrompt("You answer in haiku.")
+        viewModel.setEnableThinking(false)
+        awaitGeneration()
+
+        assertEquals("still a draft: settings alone create nothing", 0, chatDao.conversationCount())
+        assertEquals(0.3f, viewModel.sampling.first().temperature, 1e-6f)
+        assertEquals("You answer in haiku.", viewModel.systemPrompt.first())
+        assertFalse(viewModel.enableThinking.first())
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        val conversation = chatRepository.getConversation(viewModel.currentConversationId.value!!)!!
+        assertEquals("You answer in haiku.", conversation.systemPrompt)
+        assertFalse(conversation.enableThinking)
+        val request = engine.lastRequest!!
+        assertEquals(0.3f, request.sampling.temperature, 1e-6f)
+        assertEquals(64, request.sampling.maxTokens)
+        assertFalse(request.sampling.enableThinking)
+        assertEquals(MessageRole.System, request.messages.first().role)
+        assertEquals("You answer in haiku.", request.messages.first().content)
+
+        // And once the row exists, a change goes to the row, not to a draft nobody reads.
+        viewModel.setSystemPrompt("Be brief.")
+        awaitGeneration()
+        assertEquals("Be brief.", chatRepository.getConversation(conversation.id)!!.systemPrompt)
+    }
+
+    /** Two quick sends on a draft create one row, and a later turn reuses it. */
+    @Test
+    fun sendingTwiceQuicklyOnADraftCreatesOneConversation() = runBlocking {
+        loadFakeModel()
+        val viewModel = newViewModel(conversationId = null)
+
+        viewModel.send("first")
+        viewModel.send("second")
+        awaitGeneration()
+
+        assertEquals(1, chatDao.conversationCount())
+        val id = viewModel.currentConversationId.value!!
+        awaitAssistantReply(id, expectedCount = 2)
+
+        viewModel.send("third")
+        awaitGeneration()
+
+        assertEquals(1, chatDao.conversationCount())
+        assertEquals("third", awaitAssistantReply(id, expectedCount = 4)[2].content)
     }
 
     /** In-memory [ChatDao] fake — no Room/Android needed, same convention as `SessionRepositoryTest`'s `FakeSessionDao`. */

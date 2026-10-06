@@ -40,6 +40,10 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  * "New chat" placeholder from conversations that never got a message, now that an untitled
  * conversation is stored with an empty title and labelled by the UI in the app's language.
  *
+ * Version 10 changed no schema either (TEN-106): [TensaiDbMigrations.MIGRATION_9_10] deletes the
+ * conversations that never got a message. A new chat is now a draft with no row until its first
+ * send, so those rows are no longer created, and the ones left from before go.
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -47,7 +51,7 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  */
 @Database(
     entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class, SessionEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

@@ -15,8 +15,8 @@ sealed class TensaiDestination(val route: String) {
         const val ARG_CONVERSATION_ID = "conversationId"
 
         /**
-         * Optional: the first turn's text, handed over by Home (TEN-37). Home creates the
-         * conversation and navigates; the message itself is sent from `ChatScreen`, so the reply
+         * Optional: the first turn's text, handed over by Home (TEN-37). Home navigates to a new
+         * chat ([NEW_CONVERSATION_ID]); the message itself is sent from `ChatScreen`, so the reply
          * streams where the user can see it. Carried on the route rather than in a process-wide
          * holder so it survives with the back stack: a chat restored after process death still
          * knows what it was opened to ask.
@@ -24,10 +24,10 @@ sealed class TensaiDestination(val route: String) {
         const val ARG_PROMPT = "prompt"
 
         /**
-         * Sentinel used when a load's success navigates to a brand new conversation rather than
-         * resuming a saved one — [io.github.hokanosekai.tensai.ui.navigation.TensaiNavGraph]
-         * resolves this into a real, persisted conversation id before `ChatScreen`/`ChatViewModel`
-         * ever see it; their contract is "conversationId always names an existing conversation".
+         * Sentinel for a new chat rather than a saved one: drawer "New chat", Home's send, a load
+         * landing on a fresh chat. It opens a draft with no row behind it (TEN-106); the row is
+         * created by the first send, see `ChatViewModel`. The route keeps this value after that,
+         * `ChatScreen` holds the real id.
          */
         const val NEW_CONVERSATION_ID = "new"
 

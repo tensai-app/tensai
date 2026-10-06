@@ -243,6 +243,65 @@ class TensaiDbMigrationTest {
         assertEquals("Parse a GGUF header", titleOf("other"))
     }
 
+    /**
+     * TEN-106: a conversation that never got a message is deleted, whatever its title. One with
+     * messages stays, including one holding only a user message (a reply that failed before its
+     * first token), along with its messages.
+     */
+    @Test
+    fun migrate9To10DeletesConversationsWithoutMessagesOnly() {
+        helper.createDatabase(testDbName, 9).apply {
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('empty', '', null, null, null, 1000, 1000, 1)",
+            )
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('empty-titled', 'Parse a GGUF header', null, null, null, 1000, 1000, 1)",
+            )
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('answered', 'hi', 'm1', null, 'Be brief.', 1000, 2000, 0)",
+            )
+            execSQL(
+                "INSERT INTO messages (id, conversationId, role, content, thinking, toolCallsJson, " +
+                    "tokensGenerated, tokPerSec, ttftMs, createdAt, stopReason) VALUES " +
+                    "('m1', 'answered', 'user', 'hi', null, null, null, null, null, 1000, null)",
+            )
+            execSQL(
+                "INSERT INTO messages (id, conversationId, role, content, thinking, toolCallsJson, " +
+                    "tokensGenerated, tokPerSec, ttftMs, createdAt, stopReason) VALUES " +
+                    "('m2', 'answered', 'assistant', 'hello', null, null, 2, 1.0, 10, 2000, 'EndOfTurn')",
+            )
+            execSQL(
+                "INSERT INTO conversations (id, title, modelId, samplingJson, systemPrompt, createdAt, " +
+                    "updatedAt, enableThinking) VALUES ('unanswered', 'hi', null, null, null, 1000, 1000, 1)",
+            )
+            execSQL(
+                "INSERT INTO messages (id, conversationId, role, content, thinking, toolCallsJson, " +
+                    "tokensGenerated, tokPerSec, ttftMs, createdAt, stopReason) VALUES " +
+                    "('m3', 'unanswered', 'user', 'hi', null, null, null, null, null, 1000, null)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 10, true, TensaiDbMigrations.MIGRATION_9_10)
+
+        val remaining = migrated.query("SELECT id FROM conversations ORDER BY id").use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+        }
+        assertEquals(listOf("answered", "unanswered"), remaining)
+        migrated.query("SELECT systemPrompt, enableThinking FROM conversations WHERE id = 'answered'").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("a kept row keeps its settings", "Be brief.", it.getString(0))
+            assertEquals(0L, it.getLong(1))
+        }
+        migrated.query("SELECT COUNT(*) FROM messages").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("no message is touched", 3L, it.getLong(0))
+        }
+    }
+
     /** The full chain still lands a v1 row on v8 intact, not just the single hop above. */
     @Test
     fun modelRowSurvivesV1ToV8() {

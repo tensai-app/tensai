@@ -24,6 +24,7 @@ import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.runtime.residentModel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -32,8 +33,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
@@ -223,13 +229,32 @@ internal fun hasPersistableContent(content: String, thinking: String?): Boolean 
     content.isNotEmpty() || !thinking.isNullOrEmpty()
 
 /**
+ * The per-conversation settings the chat screen edits, in the shape [ConversationEntity] stores
+ * them. Read off the row once there is one, held in memory for a draft (TEN-106) and handed to
+ * [ChatRepository.createConversation] on the draft's first send. The defaults are a fresh row's.
+ */
+private data class ConversationSettings(
+    val samplingJson: String? = null,
+    val systemPrompt: String? = null,
+    val enableThinking: Boolean = true,
+)
+
+private fun ConversationEntity?.settings(): ConversationSettings =
+    if (this == null) ConversationSettings() else ConversationSettings(samplingJson, systemPrompt, enableThinking)
+
+/**
  * Drives a single conversation's chat screen (TEN-32): streams [ChatRepository]'s persisted
  * messages, and turns [InferenceQueue.generate] events into DB writes as a reply streams in.
  *
- * `conversationId` is expected to always name an existing conversation — resolving the "new chat"
- * sentinel into a real, persisted id happens one layer up, in
- * [io.github.hokanosekai.tensai.ui.navigation.TensaiNavGraph], before this class is ever
- * constructed.
+ * `conversationId` names an existing conversation, or is `null` for a new chat (TEN-106). A new
+ * chat is a *draft*: no row exists until its first [send], which creates it (see
+ * [ensureConversation]) and from then on this instance is bound to that id, exposed as
+ * [currentConversationId]. Until then the screen reads an empty history and the settings held in
+ * [draft], so opening and leaving a new chat writes nothing. The route keeps saying "new" after
+ * the row exists: swapping it for the real id would rebuild this instance in the middle of the
+ * first reply, dropping what only it holds ([error], [canStop]'s own half). `ChatScreen` saves
+ * [currentConversationId] instead, so a screen recreated after process death reopens the
+ * conversation rather than a fresh draft.
  *
  * Like [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel], every generation runs
  * on [scope] (defaulting to [RuntimeGraph.applicationScope]), **not** a Compose-scoped coroutine:
@@ -239,17 +264,39 @@ internal fun hasPersistableContent(content: String, thinking: String?): Boolean 
  * isn't — the project has no such dependency yet (see `RuntimeGraph`'s "framework-free
  * composition root" KDoc). `ChatScreen` `remember`s one instance per `conversationId`.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
-    private val conversationId: String,
+    conversationId: String?,
     private val chatRepository: ChatRepository = RuntimeGraph.chatRepository,
     private val inferenceQueue: InferenceQueue = RuntimeGraph.inferenceQueue,
     private val modelRepository: ModelRepository = RuntimeGraph.modelRepository,
     private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
 ) {
-    /** This conversation's messages, oldest first, mapped for display — see [toUi]. */
-    val messages: Flow<List<ChatMessageUi>> =
-        chatRepository.observeMessages(conversationId).map { list -> list.mapNotNull { it.toUi() } }
+    private val _conversationId = MutableStateFlow(conversationId)
+
+    /** The conversation this instance is bound to, `null` while it is still a draft (TEN-106). Set once, by the draft's first [send]. */
+    val currentConversationId: StateFlow<String?> = _conversationId.asStateFlow()
+
+    /** A draft's settings, until its first [send] turns them into a row. Unused once [currentConversationId] is set. */
+    private val draft = MutableStateFlow(ConversationSettings())
+
+    /**
+     * Serializes "is there a row yet" between [ensureConversation] and the settings setters, so a
+     * setting changed while the first send is creating the row lands either in the draft it copies
+     * or in the row it created, never in a draft nobody reads any more.
+     */
+    private val draftMutex = Mutex()
+
+    /** This conversation's settings: the row's once it exists, the [draft]'s before. */
+    private val settings: Flow<ConversationSettings> = _conversationId.flatMapLatest { id ->
+        if (id == null) draft else chatRepository.observeConversation(id).map { it.settings() }
+    }
+
+    /** This conversation's messages, oldest first, mapped for display (see [toUi]). Empty for a draft. */
+    val messages: Flow<List<ChatMessageUi>> = _conversationId.flatMapLatest { id ->
+        if (id == null) flowOf(emptyList()) else chatRepository.observeMessages(id)
+    }.map { list -> list.mapNotNull { it.toUi() } }
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
@@ -276,8 +323,8 @@ class ChatViewModel(
      * one saying "mine" is enough; requiring both would inherit both weaknesses.
      */
     val canStop: Flow<Boolean> =
-        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere) { state, active, here ->
-            state is QueueState.Generating && (here || active?.first == conversationId)
+        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId) { state, active, here, id ->
+            state is QueueState.Generating && (here || (id != null && active?.first == id))
         }
 
     /**
@@ -302,12 +349,11 @@ class ChatViewModel(
         }
 
     /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
-    val enableThinking: Flow<Boolean> =
-        chatRepository.observeConversation(conversationId).map { it?.enableThinking ?: true }
+    val enableThinking: Flow<Boolean> = settings.map { it.enableThinking }
 
     /** Flips this conversation's [ConversationEntity.enableThinking] — takes effect on the next [send]/[regenerate], not the one already streaming. */
     fun setEnableThinking(enabled: Boolean) {
-        scope.launch { chatRepository.setEnableThinking(conversationId, enabled) }
+        updateSettings({ it.copy(enableThinking = enabled) }) { id -> chatRepository.setEnableThinking(id, enabled) }
     }
 
     /**
@@ -316,26 +362,63 @@ class ChatViewModel(
      * never been customized. `enableThinking`/`reasoningBudget` are *not* meaningful here: both are
      * resolved at generation time, see [generateReply] and [SamplingJson]'s KDoc.
      */
-    val sampling: Flow<SamplingConfig> =
-        chatRepository.observeConversation(conversationId).map { SamplingJson.decode(it?.samplingJson) }
+    val sampling: Flow<SamplingConfig> = settings.map { SamplingJson.decode(it.samplingJson) }
 
     /** This conversation's [ConversationEntity.systemPrompt], empty when unset — see [ChatRepository.setSystemPrompt]. */
-    val systemPrompt: Flow<String> =
-        chatRepository.observeConversation(conversationId).map { it?.systemPrompt.orEmpty() }
+    val systemPrompt: Flow<String> = settings.map { it.systemPrompt.orEmpty() }
 
     /** Persists [config] for this conversation. Applies to the next [send]/[regenerate] — see [ChatRepository.setSampling]. */
     fun setSampling(config: SamplingConfig) {
-        scope.launch { chatRepository.setSampling(conversationId, config) }
+        updateSettings({ it.copy(samplingJson = SamplingJson.encode(config)) }) { id -> chatRepository.setSampling(id, config) }
     }
 
     /** Drops the sampling override, back to defaults — see [ChatRepository.resetSampling] for why the system prompt is left alone. */
     fun resetSampling() {
-        scope.launch { chatRepository.resetSampling(conversationId) }
+        updateSettings({ it.copy(samplingJson = null) }) { id -> chatRepository.resetSampling(id) }
     }
 
     /** Persists [prompt] as this conversation's system prompt. Applies to the next [send]/[regenerate]. */
     fun setSystemPrompt(prompt: String) {
-        scope.launch { chatRepository.setSystemPrompt(conversationId, prompt) }
+        updateSettings({ it.copy(systemPrompt = prompt.ifBlank { null }) }) { id -> chatRepository.setSystemPrompt(id, prompt) }
+    }
+
+    /**
+     * Applies a settings change to the draft while there is no row ([onDraft]), to the row once
+     * there is one ([onRow]). Same rules for both: the change applies to the next generation.
+     */
+    private fun updateSettings(
+        onDraft: (ConversationSettings) -> ConversationSettings,
+        onRow: suspend (conversationId: String) -> Unit,
+    ) {
+        scope.launch {
+            val id = draftMutex.withLock {
+                _conversationId.value ?: run {
+                    draft.update(onDraft)
+                    null
+                }
+            }
+            if (id != null) onRow(id)
+        }
+    }
+
+    /**
+     * This instance's conversation id, creating the row first if this is still a draft (TEN-106).
+     * The row is born with the draft's settings and stamped with the model resident right now, the
+     * one about to answer. Idempotent: under [draftMutex], so a second caller gets the first one's
+     * id rather than a second row.
+     */
+    private suspend fun ensureConversation(): String = draftMutex.withLock {
+        _conversationId.value ?: run {
+            val settings = draft.value
+            val id = chatRepository.createConversation(
+                modelId = inferenceQueue.state.value.residentModel?.modelId,
+                samplingJson = settings.samplingJson,
+                systemPrompt = settings.systemPrompt,
+                enableThinking = settings.enableThinking,
+            )
+            _conversationId.value = id
+            id
+        }
     }
 
     /**
@@ -387,8 +470,9 @@ class ChatViewModel(
         }
         _error.value = null
         generationJob = scope.launch {
+            val conversationId = ensureConversation()
             chatRepository.appendUserMessage(conversationId, trimmed)
-            generateReply()
+            generateReply(conversationId)
         }
     }
 
@@ -437,6 +521,9 @@ class ChatViewModel(
      */
     fun regenerate() {
         if (generationJob?.isActive == true) return
+        // A draft has no reply to redo. Not reachable from the UI (no bubble, and a failure banner
+        // only follows a send, which created the row), checked so it stays a no-op regardless.
+        val conversationId = _conversationId.value ?: return
         if (inferenceQueue.state.value !is QueueState.ModelReady) {
             _error.value = ChatError.NoModelLoaded
             return
@@ -447,7 +534,7 @@ class ChatViewModel(
             if (last != null && last.role == "assistant") {
                 chatRepository.deleteMessage(last.id)
             }
-            generateReply()
+            generateReply(conversationId)
         }
     }
 
@@ -484,9 +571,9 @@ class ChatViewModel(
      * [ReasoningBudget.splitting] — never stored, so it cannot go stale against the max-tokens the
      * user actually set.
      */
-    private suspend fun generateReply() {
-        syncSessionForConversationSwitch()
-        reportActiveSession()
+    private suspend fun generateReply(conversationId: String) {
+        syncSessionForConversationSwitch(conversationId)
+        reportActiveSession(conversationId)
 
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
@@ -589,7 +676,7 @@ class ChatViewModel(
      * "leave the live cache alone" behavior this method always had for a non-empty cache before
      * TEN-62.
      */
-    private suspend fun syncSessionForConversationSwitch() {
+    private suspend fun syncSessionForConversationSwitch(conversationId: String) {
         if ((inferenceQueue.kvUsedPercent() ?: 0f) == 0f) {
             val (info, key) = resolveSessionKey() ?: return
             restoreOnto(conversationId, key, info)
@@ -637,7 +724,7 @@ class ChatViewModel(
     }
 
     /** Reports this conversation as the one currently bound to the loaded model — see [ActiveSessionTracker]. */
-    private suspend fun reportActiveSession() {
+    private suspend fun reportActiveSession(conversationId: String) {
         val (_, key) = resolveSessionKey() ?: return
         ActiveSessionTracker.report(conversationId, key)
     }

@@ -32,8 +32,18 @@ class ChatRepository(private val dao: ChatDao) {
      * and returns its id. The title starts empty (TEN-105): "untitled" is a display concern, so the
      * UI renders it with the localized `drawer_new_chat` string instead of an English literal
      * frozen into the row.
+     *
+     * The settings default to a fresh conversation's. A new chat is a draft with no row until its
+     * first message (TEN-106), and whatever the user set on that draft in the settings sheet is
+     * passed here, so the row is born with it rather than patched right after.
+     * [systemPrompt] is normalized blank to `null`, same as [setSystemPrompt].
      */
-    suspend fun createConversation(modelId: String?): String {
+    suspend fun createConversation(
+        modelId: String?,
+        samplingJson: String? = null,
+        systemPrompt: String? = null,
+        enableThinking: Boolean = true,
+    ): String {
         val id = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
         dao.insertConversation(
@@ -41,9 +51,9 @@ class ChatRepository(private val dao: ChatDao) {
                 id = id,
                 title = "",
                 modelId = modelId,
-                samplingJson = null,
-                systemPrompt = null,
-                enableThinking = true,
+                samplingJson = samplingJson,
+                systemPrompt = systemPrompt?.ifBlank { null },
+                enableThinking = enableThinking,
                 createdAt = now,
                 updatedAt = now,
             ),
