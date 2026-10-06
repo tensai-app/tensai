@@ -4,7 +4,11 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
@@ -12,6 +16,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -24,6 +29,7 @@ import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 
 /** Which chrome (top bar) a given route gets. */
@@ -74,6 +80,11 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
         ?.let { "${it.name} · ${it.nCtxEffective}" }
         ?: stringResource(R.string.top_bar_no_model)
 
+    // The top bar's "+" on Models (TEN-108) and the picker it opens live on opposite sides of the
+    // NavHost: the launcher and the import it starts belong to ModelsScreen's scope. The bar only
+    // signals; the screen collects and launches. No replay, so a tap never fires twice.
+    val modelsImportRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+
     val startDestination = when (onboardingEntry) {
         OnboardingEntry.None -> TensaiDestination.Home.route
         is OnboardingEntry.Show -> TensaiDestination.Onboarding.route
@@ -115,6 +126,13 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                     TensaiChrome.Detail -> TensaiDetailTopBar(
                         title = detailTitleForRoute(currentRoute)?.let { stringResource(it) }.orEmpty(),
                         onBackClick = { navController.popBackStack() },
+                        actions = {
+                            if (currentRoute == TensaiDestination.Models.route) {
+                                IconButton(onClick = { modelsImportRequests.tryEmit(Unit) }) {
+                                    Icon(imageVector = Icons.Default.Add, contentDescription = stringResource(R.string.models_import))
+                                }
+                            }
+                        },
                     )
 
                     TensaiChrome.None -> Unit
@@ -125,6 +143,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 navController = navController,
                 startDestination = startDestination,
                 onboardingStartStep = onboardingStartStep,
+                modelsImportRequests = modelsImportRequests,
                 modifier = Modifier.padding(innerPadding),
             )
         }

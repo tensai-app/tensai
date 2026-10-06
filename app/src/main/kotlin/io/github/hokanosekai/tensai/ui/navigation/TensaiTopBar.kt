@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -60,13 +61,18 @@ fun TensaiTopBar(
     )
 }
 
-/** Simple back-arrow top bar for [TensaiDestination.Models], [ModelDetail], [Settings] and [Server]. */
+/**
+ * Simple back-arrow top bar for [TensaiDestination.Models], [ModelDetail], [Settings] and [Server].
+ *
+ * @param actions trailing icon buttons for routes that have one (Models: import), empty otherwise.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TensaiDetailTopBar(
     title: String,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {},
 ) {
     TopAppBar(
         modifier = modifier,
@@ -76,6 +82,7 @@ fun TensaiDetailTopBar(
                 Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
             }
         },
+        actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
     )
 }

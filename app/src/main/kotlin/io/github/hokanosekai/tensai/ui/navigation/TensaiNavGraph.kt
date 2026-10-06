@@ -7,6 +7,8 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
@@ -21,6 +23,8 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
  * are body content only.
  *
+ * @param modelsImportRequests taps on the Models top bar's "+" (owned by [TensaiShell]), forwarded
+ *   to [ModelsScreen], which owns the picker.
  * @param onboardingStartStep step the onboarding opens at when [startDestination] is it — see
  *   [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate].
  */
@@ -30,6 +34,7 @@ fun TensaiNavGraph(
     startDestination: String,
     modifier: Modifier = Modifier,
     onboardingStartStep: OnboardingStep = OnboardingStep.Welcome,
+    modelsImportRequests: Flow<Unit> = emptyFlow(),
 ) {
     NavHost(
         navController = navController,
@@ -102,6 +107,7 @@ fun TensaiNavGraph(
                 // Pushed, not popped-to, mirroring how Settings pushes Models: back from Settings
                 // returns to the list the user was looking at when the banner sent them there.
                 onNavigateToStorage = { navController.navigate(TensaiDestination.Settings.route) },
+                importRequests = modelsImportRequests,
             )
         }
 

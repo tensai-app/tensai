@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,9 +42,10 @@ import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
-import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -61,6 +63,8 @@ internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
  *   Settings' storage group, which is the only screen that can release space *without* deleting a
  *   model (saved sessions). Deleting a model is already possible right here, so the banner sends
  *   the user at the option this screen doesn't have.
+ * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the picker,
+ *   exactly as the empty state's button and the failure dialog's "Try again" do.
  */
 @Composable
 fun ModelsScreen(
@@ -68,6 +72,7 @@ fun ModelsScreen(
     onLoadModelClick: (String) -> Unit,
     onNavigateToStorage: () -> Unit,
     modifier: Modifier = Modifier,
+    importRequests: Flow<Unit> = emptyFlow(),
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
     val models by repository.models.collectAsState(initial = null)
@@ -126,6 +131,10 @@ fun ModelsScreen(
 
     fun launchImport() = importLauncher.launch(GgufMimeTypes)
 
+    LaunchedEffect(importRequests) {
+        importRequests.collect { launchImport() }
+    }
+
     val currentModels = models
     val currentUsage = storageUsage
     // Recomputed whenever the library or the free-space reading changes, not on every
@@ -148,6 +157,16 @@ fun ModelsScreen(
             )
         }
 
+        // At the top, right under the bar whose "+" started it (TEN-108), and outside the `when`
+        // so it shows whether or not the library was empty when the import began.
+        importProgress?.let { progress ->
+            LinearProgressIndicator(
+                progress = { progress },
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+
         Box(modifier = Modifier.weight(1f)) {
             when {
                 currentModels == null -> Unit // initial Room query hasn't emitted yet.
@@ -155,41 +174,24 @@ fun ModelsScreen(
                     EmptyModelsState(onImportClick = ::launchImport, modifier = Modifier.fillMaxSize())
                 }
                 else -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            items(currentModels, key = { it.id }) { model ->
-                                ModelCard(
-                                    model = model,
-                                    isLoaded = model.id == loadedModelId,
-                                    onClick = { onModelClick(model.id) },
-                                    onLoadClick = { onLoadModelClick(model.id) },
-                                    onDeleteClick = { fileExists ->
-                                        // A missing file has nothing left to lose — delete straight
-                                        // away. A present file is a real, unrecoverable loss, so it
-                                        // goes through the confirmation dialog below instead.
-                                        if (fileExists) pendingDelete = model else deleteModel(model)
-                                    },
-                                )
-                            }
-                        }
-
-                        importProgress?.let { progress ->
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(currentModels, key = { it.id }) { model ->
+                            ModelCard(
+                                model = model,
+                                isLoaded = model.id == loadedModelId,
+                                onClick = { onModelClick(model.id) },
+                                onLoadClick = { onLoadModelClick(model.id) },
+                                onDeleteClick = { fileExists ->
+                                    // A missing file has nothing left to lose: delete straight
+                                    // away. A present file is a real, unrecoverable loss, so it
+                                    // goes through the confirmation dialog below instead.
+                                    if (fileExists) pendingDelete = model else deleteModel(model)
+                                },
                             )
-                        }
-
-                        OutlinedButton(
-                            onClick = ::launchImport,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        ) {
-                            Text(stringResource(R.string.models_import))
                         }
                     }
                 }
@@ -220,14 +222,13 @@ fun ModelsScreen(
         // Outside the `when`, so a failed import is reported the same way whether the library was
         // empty (the very first import, the likeliest one to go wrong) or already had models in it.
         importFailure?.let { failure ->
-            ImportFailureCard(
+            ImportFailureDialog(
                 failure = failure,
                 onRetry = {
                     importFailure = null
                     launchImport()
                 },
                 onDismiss = { importFailure = null },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
     }
@@ -238,7 +239,7 @@ fun ModelsScreen(
  * left than an average model here occupies. Same sober warning treatment as `ChatScreen`'s own
  * banners: a tint, one line of figures, one action, no icon and no dismissal.
  *
- * Not dismissible on purpose, unlike [ImportFailureCard]: an import that failed is over and done
+ * Not dismissible on purpose, unlike [ImportFailureDialog]: an import that failed is over and done
  * with, whereas this is a condition that is still true, and a banner the user can wave away is a
  * banner that stops meaning anything.
  */
@@ -276,54 +277,32 @@ private fun StorageLowBanner(
 }
 
 /**
- * Import failure card (TEN-39, state 3) — replaces the snackbar the four import exceptions used to
- * be shown in.
+ * Import failure dialog (TEN-39 state 3, a dialog since TEN-108). Replaced a snackbar first: a
+ * snackbar times out, so a failure that happened while the user was looking at the file picker was
+ * often gone by the time they looked back, and it has room for one action at most. Then a card
+ * under the import button, which went with that button: a centered dialog is where the eye lands
+ * coming back from the picker, and it still stays until answered and carries the retry.
  *
- * A snackbar was the wrong container for this twice over: it times out, so a failure that happened
- * while the user was looking at the file picker was often gone by the time they looked back; and it
- * has room for one action at most, which the old code didn't use, leaving "try again" to mean
- * "find the import button again yourself". A card stays until it is answered and carries the retry.
- *
- * [body] is chosen by *kind* of failure — see [ImportFailure] for why the throwable's own message
- * never reaches here.
+ * [failure]'s body is chosen by *kind* of failure: see [ImportFailure] for why the throwable's own
+ * message never reaches here.
  */
 @Composable
-private fun ImportFailureCard(
+private fun ImportFailureDialog(
     failure: ImportFailure,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    Surface(
-        shape = TensaiShapes.large,
-        color = MaterialTheme.tensaiTints.error12,
-        modifier = modifier,
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = stringResource(R.string.import_failed_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-            Text(
-                text = importFailureBody(failure),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Row(
-                horizontalArrangement = Arrangement.End,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            ) {
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.import_failed_dismiss))
-                }
-                TextButton(onClick = onRetry) {
-                    Text(stringResource(R.string.import_failed_retry))
-                }
-            }
-        }
-    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.import_failed_title)) },
+        text = { Text(importFailureBody(failure)) },
+        confirmButton = {
+            TextButton(onClick = onRetry) { Text(stringResource(R.string.import_failed_retry)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_failed_dismiss)) }
+        },
+    )
 }
 
 /**
