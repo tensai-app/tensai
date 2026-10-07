@@ -133,16 +133,16 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+internal val SheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
 /** Drag handle slot height: 10dp above, 4dp bar, 2dp below. */
-private val SheetHandleHeight = 16.dp
+internal val SheetHandleHeight = 16.dp
 
 /**
  * 1dp stroke along the sheet's top edge only, following its 28dp top corners: the shape's outline is
  * stroked and clipped to the corner band, so the straight sides below it never show.
  */
-private fun DrawScope.drawTopHairline(color: Color) {
+internal fun DrawScope.drawTopHairline(color: Color) {
     val band = 28.dp.toPx()
     val corner = CornerRadius(band)
     val shape = Path().apply {

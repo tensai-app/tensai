@@ -88,12 +88,15 @@
 
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Licences open source</string>
-    <string name="settings_licenses_expanded">Déplié</string>
-    <string name="settings_licenses_collapsed">Replié</string>
     <string name="settings_footer">fait pour tourner libre</string>
-    <string name="settings_license_line">%1$s · %2$s</string>
-    <string name="licenses_group_components">Composants de tensai</string>
-    <string name="licenses_group_libraries">Bibliothèques</string>
+    <string name="licenses_intro">tensai repose sur du travail open source. Merci à toutes celles et ceux derrière ces projets.</string>
+    <string name="licenses_group_inference">Inférence</string>
+    <string name="licenses_group_fonts">Polices</string>
+    <string name="licenses_group_app">App</string>
+    <string name="licenses_group_androidx">AndroidX</string>
+    <string name="licenses_total">%1$d projets</string>
+    <string name="licenses_open_url">Ouvrir %1$s dans le navigateur</string>
+    <string name="licenses_no_browser">Aucun navigateur trouvé</string>
     <string name="licenses_copyright_line">Copyright %1$s</string>
 
     <!-- ==================== Empty states and errors (TEN-39) ==================== -->

@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.R
  * @param url project homepage.
  * @param textRes the full license text, a raw resource shown verbatim in the detail.
  * @param copyright shown as a "Copyright ..." line above the text, for the shared Apache text.
+ * @param group the card the entry is listed in.
  * @param covers what in the repository this entry accounts for, checked by `ThirdPartyLicensesTest`
  *   so that adding a font or a submodule without an entry fails the build: `font:<resource name>`
  *   for a file in `res/font`, `<directory name>` for a submodule under
@@ -27,6 +28,8 @@ data class ThirdPartyLicense(
     /** Copyright holder shown above the text when the text itself has no line to fill in (Apache). */
     val copyright: String = "",
     val covers: Set<String> = emptySet(),
+    /** The card it is listed in on the licenses screen. */
+    val group: LicenseGroup = LicenseGroup.Inference,
 )
 
 /**
@@ -151,6 +154,7 @@ val ThirdPartyLicenses = listOf(
         url = "github.com/commonmark/commonmark-java",
         textRes = R.raw.license_bsd_2_clause_commonmark,
         covers = setOf("maven:org.commonmark"),
+        group = LicenseGroup.App,
     ),
     ThirdPartyLicense(
         name = "Figtree",
@@ -159,6 +163,7 @@ val ThirdPartyLicenses = listOf(
         url = "github.com/erikdkennedy/figtree",
         textRes = R.raw.license_ofl_figtree,
         covers = setOf("font:figtree"),
+        group = LicenseGroup.Fonts,
     ),
     ThirdPartyLicense(
         name = "JetBrains Mono",
@@ -167,5 +172,6 @@ val ThirdPartyLicenses = listOf(
         url = "github.com/JetBrains/JetBrainsMono",
         textRes = R.raw.license_ofl_jetbrains_mono,
         covers = setOf("font:jetbrains_mono"),
+        group = LicenseGroup.Fonts,
     ),
 )

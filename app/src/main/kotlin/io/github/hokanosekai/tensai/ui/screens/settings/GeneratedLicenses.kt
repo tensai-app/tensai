@@ -8,6 +8,8 @@ import io.github.hokanosekai.tensai.R
 
 /** One Maven dependency of the APK, read from the report the AboutLibraries plugin generates. */
 data class GeneratedLicense(
+    /** `group:artifact` from the report, unique where name and version are not. */
+    val uniqueId: String,
     val name: String,
     val version: String,
     val license: String,
@@ -42,6 +44,7 @@ fun parseGeneratedLicenses(json: String, covered: Set<String> = emptySet()): Lis
         .map { library ->
             val license = library.licenses.firstOrNull()
             GeneratedLicense(
+                uniqueId = library.uniqueId,
                 name = library.name.ifBlank { library.uniqueId },
                 version = library.artifactVersion.orEmpty(),
                 license = license?.name.orEmpty(),
