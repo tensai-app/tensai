@@ -13,7 +13,7 @@ masqués derrière un job rouge en permanence.
 
 ## Ce qui tourne
 
-Deux workflows, séparés parce qu'ils n'ont pas le même déclencheur.
+Deux workflows de vérification, séparés parce qu'ils n'ont pas le même déclencheur. Un troisième, `release.yml`, ne tourne que sur tag (voir « Release signée sur tag »).
 
 ### `ci.yml` — job `unit-tests`, sur `push` vers `main` et sur `pull_request`
 
@@ -56,7 +56,8 @@ natif :
 | `third_party/**` | le pointeur du sous-module `llama.kt`, où vivent le `CMakeLists.txt`, les sources `cpp/` et les SHA de `llama.cpp` et des deux OpenCL |
 | `.gitmodules` | l'URL ou le chemin d'un sous-module |
 | `gradle/**`, `gradle.properties`, `settings.gradle.kts`, `build.gradle.kts`, `app/build.gradle.kts` | version d'AGP, wrapper Gradle, configuration du module |
-| `.github/workflows/native.yml` | le workflow lui-même |
+| `.github/workflows/native.yml`, `.github/actions/native-prereqs/**` | le workflow lui-même et l'action composite qui porte ses prérequis |
+| `app/proguard-rules.pro` | les règles R8 de la release, exercées par l'étape `assembleRelease` |
 
 Le `CMakeLists.txt` et la valeur `ndkVersion` vivent **dans le sous-module**, pas
 ici : le pointeur `third_party/llama.kt` est le seul signal disponible pour eux,
@@ -192,30 +193,70 @@ timeout 300 adb shell am instrument -w \
 
 Détails et suites à faire tourner : `docs/device-qa-queue.md` §10.
 
-### Release signée sur tag — à mettre en place par l'utilisateur
+### Release signée sur tag, `release.yml`
 
-Pas de workflow livré : il échouerait faute de secrets, que seul l'utilisateur
-peut créer. Ce qu'il faudra, dans l'ordre :
+Sur push d'un tag `v*` (et `workflow_dispatch`, pour rejouer un run raté depuis le
+tag). Pas encore exécuté : il lui manque l'environnement et les secrets, que seul
+le propriétaire peut créer. Deux jobs, pour que le job qui voit les secrets
+n'écrive rien et que celui qui écrit n'en voie aucun :
+
+**`build`** : `environment: release`, `contents: read`, 60 min max, checkout
+complet sans credentials persistés.
+
+1. Contrôles bon marché d'abord, avant le natif : la ref est un tag, le tag (sans
+   le `v`) égale `versionName`, le commit tagué est un ancêtre de `origin/main`,
+   `versionCode` est strictement supérieur à celui du tag `v*` précédent (lu avec
+   `git show <tag>:app/build.gradle.kts`), les quatre secrets sont non vides.
+2. Mêmes prérequis natifs que `native.yml`, via l'action composite
+   `.github/actions/native-prereqs` : une seule copie des étapes.
+3. Keystore décodé dans `$RUNNER_TEMP` (jamais le workspace, `umask 077`), supprimé
+   dans une étape `if: always()`.
+4. `:app:assembleRelease`, `apksigner verify --print-certs`, renommage en
+   `tensai-<version>.apk`, upload en artefact (7 jours).
+
+**`publish`** : `contents: write`, ni checkout ni secrets. Télécharge l'artefact et
+lance `gh release create <tag> <apk> --generate-notes --verify-tag`, avec
+`--prerelease` si la version contient un `-`. Si la release existe déjà (rerun), il
+le dit et ne fait rien.
+
+Côté Gradle, `app/build.gradle.kts` crée la config de signature `release` quand les
+quatre variables `TENSAI_KEYSTORE_PATH`, `TENSAI_KEYSTORE_PASSWORD`,
+`TENSAI_KEY_ALIAS`, `TENSAI_KEY_PASSWORD` sont définies. Aucune : APK non signée,
+comme avant, rien ne casse en local ni dans `ci.yml` / `native.yml`. Une à trois sur
+quatre : le build échoue en nommant les manquantes, plutôt que de livrer en silence
+une APK non signée. Aucune valeur n'est dans le dépôt.
+
+R8 : `isMinifyEnabled = true` sur la release. `llama-kt` ne publie pas de règles
+consumer, donc `app/proguard-rules.pro` garde les méthodes `native` de
+`LlamaEngine` et les trois interfaces de callback que le C++ résout par nom
+(`GetMethodID` sur `onToken`, `onChatParse`, `onProgress`). Vérifié sur le dex de
+l'APK release (les classes qui les implémentent exposent bien ces noms et ces
+signatures), pas sur device : la release n'a pas été lancée. `native.yml` exécute
+désormais `assembleRelease` (non signé) pour que R8, `shrinkResources` et le build
+CMake release soient exercés avant tout tag. Surcoût estimé : de l'ordre de 5 à
+10 minutes par run (CMake release, pas de cache `.cxx/`), **non mesuré** sur un
+runner.
+
+#### Ce qu'il reste à faire au propriétaire
 
 1. Générer le keystore, **hors du dépôt** :
    ```bash
    keytool -genkeypair -v -keystore tensai-release.jks \
      -keyalg RSA -keysize 4096 -validity 10000 -alias tensai
    ```
-2. Créer quatre secrets de dépôt (Settings → Secrets and variables → Actions) :
-
-   | Secret | Contenu |
-   |---|---|
-   | `KEYSTORE_BASE64` | `base64 -w0 tensai-release.jks` |
-   | `KEYSTORE_PASSWORD` | mot de passe du keystore |
-   | `KEY_ALIAS` | `tensai` |
-   | `KEY_PASSWORD` | mot de passe de la clé |
-
-3. Ajouter un `signingConfigs` release dans `app/build.gradle.kts`, alimenté par
-   des variables d'environnement, sans valeur en dur.
-4. Le workflow décode le keystore dans le workspace, lance `:app:assembleRelease`,
-   attache l'APK à la release. Il aura besoin des mêmes prérequis natifs que
-   `native.yml` : reprendre ses étapes jusqu'au cache des shaders inclus.
+2. Créer l'environnement GitHub `release` (Settings, Environments), avec une règle
+   de déploiement par tag `v*` et, si voulu, un reviewer obligatoire.
+3. Y mettre les quatre secrets (dans l'environnement, pas au niveau dépôt) :
+   ```bash
+   base64 -w0 tensai-release.jks | gh secret set KEYSTORE_BASE64 --env release
+   gh secret set KEYSTORE_PASSWORD --env release
+   gh secret set KEY_ALIAS --env release --body tensai
+   gh secret set KEY_PASSWORD --env release
+   ```
+4. Tagger un commit de `main`, avec `versionName` déjà à la même valeur :
+   ```bash
+   git tag v0.1.0 && git push origin v0.1.0
+   ```
 
 Sauvegarder le keystore ailleurs. Perdu, il interdit toute mise à jour d'une app
 déjà publiée.

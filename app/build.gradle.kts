@@ -29,8 +29,44 @@ android {
         }
     }
 
+    // Release signing is fed ONLY by environment variables (CI decodes the keystore into
+    // $RUNNER_TEMP, see .github/workflows/release.yml). Nothing is read from the repo. When any
+    // variable is missing the release build type stays unsigned, exactly as a local
+    // `assembleRelease` always was.
+    val releaseKeystorePath = System.getenv("TENSAI_KEYSTORE_PATH")
+    val releaseKeystorePassword = System.getenv("TENSAI_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("TENSAI_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("TENSAI_KEY_PASSWORD")
+    val releaseSigningVars = mapOf(
+        "TENSAI_KEYSTORE_PATH" to releaseKeystorePath,
+        "TENSAI_KEYSTORE_PASSWORD" to releaseKeystorePassword,
+        "TENSAI_KEY_ALIAS" to releaseKeyAlias,
+        "TENSAI_KEY_PASSWORD" to releaseKeyPassword,
+    )
+    val releaseSigningMissing = releaseSigningVars.filterValues { it.isNullOrEmpty() }.keys
+    // 0 set: unsigned. 4 set: signed. Anything in between is a misconfiguration that would
+    // otherwise silently ship an unsigned APK, so it fails the build.
+    if (releaseSigningMissing.isNotEmpty() && releaseSigningMissing.size < releaseSigningVars.size) {
+        throw GradleException(
+            "Incomplete release signing environment, missing: ${releaseSigningMissing.joinToString()}",
+        )
+    }
+    val releaseSigningAvailable = releaseSigningMissing.isEmpty()
+
+    if (releaseSigningAvailable) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningAvailable) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

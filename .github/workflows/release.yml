@@ -1,0 +1,193 @@
+name: Release
+
+# Un tag `v*` produit une APK signée et une release GitHub. Deux jobs séparés :
+# `build` a accès aux secrets (environnement `release`) mais n'écrit rien,
+# `publish` écrit la release mais ne voit aucun secret ni le code. Les secrets
+# sont décrits dans docs/ci.md.
+#
+# Le tag doit égaler versionName (app/build.gradle.kts), pointer un commit de
+# main, et porter un versionCode strictement supérieur à celui du tag précédent.
+#
+# workflow_dispatch sert à rejouer un run raté : à lancer depuis le tag, pas
+# depuis une branche (la release s'attache à un tag existant, --verify-tag).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Signed release APK
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      # Historique complet : le merge-base avec main et le tag précédent en ont
+      # besoin. Pas de credentials laissés dans .git pendant un build qui porte
+      # le keystore.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Les contrôles bon marché passent avant les 15 minutes de natif.
+      - name: Check ref is a tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::error::lancé sur '$REF_NAME' ($REF_TYPE), pas sur un tag vN.N.N"
+            exit 1
+          fi
+
+      - name: Check tag matches versionName
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          name=$(sed -n 's/^ *versionName *= *"\(.*\)"/\1/p' app/build.gradle.kts)
+          [ -n "$name" ] || { echo "::error::versionName introuvable dans app/build.gradle.kts"; exit 1; }
+          if [ "${REF_NAME#v}" != "$name" ]; then
+            echo "::error::le tag $REF_NAME ne correspond pas à versionName=$name (attendu v$name). Corriger app/build.gradle.kts ou re-tagger."
+            exit 1
+          fi
+
+      - name: Check tagged commit is on main
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::le commit $SHA n'est pas un ancêtre de origin/main : on ne publie que depuis main"
+            exit 1
+          fi
+
+      - name: Check versionCode increased
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          code_of() { sed -n 's/^ *versionCode *= *\([0-9][0-9]*\).*/\1/p'; }
+          cur=$(code_of < app/build.gradle.kts)
+          [ -n "$cur" ] || { echo "::error::versionCode introuvable dans app/build.gradle.kts"; exit 1; }
+          prev_tag=$(git describe --tags --abbrev=0 --match 'v*' --exclude "$REF_NAME" "${REF_NAME}^" 2>/dev/null || true)
+          if [ -z "$prev_tag" ]; then
+            echo "pas de tag v* précédent, versionCode=$cur"
+            exit 0
+          fi
+          prev=$(git show "$prev_tag:app/build.gradle.kts" | code_of)
+          [ -n "$prev" ] || { echo "::error::versionCode introuvable à $prev_tag"; exit 1; }
+          echo "versionCode $cur (précédent: $prev à $prev_tag)"
+          if [ "$cur" -le "$prev" ]; then
+            echo "::error::versionCode=$cur doit être strictement supérieur à $prev ($prev_tag) : Android refuse sinon la mise à jour"
+            exit 1
+          fi
+
+      - name: Check signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          missing=0
+          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::secret $v manquant dans l'environnement release (voir docs/ci.md, section Release signée sur tag)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # Sous-modules, NDK/glslc, shaders (cache), libOpenCL.so, java et gradle :
+      # les mêmes prérequis que native.yml, une seule copie.
+      - uses: ./.github/actions/native-prereqs
+
+      # Le keystore va dans RUNNER_TEMP, jamais dans le workspace, en 0600.
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$RUNNER_TEMP/tensai-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ks"
+          [ -s "$ks" ] || { echo "::error::KEYSTORE_BASE64 décodé vide"; exit 1; }
+          echo "TENSAI_KEYSTORE_PATH=$ks" >> "$GITHUB_ENV"
+
+      - name: Assemble release APK
+        env:
+          TENSAI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          TENSAI_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TENSAI_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      # Une APK non signée sortirait aussi de assembleRelease : on le vérifie
+      # sur le fichier, pas sur la foi du build.
+      - name: Verify signature and rename
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          [ -f "$apk" ] || { echo "::error::$apk absent"; ls app/build/outputs/apk/release; exit 1; }
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "$apk"
+          mkdir dist
+          mv "$apk" "dist/tensai-${REF_NAME#v}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: dist/*.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Delete keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tensai-release.jks"
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Seul job qui écrit. Pas de checkout, pas de secrets : il ne fait que
+    # poser l'APK déjà vérifiée sur la release.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-apk
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "la release $TAG existe déjà (rerun) : rien à créer"
+            exit 0
+          fi
+          apk=$(ls dist/tensai-*.apk)
+          flags=()
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" "$apk" --repo "$GITHUB_REPOSITORY" \
+            --generate-notes --verify-tag "${flags[@]}"
