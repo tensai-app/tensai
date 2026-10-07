@@ -53,6 +53,8 @@ enum class KvCacheType {
  * @param onProgress optional loading-progress callback, receiving a value
  *   in 0.0–1.0. Called from whatever thread the engine performs loading
  *   on — implementations must not assume the caller's dispatcher.
+ * @param onStage optional callback fired when the load enters a new [LoadStage]. Same threading as
+ *   [onProgress]. An engine that has no stages simply never calls it.
  */
 data class ModelLoadConfig(
     val path: String,
@@ -61,7 +63,33 @@ data class ModelLoadConfig(
     val backend: BackendHint = BackendHint.Auto,
     val kvCacheType: KvCacheType = KvCacheType.F16,
     val onProgress: ((Float) -> Unit)? = null,
+    val onStage: ((LoadStage) -> Unit)? = null,
 )
+
+/**
+ * Coarse phases of a model load, in the order an engine reports them through
+ * [ModelLoadConfig.onStage]. Only [Weights] has an inner progress ([ModelLoadConfig.onProgress]);
+ * the others are boundaries the engine really crossed, never estimates.
+ */
+enum class LoadStage {
+    /**
+     * Before the engine has reported anything: a previous model being saved and released, or
+     * the engine probing the file. Set by the queue, never by an engine; no progress.
+     */
+    Preparing,
+
+    /** Reading the weights into memory. */
+    Weights,
+
+    /** Creating the inference context (KV cache allocation). */
+    Context,
+
+    /** First pass on the new context, warming the backend up. */
+    Warmup,
+
+    /** The model is usable. */
+    Ready,
+}
 
 /** Role of a [ChatMessage] in a conversation. */
 enum class MessageRole {

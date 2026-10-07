@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -62,6 +63,9 @@ private const val GlyphTranslateY = -143.5f
 /** Side of the square viewport the transformed path sits in (matches the vector drawable). */
 private const val GlyphViewportSize = 432f
 
+/** Zoom applied to the viewport-sized glyph so it fills ~87% of the box width, like 天 in a font of that size. */
+private const val GlyphZoom = 2.0f
+
 private fun buildGlyphPath(): Path {
     val androidPath = PathParser.createPathFromPathData(GlyphPathData)
     val matrix = Matrix().apply {
@@ -90,7 +94,11 @@ fun KanjiGlyph(
     glow: Boolean = false,
 ) {
     val glyphPath = remember { buildGlyphPath() }
-    val glowAlpha = MaterialTheme.tensaiTints.primaryRing.alpha
+    // The design's glow is a text-shadow hugging the glyph (24px + 8px blur, primary-ring and
+    // primary-24), not a halo the size of the screen: a soft disc just past the glyph, at the
+    // primary-24 strength.
+    val glowAlpha = MaterialTheme.tensaiTints.primary24.alpha
+    val glyphBounds = remember(glyphPath) { glyphPath.getBounds() }
 
     val context = LocalContext.current
     val animatorDurationScale = remember(context) {
@@ -113,9 +121,14 @@ fun KanjiGlyph(
             .clearAndSetSemantics {},
     ) {
         val scaleFactor = this.size.width / GlyphViewportSize
+        // The drawn glyph only fills about 44% of the viewport (it comes from an adaptive-icon
+        // foreground, whose safe zone leaves wide margins). The design's `size` is the kanji's
+        // own font size, so the glyph is re-centred and scaled up until it fills about the same
+        // share of the box as 天 does in a font of that size.
+        val zoom = GlyphZoom
 
         if (glow) {
-            val glowRadius = this.size.width * 1.4f
+            val glowRadius = this.size.width * 0.62f
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(tint.copy(alpha = glowAlpha), tint.copy(alpha = 0f)),
@@ -127,14 +140,24 @@ fun KanjiGlyph(
             )
         }
 
-        scale(scaleFactor, pivot = Offset.Zero) {
-            clipRect(
-                left = 0f,
-                top = 0f,
-                right = GlyphViewportSize,
-                bottom = GlyphViewportSize * animatedProgress,
-            ) {
-                drawPath(path = glyphPath, color = tint)
+        withTransform({
+            translate(
+                left = center.x - glyphBounds.center.x * scaleFactor,
+                top = center.y - glyphBounds.center.y * scaleFactor,
+            )
+            scale(zoom, pivot = center)
+        }) {
+            scale(scaleFactor, pivot = Offset.Zero) {
+                // Reveal over the glyph's own height, so progress 0.5 shows half of the kanji
+                // (the viewport has empty bands above and below it).
+                val revealBottom = if (animatedProgress >= 1f) {
+                    GlyphViewportSize
+                } else {
+                    glyphBounds.top + glyphBounds.height * animatedProgress
+                }
+                clipRect(left = 0f, top = 0f, right = GlyphViewportSize, bottom = revealBottom) {
+                    drawPath(path = glyphPath, color = tint)
+                }
             }
         }
     }

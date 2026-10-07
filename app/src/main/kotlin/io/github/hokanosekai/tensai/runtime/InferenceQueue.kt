@@ -6,6 +6,7 @@ import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.InferenceEngine
+import io.github.hokanosekai.tensai.engine.LoadStage
 import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
@@ -54,7 +55,7 @@ sealed class QueueState {
     data object Idle : QueueState()
 
     /** A model load is in progress. [progress] is in 0.0–1.0. */
-    data class Loading(val progress: Float) : QueueState()
+    data class Loading(val progress: Float, val stage: LoadStage = LoadStage.Weights) : QueueState()
 
     /** A model is loaded and idle, ready to [InferenceQueue.generate]. */
     data class ModelReady(val info: LoadedModelInfo) : QueueState()
@@ -105,11 +106,11 @@ class QueueBusyException(message: String) : Exception(message)
 
 /**
  * The load-relevant part of a [ModelLoadConfig] — everything except
- * [ModelLoadConfig.onProgress], which is per-call and never identifies a model.
+ * [ModelLoadConfig.onProgress] and [ModelLoadConfig.onStage], which are per-call and never identifies a model.
  * Two configs with equal dedup keys produce an identical loaded model, which is what lets
  * [InferenceQueue.loadModel] short-circuit a repeat call (see TEN-50).
  */
-private fun ModelLoadConfig.dedupKey(): ModelLoadConfig = copy(onProgress = null)
+private fun ModelLoadConfig.dedupKey(): ModelLoadConfig = copy(onProgress = null, onStage = null)
 
 /**
  * "The user asked for this generation to stop" — one instance per [InferenceQueue.generate] call,
@@ -349,6 +350,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * falls back cleanly to [QueueState.Idle] — it does not attempt to
      * restore the previous model.
      */
+    /**
+     * Whether [loadModel] with [config] would be the no-op dedup (this exact config is already
+     * resident). A hint read without the lock: callers use it to skip load-only UI, and a stale
+     * answer only costs a brief extra status screen.
+     */
+    fun isResident(config: ModelLoadConfig): Boolean =
+        loadedConfig == config.dedupKey() && _state.value.residentModel != null
+
     suspend fun loadModel(config: ModelLoadConfig): LoadedModelInfo {
         while (true) {
             var pendingJob: Job? = null
@@ -423,7 +432,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * can still be unloaded. The caller's coroutine is ending either way.
      */
     private suspend fun performLoadLocked(config: ModelLoadConfig): LoadedModelInfo {
-        _state.value = QueueState.Loading(0f)
+        _state.value = QueueState.Loading(0f, LoadStage.Preparing)
 
         try {
             releaseLoadedLocked()
@@ -437,8 +446,17 @@ class InferenceQueue(private val engine: InferenceEngine) {
         return try {
             val effectiveConfig = config.copy(
                 onProgress = { progress ->
-                    _state.value = QueueState.Loading(progress)
+                    // The first progress value proves the engine is reading weights, even for an engine
+                    // that reports no stages.
+                    val stage = (_state.value as? QueueState.Loading)?.stage
+                        ?.takeIf { it != LoadStage.Preparing } ?: LoadStage.Weights
+                    _state.value = QueueState.Loading(progress, stage)
                     config.onProgress?.invoke(progress)
+                },
+                onStage = { stage ->
+                    val progress = (_state.value as? QueueState.Loading)?.progress ?: 0f
+                    _state.value = QueueState.Loading(progress, stage)
+                    config.onStage?.invoke(stage)
                 },
             )
             withContext(NonCancellable) {

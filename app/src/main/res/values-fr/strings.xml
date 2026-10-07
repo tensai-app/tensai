@@ -270,7 +270,12 @@
     <string name="model_detail_saved_sessions">Sessions enregistrées</string>
 
     <!-- Loading screen and its dialogs. -->
-    <string name="loading_progress">chargement en mémoire · %1$s / %2$s GB</string>
+    <string name="loading_stage_preparing">Préparation…</string>
+    <string name="loading_stage_weights">Lecture des poids…</string>
+    <string name="loading_stage_context">Allocation du cache KV…</string>
+    <string name="loading_stage_warmup">Préchauffage de %1$s…</string>
+    <string name="loading_stage_ready">Prêt</string>
+    <string name="loading_status">%1$s · %2$d %%</string>
     <string name="loading_continue_in_background">Continuer en arrière-plan</string>
     <string name="loading_file_missing_body">Le fichier de ce modèle est manquant : le réimporter pour charger « %1$s ».</string>
     <string name="loading_back_to_models">Retour aux modèles</string>

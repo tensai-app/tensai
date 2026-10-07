@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
@@ -30,10 +31,17 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 /**
  * Kit `ProgressBar`: rounded track (primary-16), primary fill. [progress] is `0f..1f`, or `null`
  * for an indeterminate bar (a segment sliding along the track; static under reduced motion).
+ * [pulse] keeps a determinate fill at its value but breathes its opacity, for a phase that is
+ * still working with no progress to report (static under reduced motion).
  */
 @Composable
-fun TensaiProgressBar(progress: Float?, modifier: Modifier = Modifier, height: Dp = 6.dp) {
-    val range = if (progress == null) {
+fun TensaiProgressBar(
+    progress: Float?,
+    modifier: Modifier = Modifier,
+    height: Dp = 6.dp,
+    pulse: Boolean = false,
+) {
+    val range = if (progress == null || pulse) {
         ProgressBarRangeInfo.Indeterminate
     } else {
         ProgressBarRangeInfo(progress.coerceIn(0f, 1f), 0f..1f)
@@ -48,7 +56,19 @@ fun TensaiProgressBar(progress: Float?, modifier: Modifier = Modifier, height: D
     ) {
         val fill = Modifier.fillMaxHeight().clip(CircleShape).background(MaterialTheme.colorScheme.primary)
         if (progress != null) {
-            Box(fill.fillMaxWidth(progress.coerceIn(0f, 1f)))
+            val reducedMotion = rememberReducedMotion()
+            val alpha = if (pulse && !reducedMotion) {
+                val a by rememberInfiniteTransition(label = "pulseBar").animateFloat(
+                    initialValue = 0.55f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
+                    label = "pulseBarAlpha",
+                )
+                a
+            } else {
+                1f
+            }
+            Box(fill.fillMaxWidth(progress.coerceIn(0f, 1f)).alpha(alpha))
         } else {
             val reducedMotion = rememberReducedMotion()
             val segment = maxWidth * 0.35f

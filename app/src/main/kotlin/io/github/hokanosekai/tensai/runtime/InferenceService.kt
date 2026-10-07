@@ -216,10 +216,13 @@ class InferenceService : Service() {
                 // generic label here is a deliberate scope call for TEN-27; surfacing the
                 // requested model's name during Loading would mean threading it through
                 // QueueState, which is out of this ticket's scope.
+                // Overall percent (TEN-123): weights alone would sit at 100% through the context
+                // and warm-up stages that follow them.
+                val percent = LoadProgressMap.percent(state.stage, state.progress)
                 builder
                     .setContentTitle(localized.getString(R.string.notification_loading_title))
-                    .setContentText(localized.getString(R.string.notification_loading_progress, (state.progress * 100).toInt()))
-                    .setProgress(100, (state.progress * 100).toInt(), false)
+                    .setContentText(localized.getString(R.string.notification_loading_progress, percent))
+                    .setProgress(100, percent, false)
             }
 
             is QueueState.ModelReady -> {

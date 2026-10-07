@@ -144,7 +144,15 @@ ses entrées et **échoue** au lieu d'avertir :
 **Chacun de ces échecs est une information, pas un incident.** Le noter et le
 traiter, pas le contourner.
 
-### 3. Re-porter `patches/0002`
+### 3. Re-porter les patches locaux sur les sources vendorées
+
+`0002` et `0004` visent `rn-*` (`0004` : `rn-completion.cpp`), `0005` vise
+`common/common.{h,cpp}` (copiés depuis llama.cpp puis réécrits `lm_` et patchés par les
+patches hérités avant les nôtres). Ordre d'application : copie, réécriture `lm_`, patches
+hérités, puis `patches/*.patch` par ordre alphabétique. Chacun doit appliquer sur le
+résultat du précédent.
+
+Détail de `0002` :
 
 Il vise `rn-llama.cpp`, `rn-completion.h` et `rn-completion.cpp`. Si ses hunks ont
 bougé entre v0.12.5 et v0.12.6, le regénérer contre les nouvelles sources.
@@ -208,7 +216,7 @@ revenir.
 | Symptôme | Cause probable | Réaction |
 |---|---|---|
 | `bootstrap.sh` échoue sur un patch hérité | les sources ont bougé sous lui | lire lequel, décider s'il est encore pertinent |
-| `patches/0002` n'applique plus | `rn-completion.cpp` a changé | le regénérer, ne pas le forcer |
+| `patches/0002`, `0004` ou `0005` n'applique plus | `rn-completion.cpp` ou `common.*` ont changé | le regénérer, ne pas le forcer |
 | `assembleDebug` casse au link | API llama.cpp changée | c'est le coût normal d'un bump, lire l'erreur |
 | Les shaders ne se régénèrent pas | `vulkan-shaders-gen` a changé d'arguments | corriger `gen-vulkan-shaders.sh` (copie unique, TEN-96) |
 | `n_ctx` change sur un modèle | la dérivation KV a bougé | c'est grave, TEN-18 et TEN-72 en dépendent |

@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import com.tensai.llamakt.ChatMessage as LlamaChatMessage
 import com.tensai.llamakt.GgufMetadata as LlamaGgufMetadata
 import com.tensai.llamakt.SamplingParams as LlamaSamplingParams
+import com.tensai.llamakt.LoadStage as LlamaLoadStage
 
 /**
  * [LlamaKtEngine] implementation wrapping llama.kt's `LlamaEngine`.
@@ -154,8 +155,27 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
     override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = onEngineThread {
         val nGpuLayers = resolveNGpuLayers(config.backend)
         val kvCacheTypeArg = config.kvCacheType.toLibArg()
-        val libProgress = config.onProgress?.let { onProgress ->
-            LoadProgressCallback { progress -> onProgress(progress); true }
+        val libProgress = if (config.onProgress == null && config.onStage == null) {
+            null
+        } else {
+            object : LoadProgressCallback {
+                override fun onProgress(progress: Float): Boolean {
+                    config.onProgress?.invoke(progress)
+                    return true
+                }
+
+                override fun onStage(stage: Int) {
+                    // An id this build does not know is a newer native lib: ignore it.
+                    val mapped = when (LlamaLoadStage.fromId(stage)) {
+                        LlamaLoadStage.Weights -> LoadStage.Weights
+                        LlamaLoadStage.Context -> LoadStage.Context
+                        LlamaLoadStage.Warmup -> LoadStage.Warmup
+                        LlamaLoadStage.Ready -> LoadStage.Ready
+                        null -> return
+                    }
+                    config.onStage?.invoke(mapped)
+                }
+            }
         }
 
         try {

@@ -340,7 +340,12 @@
 
     <!-- Loading screen and its dialogs. %1$s is a model's display name. -->
     <!-- %1$s and %2$s are sizes in GB, already formatted without their unit. -->
-    <string name="loading_progress">loading to memory · %1$s / %2$s GB</string>
+    <string name="loading_stage_preparing">Preparing…</string>
+    <string name="loading_stage_weights">Reading weights…</string>
+    <string name="loading_stage_context">Allocating KV cache…</string>
+    <string name="loading_stage_warmup">Warming up %1$s…</string>
+    <string name="loading_stage_ready">Ready</string>
+    <string name="loading_status">%1$s · %2$d%%</string>
     <string name="loading_continue_in_background">Continue in background</string>
     <string name="loading_file_missing_body">This model\'s file is missing: re-import it to load “%1$s”.</string>
     <string name="loading_back_to_models">Back to Models</string>

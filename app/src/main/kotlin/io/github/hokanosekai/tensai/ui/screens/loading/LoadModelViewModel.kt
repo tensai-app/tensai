@@ -8,17 +8,21 @@ import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.engine.BackendHint
+import io.github.hokanosekai.tensai.engine.LoadStage
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.OutOfMemoryException
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
+import io.github.hokanosekai.tensai.runtime.LoadProgressMap
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,10 +52,22 @@ sealed class LoadUiState {
     data class Blocked(val model: ModelEntity, val compatibility: Compatibility) : LoadUiState()
 
     /**
-     * An [InferenceQueue.loadModel] call is in flight. [progress] mirrors
-     * [io.github.hokanosekai.tensai.runtime.QueueState.Loading].
+     * An [InferenceQueue.loadModel] call is in flight (TEN-123). [stage] and [weightsProgress]
+     * mirror [io.github.hokanosekai.tensai.runtime.QueueState.Loading]; what the screen draws is
+     * [progress]/[percent], the overall value [LoadProgressMap] derives from them. Also the state
+     * shown for the short "Ready" hold after the engine finishes, before [Success].
+     *
+     * [backendLabel] names the backend for the warm-up line ("Vulkan", "OpenCL", "CPU").
      */
-    data class InProgress(val model: ModelEntity, val progress: Float) : LoadUiState()
+    data class InProgress(
+        val model: ModelEntity,
+        val stage: LoadStage = LoadStage.Preparing,
+        val weightsProgress: Float = 0f,
+        val backendLabel: String = "CPU",
+    ) : LoadUiState() {
+        val progress: Float get() = LoadProgressMap.overall(stage, weightsProgress)
+        val percent: Int get() = LoadProgressMap.percent(stage, weightsProgress)
+    }
 
     /** Load succeeded — the screen reacts by navigating to chat. */
     data object Success : LoadUiState()
@@ -105,6 +121,11 @@ class LoadModelViewModel(
     },
     private val queue: InferenceQueue = RuntimeGraph.inferenceQueue,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
+    /**
+     * How long "Ready · 100%" stays up once the engine is done, before [LoadUiState.Success]. A status
+     * the user gets to read, not an animation, so it is not skipped under reduced motion.
+     */
+    private val readyHoldMillis: Long = READY_HOLD_MILLIS,
 ) {
     private val _state = MutableStateFlow<LoadUiState>(LoadUiState.Preparing)
     val state: StateFlow<LoadUiState> = _state.asStateFlow()
@@ -184,20 +205,42 @@ class LoadModelViewModel(
                 backend = backendOverride ?: backendPreference().resolve(compatibility.recommendedBackend),
                 kvCacheType = effective.kvCacheType,
             )
-            _state.value = LoadUiState.InProgress(model, 0f)
+            val backendLabel = LoadProgressMap.backendLabel(config.backend, profile.hasVulkan, profile.hasOpenCl)
+            // Already resident for this exact config: loadModel below is the dedup no-op, so there is
+            // no load to show and no "Ready" to hold. Otherwise seed from the queue, so re-entering
+            // the screen (rotation, back then forward) resumes at the real stage instead of 0%.
+            val resident = queue.isResident(config)
+            val inFlight = queue.state.value as? QueueState.Loading
+            _state.value = if (inFlight != null) {
+                LoadUiState.InProgress(model, inFlight.stage, inFlight.progress, backendLabel)
+            } else {
+                LoadUiState.InProgress(model, LoadStage.Preparing, 0f, backendLabel)
+            }
 
-            // Progress comes from queue.state, not config.onProgress: when this call is the dedup
+            // Progress and stage come from queue.state, not config.onProgress/onStage: when this call is the dedup
             // no-op for a load another (now-gone) instance started, our own onProgress never fires
             // but the queue's progress still does. See InferenceQueue.loadModel (TEN-50).
             val progressJob = launch {
                 queue.state.collect { queueState ->
                     if (queueState is QueueState.Loading) {
-                        _state.value = LoadUiState.InProgress(model, queueState.progress)
+                        _state.value = LoadUiState.InProgress(
+                            model,
+                            queueState.stage,
+                            queueState.progress,
+                            backendLabel,
+                        )
                     }
                 }
             }
             try {
                 queue.loadModel(config)
+                // Stop mirroring the queue first, and wait for it: a late Loading value landing
+                // after the Ready write below would drag the screen back a stage.
+                progressJob.cancelAndJoin()
+                if (!resident) {
+                    _state.value = LoadUiState.InProgress(model, LoadStage.Ready, 1f, backendLabel)
+                    delay(readyHoldMillis)
+                }
                 _state.value = LoadUiState.Success
             } catch (_: OutOfMemoryException) {
                 _state.value = LoadUiState.OomFailed(model)
@@ -230,4 +273,8 @@ class LoadModelViewModel(
 
     /** Generic retry from a failure dialog, same backend as the last attempt. */
     fun retry() = start(confirmedOverride = true)
+
+    companion object {
+        const val READY_HOLD_MILLIS = 500L
+    }
 }

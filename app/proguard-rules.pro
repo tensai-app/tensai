@@ -8,7 +8,7 @@
 }
 
 # Callbacks the C++ side resolves with GetMethodID(GetObjectClass(cb), name, signature):
-# onToken (tensai_jni.cpp:960), onChatParse (:971), onProgress (:851). Implementations are
+# onToken, onChatParse, onProgress and onStage (tensai_jni.cpp, search GetMethodID). Implementations are
 # lambdas/synthetic classes, so R8 would otherwise rename, inline or drop these methods.
 -keep interface com.tensai.llamakt.TokenCallback { *; }
 -keep interface com.tensai.llamakt.ChatParseCallback { *; }

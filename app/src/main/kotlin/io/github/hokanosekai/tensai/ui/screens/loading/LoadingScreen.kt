@@ -1,21 +1,54 @@
 package io.github.hokanosekai.tensai.ui.screens.loading
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FolderOff
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import io.github.hokanosekai.tensai.engine.LoadStage
+import io.github.hokanosekai.tensai.runtime.LoadProgressMap
+import io.github.hokanosekai.tensai.ui.components.TensaiButton
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
+import io.github.hokanosekai.tensai.ui.components.TensaiDialog
+import io.github.hokanosekai.tensai.ui.components.TensaiDialogAction
+import io.github.hokanosekai.tensai.ui.components.TensaiProgressBar
+import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,7 +62,6 @@ import io.github.hokanosekai.tensai.runtime.rememberNotificationPermissionReques
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.screens.models.compatExplanation
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
-import java.util.Locale
 
 /**
  * Loading screen for the `loading/{modelId}` route (TEN-30) — replaces the old fake looping-glyph
@@ -81,7 +113,15 @@ fun LoadingScreen(
 
     BackHandler(onBack = onBack)
 
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            // Opaque first: the route fades in over the previous screen, and the translucent wash
+            // alone let the Models list show through the first frames.
+            .background(MaterialTheme.colorScheme.background)
+            .loadingBackdrop(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
+        contentAlignment = Alignment.Center,
+    ) {
         when (val state = uiState) {
             is LoadUiState.Preparing -> KanjiGlyph(size = 96.dp, glow = true)
 
@@ -97,8 +137,7 @@ fun LoadingScreen(
             )
 
             is LoadUiState.InProgress -> LoadingContent(
-                model = state.model,
-                progress = state.progress,
+                state = state,
                 onContinueInBackground = onBack,
             )
 
@@ -121,42 +160,112 @@ fun LoadingScreen(
     }
 }
 
+/**
+ * The loading screen proper (TEN-123): glyph revealed by the overall progress, model name, a
+ * "<stage> · NN%" status line and the bar, with "Continue in background" tucked under it. Every
+ * number comes from [LoadUiState.InProgress], which mirrors the engine's real stages; the bar
+ * pulses (rather than moving) while a stage has no progress of its own.
+ */
 @Composable
 private fun LoadingContent(
-    model: ModelEntity,
-    progress: Float,
+    state: LoadUiState.InProgress,
     onContinueInBackground: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Weights progress that stops moving for a second (page faults on a cold mmap, a slow flash
+    // read) is "working, no news", not "stuck at 40%": pulse until the next value arrives.
+    var stalled by remember { mutableStateOf(false) }
+    LaunchedEffect(state.stage, state.weightsProgress) {
+        stalled = false
+        delay(WEIGHTS_STALL_MILLIS)
+        stalled = true
+    }
+    val pulsing = LoadProgressMap.isIndeterminate(state.stage, state.weightsProgress) ||
+        (stalled && state.stage == LoadStage.Weights)
+    val status = stringResource(
+        R.string.loading_status,
+        stageLabel(state.stage, state.backendLabel),
+        state.percent,
+    )
     Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
+        modifier = modifier.fillMaxSize().padding(horizontal = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Spacer(modifier = Modifier.weight(1f))
-
-        KanjiGlyph(size = 150.dp, progress = progress, glow = true)
+        KanjiGlyph(size = 150.dp, progress = state.progress, glow = true)
         Text(
-            text = model.displayName,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(top = 20.dp),
+            text = state.model.displayName,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(top = 32.dp),
         )
         Text(
-            text = stringResource(
-                R.string.loading_progress,
-                formatGb((progress * model.sizeBytes).toLong()),
-                formatGb(model.sizeBytes),
-            ),
+            text = status,
             fontFamily = TensaiMono,
-            style = MaterialTheme.typography.bodySmall,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp),
+            // The bar below carries the same sentence as its state description.
+            modifier = Modifier.padding(top = 6.dp).clearAndSetSemantics {},
         )
+        // TalkBack: announce stage changes only (the label, no percent), through a 1dp live region.
+        // The percent ticks far too often to be read out; the bar exposes it on focus instead.
+        val stageText = stageLabel(state.stage, state.backendLabel)
+        Box(
+            modifier = Modifier.size(1.dp).semantics {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = stageText
+            },
+        )
+        TensaiProgressBar(
+            progress = state.progress,
+            pulse = pulsing,
+            modifier = Modifier
+                .padding(top = 24.dp)
+                .widthIn(max = 240.dp)
+                .semantics { stateDescription = status },
+        )
+        TensaiButton(
+            text = stringResource(R.string.loading_continue_in_background),
+            onClick = onContinueInBackground,
+            variant = TensaiButtonVariant.Text,
+            size = TensaiButtonSize.Sm,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+    }
+}
 
-        Spacer(modifier = Modifier.weight(1f))
+private const val WEIGHTS_STALL_MILLIS = 1_000L
 
-        TextButton(onClick = onContinueInBackground) {
-            Text(stringResource(R.string.loading_continue_in_background))
-        }
+@Composable
+private fun stageLabel(stage: LoadStage, backendLabel: String): String = when (stage) {
+    LoadStage.Preparing -> stringResource(R.string.loading_stage_preparing)
+    LoadStage.Weights -> stringResource(R.string.loading_stage_weights)
+    LoadStage.Context -> stringResource(R.string.loading_stage_context)
+    LoadStage.Warmup -> stringResource(R.string.loading_stage_warmup, backendLabel)
+    LoadStage.Ready -> stringResource(R.string.loading_stage_ready)
+}
+
+/** Radial wash behind the loading screen: primary at 10% fading out by 60% of a 120% x 90% ellipse centered at 50% / 30%. */
+private fun Modifier.loadingBackdrop(color: Color): Modifier = drawBehind {
+    val center = Offset(size.width * 0.5f, size.height * 0.3f)
+    val rx = size.width * 1.2f
+    val ry = size.height * 0.9f
+    val brush = Brush.radialGradient(
+        0f to color,
+        0.6f to Color.Transparent,
+        1f to Color.Transparent,
+        center = center,
+        radius = rx,
+    )
+    // The brush is circular; squashing it vertically turns the circle into the design's ellipse.
+    withTransform({ scale(1f, ry / rx, pivot = center) }) {
+        drawRect(brush, topLeft = Offset(center.x - rx, center.y - rx), size = Size(rx * 2f, rx * 2f))
     }
 }
 
@@ -172,13 +281,13 @@ private fun ModelNotFoundContent(onBack: () -> Unit, modifier: Modifier = Modifi
 
 @Composable
 private fun FileMissingDialog(model: ModelEntity, onClose: () -> Unit) {
-    AlertDialog(
+    TensaiDialog(
         onDismissRequest = onClose,
-        title = { Text(stringResource(R.string.model_file_missing)) },
-        text = { Text(stringResource(R.string.loading_file_missing_body, model.displayName)) },
-        confirmButton = {
-            TextButton(onClick = onClose) { Text(stringResource(R.string.loading_back_to_models)) }
-        },
+        icon = Icons.Default.FolderOff,
+        iconTint = MaterialTheme.tensaiColors.warning,
+        title = stringResource(R.string.model_file_missing),
+        body = stringResource(R.string.loading_file_missing_body, model.displayName),
+        actions = listOf(TensaiDialogAction(stringResource(R.string.loading_back_to_models), onClose)),
     )
 }
 
@@ -195,31 +304,31 @@ private fun BlockedDialog(
     onLoadAnyway: () -> Unit,
     onSeeSmallerModels: () -> Unit,
 ) {
-    AlertDialog(
+    TensaiDialog(
         onDismissRequest = onSeeSmallerModels,
-        title = { Text(stringResource(R.string.loading_blocked_title, model.displayName)) },
-        text = { Text(compatExplanation(compatibility)) },
-        confirmButton = {
-            TextButton(onClick = onLoadAnyway) { Text(stringResource(R.string.model_compat_load_anyway)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onSeeSmallerModels) { Text(stringResource(R.string.loading_see_smaller_models)) }
-        },
+        icon = Icons.Default.Warning,
+        iconTint = MaterialTheme.tensaiColors.warning,
+        title = stringResource(R.string.loading_blocked_title, model.displayName),
+        body = compatExplanation(compatibility),
+        actions = listOf(
+            TensaiDialogAction(stringResource(R.string.loading_see_smaller_models), onSeeSmallerModels),
+            TensaiDialogAction(stringResource(R.string.model_compat_load_anyway), onLoadAnyway),
+        ),
     )
 }
 
 @Composable
 private fun OomDialog(model: ModelEntity, onSeeSmallerModels: () -> Unit, onClose: () -> Unit) {
-    AlertDialog(
+    TensaiDialog(
         onDismissRequest = onClose,
-        title = { Text(stringResource(R.string.loading_oom_title)) },
-        text = { Text(stringResource(R.string.loading_oom_body, model.displayName)) },
-        confirmButton = {
-            TextButton(onClick = onSeeSmallerModels) { Text(stringResource(R.string.loading_see_smaller_models)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onClose) { Text(stringResource(R.string.action_close)) }
-        },
+        icon = Icons.Default.Memory,
+        iconTint = MaterialTheme.colorScheme.error,
+        title = stringResource(R.string.loading_oom_title),
+        body = stringResource(R.string.loading_oom_body, model.displayName),
+        actions = listOf(
+            TensaiDialogAction(stringResource(R.string.action_close), onClose),
+            TensaiDialogAction(stringResource(R.string.loading_see_smaller_models), onSeeSmallerModels),
+        ),
     )
 }
 
@@ -235,36 +344,25 @@ private fun GenericFailDialog(
     canRetryOnCpu: Boolean,
     onClose: () -> Unit,
 ) {
-    AlertDialog(
+    TensaiDialog(
         onDismissRequest = onClose,
-        title = { Text(stringResource(R.string.load_failed_title)) },
-        text = {
-            Text(
-                stringResource(
-                    when (failure) {
-                        LoadFailure.UnreadableModel -> R.string.load_failed_unreadable
-                        LoadFailure.EngineBusy -> R.string.load_failed_busy
-                        LoadFailure.Unknown -> R.string.load_failed_unknown
-                    },
-                ),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onRetry) { Text(stringResource(R.string.loading_retry)) }
-        },
-        dismissButton = {
-            // Simple chip-row equivalent for the CPU-retry override — two text actions rather
-            // than a dedicated FilterChip row, to keep this dialog's default M3 layout.
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (canRetryOnCpu) {
-                    TextButton(onClick = onRetryOnCpu) { Text(stringResource(R.string.loading_retry_on_cpu)) }
-                }
-                TextButton(onClick = onClose) { Text(stringResource(R.string.action_close)) }
+        icon = Icons.Default.ErrorOutline,
+        iconTint = MaterialTheme.colorScheme.error,
+        title = stringResource(R.string.load_failed_title),
+        body = stringResource(
+            when (failure) {
+                LoadFailure.UnreadableModel -> R.string.load_failed_unreadable
+                LoadFailure.EngineBusy -> R.string.load_failed_busy
+                LoadFailure.Unknown -> R.string.load_failed_unknown
+            },
+        ),
+        actions = buildList {
+            add(TensaiDialogAction(stringResource(R.string.action_close), onClose))
+            if (canRetryOnCpu) {
+                add(TensaiDialogAction(stringResource(R.string.loading_retry_on_cpu), onRetryOnCpu))
             }
+            add(TensaiDialogAction(stringResource(R.string.loading_retry), onRetry))
         },
     )
 }
 
-/** e.g. 380_000_000L -> "0.4" — always GB, no MB fallback (see the "X.X / Y.Y GB" line's spec). */
-private fun formatGb(bytes: Long): String =
-    String.format(Locale.US, "%.1f", bytes / (1024.0 * 1024.0 * 1024.0))
