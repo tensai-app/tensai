@@ -185,6 +185,13 @@ fun ModelsScreen(
                                 isLoaded = model.id == loadedModelId,
                                 onClick = { onModelClick(model.id) },
                                 onLoadClick = { onLoadModelClick(model.id) },
+                                onUnloadClick = {
+                                    // applicationScope like the notification action: the unload may
+                                    // save a session first and must outlive this screen.
+                                    RuntimeGraph.applicationScope.launch {
+                                        unloadResidentModel(RuntimeGraph.inferenceQueue)
+                                    }
+                                },
                                 onDeleteClick = { fileExists ->
                                     // A missing file has nothing left to lose: delete straight
                                     // away. A present file is a real, unrecoverable loss, so it

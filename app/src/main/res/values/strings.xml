@@ -249,6 +249,7 @@
     <string name="model_load">Load model</string>
     <string name="model_delete">Delete model</string>
     <string name="model_remove">Remove</string>
+    <string name="model_unload">Unload</string>
     <string name="model_loaded_badge">loaded</string>
     <string name="model_file_missing">File missing</string>
     <string name="model_removed">This model was removed.</string>

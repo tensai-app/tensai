@@ -46,7 +46,8 @@ import java.io.File
  *
  * If [model]'s file no longer exists on disk (its DB row outlived the file — e.g. storage was
  * wiped outside the app), [CompatIndicator] is replaced by [MissingFileBadge] and the "Load
- * model" action is replaced by "Remove", since there's nothing left to load. The delete icon
+ * model" action is replaced by "Remove", since there's nothing left to load (or by "Unload" when
+ * the model is still resident, TEN-107: it cannot be removed until released). The delete icon
  * (top-right) always fires [onDeleteClick] with the file's current existence, letting the caller
  * decide whether a confirmation is warranted — see `ModelsScreen`'s handling of it.
  *
@@ -65,6 +66,7 @@ internal fun ModelCard(
     onClick: () -> Unit,
     onLoadClick: () -> Unit,
     onDeleteClick: (fileExists: Boolean) -> Unit,
+    onUnloadClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val fileExists = rememberFileExists(model.filePath)
@@ -140,15 +142,16 @@ internal fun ModelCard(
                     Text(stringResource(R.string.model_load))
                 }
             } else {
+                val unload = missingFileAction(isLoaded) == MissingFileAction.Unload
                 Button(
-                    onClick = { onDeleteClick(false) },
+                    onClick = { if (unload) onUnloadClick() else onDeleteClick(false) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.tensaiTints.error12,
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 ) {
-                    Text(stringResource(R.string.model_remove))
+                    Text(stringResource(if (unload) R.string.model_unload else R.string.model_remove))
                 }
             }
         }

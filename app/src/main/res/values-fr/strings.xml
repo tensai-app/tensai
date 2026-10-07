@@ -192,6 +192,7 @@
     <string name="model_load">Charger le modèle</string>
     <string name="model_delete">Supprimer le modèle</string>
     <string name="model_remove">Retirer</string>
+    <string name="model_unload">Décharger</string>
     <string name="model_loaded_badge">chargé</string>
     <string name="model_file_missing">Fichier manquant</string>
     <string name="model_removed">Ce modèle a été supprimé.</string>
