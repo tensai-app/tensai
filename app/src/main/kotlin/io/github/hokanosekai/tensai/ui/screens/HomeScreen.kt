@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
-import io.github.hokanosekai.tensai.ui.components.shortModelLabel
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import java.time.LocalTime
 
@@ -163,8 +162,6 @@ fun HomeScreen(
                         // see, which is worse than not offering it.
                         onStop = {},
                         isGenerating = false,
-                        modelLabel = shortModelLabel(state.modelName),
-                        onModelClick = onNavigateToModels,
                     )
                 }
 

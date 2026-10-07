@@ -26,6 +26,8 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
  * the centered pill shows the active model (name + effective context size, from `TensaiShell`'s
  * live [io.github.hokanosekai.tensai.runtime.QueueState]) or "no model" if none is loaded. Tap
  * always routes to [TensaiDestination.Models], regardless of whether a model is loaded.
+ *
+ * @param actions trailing icon buttons: the chat's params button (TEN-115), empty on Home.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,6 +36,7 @@ fun TensaiTopBar(
     onModelPillClick: () -> Unit,
     modifier: Modifier = Modifier,
     modelLabel: String = stringResource(R.string.top_bar_no_model),
+    actions: @Composable RowScope.() -> Unit = {},
 ) {
     CenterAlignedTopAppBar(
         modifier = modifier,
@@ -55,6 +58,7 @@ fun TensaiTopBar(
                 )
             }
         },
+        actions = actions,
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
             containerColor = MaterialTheme.colorScheme.background,
         ),

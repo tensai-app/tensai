@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,11 +33,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -45,8 +50,11 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlin.math.roundToInt
 
 /**
- * Drawer content: brand header, new chat, recents, destinations, device footer.
+ * Drawer content: brand header, new chat, destinations, recents, device footer (order per the
+ * design's DrawerOverlay, TEN-116).
  *
+ * @param currentRoute / currentConversationId / createdConversationId the active destination, which decides the selected
+ *   row, see [drawerSelectedKey].
  * @param onOpenConversation navigates to `chat/{id}`: an existing conversation tapped from
  *   "Recents", or the new-chat sentinel for "New chat", which opens a draft and creates no row
  *   until its first message (TEN-106).
@@ -56,9 +64,14 @@ fun TensaiDrawerContent(
     onOpenConversation: (String) -> Unit,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier,
+    currentRoute: String? = null,
+    currentConversationId: String? = null,
+    createdConversationId: String? = null,
     chatRepository: ChatRepository = RuntimeGraph.chatRepository,
 ) {
     val conversations by chatRepository.observeConversations().collectAsState(initial = null)
+
+    val selectedKey = drawerSelectedKey(currentRoute, currentConversationId, createdConversationId)
 
     ModalDrawerSheet(modifier = modifier) {
         Column(
@@ -71,8 +84,11 @@ fun TensaiDrawerContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.padding(horizontal = 24.dp),
             ) {
-                KanjiGlyph(size = 22.dp)
-                Text(text = "tensai", style = MaterialTheme.typography.titleMedium)
+                KanjiGlyph(size = 30.dp)
+                Text(
+                    text = "tensai",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -81,61 +97,20 @@ fun TensaiDrawerContent(
                 label = { Text(stringResource(R.string.drawer_new_chat), color = MaterialTheme.colorScheme.primary) },
                 icon = { Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 selected = false,
-                shape = RectangleShape,
-                colors = NavigationDrawerItemDefaults.colors(
-                    unselectedContainerColor = MaterialTheme.tensaiTints.primary12,
-                ),
+                shape = CircleShape,
+                colors = drawerItemColors(),
                 onClick = { onOpenConversation(TensaiDestination.Chat.NEW_CONVERSATION_ID) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = stringResource(R.string.drawer_recents),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp),
-            )
-
-            // Recents is the only part that grows without bound, so it is the only part that
-            // scrolls: the destinations below stay pinned and reachable however many
-            // conversations pile up (TEN-59). weight(1f) also keeps that bottom block against the
-            // bottom edge when there are only a handful, which is what the old trailing Spacer did.
-            val currentConversations = conversations
-            val untitledLabel = stringResource(R.string.drawer_new_chat)
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                when {
-                    currentConversations == null -> Unit // initial Room query hasn't emitted yet.
-                    currentConversations.isEmpty() -> item { EmptyRecentsState() }
-                    else -> items(currentConversations, key = { it.id }) { conversation ->
-                        NavigationDrawerItem(
-                            label = {
-                                Text(
-                                    text = conversationLabel(conversation.title, untitledLabel),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            selected = false,
-                            shape = RectangleShape,
-                            onClick = { onOpenConversation(conversation.id) },
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
-                    }
-                }
-            }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                color = MaterialTheme.tensaiTints.outline,
-            )
+            Spacer(modifier = Modifier.height(8.dp))
 
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.nav_models)) },
                 icon = { Icon(Icons.Default.Storage, contentDescription = null) },
-                selected = false,
-                shape = RectangleShape,
+                selected = selectedKey == "models",
+                shape = CircleShape,
+                colors = drawerItemColors(),
                 onClick = { onNavigate(TensaiDestination.Models.route) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
@@ -155,8 +130,9 @@ fun TensaiDrawerContent(
                     }
                 },
                 icon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                selected = false,
-                shape = RectangleShape,
+                selected = selectedKey == "server",
+                shape = CircleShape,
+                colors = drawerItemColors(),
                 onClick = { onNavigate(TensaiDestination.Server.route) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
@@ -164,11 +140,55 @@ fun TensaiDrawerContent(
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.nav_settings)) },
                 icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                selected = false,
-                shape = RectangleShape,
+                selected = selectedKey == "settings",
+                shape = CircleShape,
+                colors = drawerItemColors(),
                 onClick = { onNavigate(TensaiDestination.Settings.route) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                text = stringResource(R.string.drawer_recents).uppercase(Locale.current.platformLocale),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.04.em,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+
+            // Recents is the only part that grows without bound, so it is the only part that
+            // scrolls: the destinations above stay pinned and reachable however many
+            // conversations pile up (TEN-59, order per TEN-116). weight(1f) keeps the device
+            // footer against the bottom edge when there are only a handful.
+            val currentConversations = conversations
+            val untitledLabel = stringResource(R.string.drawer_new_chat)
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                when {
+                    currentConversations == null -> Unit // initial Room query hasn't emitted yet.
+                    currentConversations.isEmpty() -> item { EmptyRecentsState() }
+                    else -> items(currentConversations, key = { it.id }) { conversation ->
+                        NavigationDrawerItem(
+                            label = {
+                                Text(
+                                    text = conversationLabel(conversation.title, untitledLabel),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            icon = { Icon(Icons.Rounded.ChatBubbleOutline, contentDescription = null) },
+                            selected = selectedKey == recentKey(conversation.id),
+                            shape = CircleShape,
+                            colors = drawerItemColors(),
+                            onClick = { onOpenConversation(conversation.id) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                }
+            }
 
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 24.dp),
@@ -179,6 +199,39 @@ fun TensaiDrawerContent(
         }
     }
 }
+
+internal fun recentKey(conversationId: String): String = "recent:$conversationId"
+
+/**
+ * Which drawer row is active (TEN-116): "models", "server", "settings", [recentKey] for a saved
+ * conversation open on `chat/{id}`, or null (Home, a new-chat draft, anything else). [route] is the
+ * nav graph's route pattern, [conversationId] the chat argument, [createdConversationId] the real id
+ * of a draft whose route still says "new" after its first send.
+ */
+internal fun drawerSelectedKey(
+    route: String?,
+    conversationId: String?,
+    createdConversationId: String? = null,
+): String? = when {
+    route == TensaiDestination.Models.route -> "models"
+    route == TensaiDestination.Server.route -> "server"
+    route == TensaiDestination.Settings.route -> "settings"
+    route?.startsWith("chat/") == true ->
+        (conversationId?.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID } ?: createdConversationId)
+            ?.let(::recentKey)
+    else -> null
+}
+
+/**
+ * Fill for every drawer row: [NavigationDrawerItemDefaults.colors] defaults to a secondary
+ * container for the selected state, the design's `ListItem` uses `primary-16` (see TEN-116).
+ */
+@Composable
+private fun drawerItemColors() = NavigationDrawerItemDefaults.colors(
+    selectedContainerColor = MaterialTheme.tensaiTints.primary16,
+    selectedTextColor = MaterialTheme.colorScheme.primary,
+    selectedIconColor = MaterialTheme.colorScheme.primary,
+)
 
 /**
  * What a "Recents" row shows for a conversation [title] (TEN-105): the title itself, or

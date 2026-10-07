@@ -43,22 +43,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
-import io.github.hokanosekai.tensai.ui.theme.tensaiTints
-
-/** Max length of the short label shown in [InputPill]'s model chip — the full name lives on [io.github.hokanosekai.tensai.ui.navigation.TensaiTopBar]'s pill. */
-private const val ModelChipLabelMaxLength = 18
 
 /**
- * Trims a model name down to what fits [InputPill]'s chip without squeezing the text field —
- * e.g. "Qwen3-4B-Instruct-Q4_K_M" -> "Qwen3-4B-Instruct…". Shared
- * by both of the pill's callers ([io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and
- * Home) so the chip reads the same on either screen.
- */
-internal fun shortModelLabel(name: String): String =
-    if (name.length <= ModelChipLabelMaxLength) name else name.take(ModelChipLabelMaxLength).trimEnd() + "…"
-
-/**
- * The app's single text-entry affordance — a pill holding the active model chip, a plain text
+ * The app's single text-entry affordance: a pill holding a plain text
  * field, and a send/stop action. Shared by
  * [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and, per TEN-37, Home.
  *
@@ -83,8 +70,6 @@ fun InputPill(
     onSend: () -> Unit,
     onStop: () -> Unit,
     isGenerating: Boolean,
-    modelLabel: String,
-    onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
     canStop: Boolean = isGenerating,
 ) {
@@ -102,8 +87,6 @@ fun InputPill(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
-                ModelChip(label = modelLabel, onClick = onModelClick)
-
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
@@ -207,17 +190,4 @@ private fun GenerationRing(modifier: Modifier = Modifier) {
             }
         },
     )
-}
-
-@Composable
-private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(onClick = onClick, shape = TensaiShapes.small, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-        )
-    }
 }

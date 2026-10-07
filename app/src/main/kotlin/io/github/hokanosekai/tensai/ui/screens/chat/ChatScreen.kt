@@ -22,13 +22,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,21 +35,26 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
-import io.github.hokanosekai.tensai.ui.components.shortModelLabel
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
@@ -63,8 +64,10 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *
  * @param conversationId an existing conversation, or `null` for a new chat: a draft that gets its
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
- * @param onNavigateToModels used both by [ChatError.NoModelLoaded]'s banner and by the input
- *   pill's model chip.
+ * @param onNavigateToModels used by [ChatError.NoModelLoaded]'s banner.
+ * @param onConversationCreated the draft got its real id (first send), reported for the drawer.
+ * @param settingsRequests taps on the top bar's params button (owned by `TensaiShell`), which open
+ *   [ChatSettingsSheet].
  * @param initialPrompt a first turn handed over by Home (TEN-37), sent once on arrival — see
  *   [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat.ARG_PROMPT]. `null` for
  *   every other way into a conversation.
@@ -75,6 +78,8 @@ fun ChatScreen(
     onNavigateToModels: () -> Unit,
     modifier: Modifier = Modifier,
     initialPrompt: String? = null,
+    settingsRequests: Flow<Unit> = emptyFlow(),
+    onConversationCreated: (String) -> Unit = {},
 ) {
     // A draft's row, once its first send created it (TEN-106). Saved so a screen rebuilt after
     // process death reopens that conversation instead of an empty draft, the route itself still
@@ -89,6 +94,10 @@ fun ChatScreen(
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     LaunchedEffect(currentConversationId) {
         if (conversationId == null && currentConversationId != null) createdConversationId = currentConversationId
+        // The route keeps saying "new" after the first send; the shell's drawer needs the real id
+        // to highlight this chat's row (TEN-116). Replacing the route instead would rebuild this
+        // screen's view model, see the remember(conversationId) above.
+        if (conversationId == null) currentConversationId?.let(onConversationCreated)
     }
 
     val messages by viewModel.messages.collectAsState(initial = null)
@@ -109,6 +118,19 @@ fun ChatScreen(
 
     var input by rememberSaveable { mutableStateOf("") }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    // The params button lives in the shell's top bar (TEN-115), so it only signals; this screen owns
+    // the sheet and its state. Same pattern as the Models "+" import request.
+    // Two guards, both about a tap that must not be queued: only the screen on top reacts (during a
+    // transition two chats are composed, and one tap would open both sheets), and nothing opens
+    // before Room has emitted the values the sheet seeds from (the tap would look dead, then the
+    // sheet would pop up late).
+    val settingsLoaded by rememberUpdatedState(sampling != null && systemPrompt != null)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(settingsRequests, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            settingsRequests.collect { if (settingsLoaded) settingsOpen = true }
+        }
+    }
 
     // Home's send hands its text over on the route rather than writing it itself, so the first
     // reply streams here where it can be watched. rememberSaveable and not a plain flag: the route
@@ -167,14 +189,6 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        ChatToolbarRow(
-            showThinkingToggle = supportsThinking,
-            thinkingEnabled = enableThinking,
-            onToggleThinking = viewModel::setEnableThinking,
-            onOpenSettings = { settingsOpen = true },
-            modifier = Modifier.fillMaxWidth(),
-        )
-
         val currentMessages = messages
         Box(modifier = Modifier.weight(1f)) {
             when {
@@ -225,8 +239,6 @@ fun ChatScreen(
             onStop = viewModel::stop,
             isGenerating = isGenerating,
             canStop = canStop,
-            modelLabel = modelInfo?.name?.let(::shortModelLabel) ?: stringResource(R.string.top_bar_no_model),
-            onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),
         )
     }
@@ -361,60 +373,6 @@ private fun GenerationFailedBanner(
             )
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_generation_failed_dismiss)) }
             TextButton(onClick = onRetry) { Text(stringResource(R.string.chat_generation_failed_retry)) }
-        }
-    }
-}
-
-/**
- * The conversation's own controls, above the message list: the thinking toggle (TEN-33) and the
- * entry point to [ChatSettingsSheet] (TEN-35).
- *
- * Kept as a plain inline row rather than top-bar actions: `TensaiTopBar` is shared chrome for both
- * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Home] and
- * [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat], and Home has neither a
- * conversation nor a loaded-model-supports-thinking concept to hang either control off — wiring
- * them in there would mean threading `ChatViewModel` state up through `TensaiShell` for every
- * route, not just this one.
- *
- * @param showThinkingToggle [ChatViewModel.currentModelSupportsThinking] — the switch is hidden
- *   (not disabled) for a model whose template has no notion of thinking, since there is nothing it
- *   could do. The settings button stays regardless: every other setting in the sheet applies to
- *   every model.
- */
-@Composable
-private fun ChatToolbarRow(
-    showThinkingToggle: Boolean,
-    thinkingEnabled: Boolean,
-    onToggleThinking: (Boolean) -> Unit,
-    onOpenSettings: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.End,
-        modifier = modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-    ) {
-        if (showThinkingToggle) {
-            Icon(
-                imageVector = Icons.Default.Psychology,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 6.dp),
-            )
-            Text(
-                text = stringResource(R.string.chat_thinking_toggle),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-            Switch(checked = thinkingEnabled, onCheckedChange = onToggleThinking)
-        }
-        IconButton(onClick = onOpenSettings) {
-            Icon(
-                imageVector = Icons.Default.Tune,
-                contentDescription = stringResource(R.string.chat_settings_title),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

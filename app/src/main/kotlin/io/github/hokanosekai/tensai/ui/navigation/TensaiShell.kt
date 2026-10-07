@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -14,8 +15,10 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -85,6 +88,20 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     // signals; the screen collects and launches. No replay, so a tap never fires twice.
     val modelsImportRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
+    // Same shape for the chat's params button (TEN-115): the button is top-bar chrome, the sheet it
+    // opens belongs to ChatScreen's scope.
+    val chatSettingsRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+
+    // Draft chats that got their row, by back stack entry id: their route still says "new".
+    val createdChatIds = remember { mutableStateMapOf<String, String>() }
+
+    // Entries that left the back stack take their id with them.
+    val liveEntryIds by navController.currentBackStack.collectAsState()
+    LaunchedEffect(liveEntryIds) {
+        val live = liveEntryIds.map { it.id }.toSet()
+        createdChatIds.keys.retainAll(live)
+    }
+
     val startDestination = when (onboardingEntry) {
         OnboardingEntry.None -> TensaiDestination.Home.route
         is OnboardingEntry.Show -> TensaiDestination.Onboarding.route
@@ -99,8 +116,20 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
             TensaiDrawerContent(
                 onOpenConversation = { conversationId ->
                     scope.launch { drawerState.close() }
-                    navController.navigate(TensaiDestination.Chat.route(conversationId))
+                    // Already on it (or on an empty draft, for "New chat"): a second entry would be a
+                    // duplicate screen with its own view model.
+                    val openId = backStackEntry?.takeIf { currentRoute?.startsWith("chat/") == true }?.let {
+                        createdChatIds[it.id]
+                            ?: it.arguments?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
+                    }
+                    if (openId != conversationId) {
+                        navController.navigate(TensaiDestination.Chat.route(conversationId))
+                    }
                 },
+                currentRoute = currentRoute,
+                currentConversationId = backStackEntry?.arguments
+                    ?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID),
+                createdConversationId = backStackEntry?.id?.let(createdChatIds::get),
                 onNavigate = { route ->
                     scope.launch { drawerState.close() }
                     navController.navigate(route) { launchSingleTop = true }
@@ -121,6 +150,16 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                         onMenuClick = { scope.launch { drawerState.open() } },
                         onModelPillClick = { navController.navigate(TensaiDestination.Models.route) },
                         modelLabel = modelPillLabel,
+                        actions = {
+                            if (currentRoute?.startsWith("chat/") == true) {
+                                IconButton(onClick = { chatSettingsRequests.tryEmit(Unit) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = stringResource(R.string.chat_settings_title),
+                                    )
+                                }
+                            }
+                        },
                     )
 
                     TensaiChrome.Detail -> TensaiDetailTopBar(
@@ -144,6 +183,8 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 startDestination = startDestination,
                 onboardingStartStep = onboardingStartStep,
                 modelsImportRequests = modelsImportRequests,
+                chatSettingsRequests = chatSettingsRequests,
+                onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
                 modifier = Modifier.padding(innerPadding),
             )
         }

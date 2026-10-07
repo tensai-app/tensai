@@ -25,6 +25,10 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
  *
  * @param modelsImportRequests taps on the Models top bar's "+" (owned by [TensaiShell]), forwarded
  *   to [ModelsScreen], which owns the picker.
+ * @param chatSettingsRequests taps on the chat top bar's params button (owned by [TensaiShell]),
+ *   forwarded to [ChatScreen], which owns the sheet.
+ * @param onChatConversationCreated a chat opened as a draft got its row: back stack entry id and the
+ *   new conversation id, for the drawer's selection.
  * @param onboardingStartStep step the onboarding opens at when [startDestination] is it — see
  *   [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate].
  */
@@ -35,6 +39,8 @@ fun TensaiNavGraph(
     modifier: Modifier = Modifier,
     onboardingStartStep: OnboardingStep = OnboardingStep.Welcome,
     modelsImportRequests: Flow<Unit> = emptyFlow(),
+    chatSettingsRequests: Flow<Unit> = emptyFlow(),
+    onChatConversationCreated: (entryId: String, conversationId: String) -> Unit = { _, _ -> },
 ) {
     NavHost(
         navController = navController,
@@ -97,6 +103,8 @@ fun TensaiNavGraph(
                 conversationId = conversationId.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID },
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 initialPrompt = initialPrompt,
+                settingsRequests = chatSettingsRequests,
+                onConversationCreated = { onChatConversationCreated(backStackEntry.id, it) },
             )
         }
 
