@@ -88,6 +88,9 @@
 
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Licences open source</string>
+    <string name="settings_licenses_expanded">Déplié</string>
+    <string name="settings_licenses_collapsed">Replié</string>
+    <string name="settings_footer">fait pour tourner libre</string>
     <string name="settings_license_line">%1$s · %2$s</string>
 
     <!-- ==================== Empty states and errors (TEN-39) ==================== -->
@@ -236,20 +239,13 @@
     <!-- First-run onboarding (TEN-36). -->
     <string name="onboarding_skip">Passer</string>
     <string name="onboarding_welcome_body">Un agent IA local, qui tourne entièrement sur le téléphone. Rien ne quitte l\'appareil.</string>
+    <string name="onboarding_welcome_title">Bienvenue sur tensai</string>
+    <string name="onboarding_recommended">Recommandé pour cet appareil</string>
+    <string name="onboarding_ram_badge">%1$s de RAM</string>
     <string name="onboarding_get_started">Commencer</string>
-    <string name="onboarding_import_title">Ajouter un modèle</string>
     <string name="onboarding_import_body">tensai exécute les modèles GGUF directement depuis le stockage. En télécharger un sur un ordinateur, le copier sur le téléphone, puis le sélectionner ici.</string>
-    <string name="onboarding_suggestions_title">Bons points de départ</string>
     <string name="onboarding_copying">Copie dans tensai…</string>
-    <string name="onboarding_continue">Continuer</string>
-    <string name="onboarding_setup_title">Comment l\'exécuter ?</string>
-    <string name="onboarding_setup_body">Ces deux choix restent modifiables plus tard, dans Paramètres.</string>
     <string name="onboarding_backend">Backend</string>
-    <string name="onboarding_backend_gpu">GPU</string>
-    <string name="onboarding_backend_gpu_subtitle">Calcul déporté via Vulkan, si l\'appareil le prend en charge</string>
-    <string name="onboarding_ready_title">%1$s est prêt</string>
-    <string name="onboarding_ready_title_no_model">Tout est prêt</string>
-    <string name="onboarding_ready_body">Le chargement d\'un modèle prend quelques secondes, puis il reste en mémoire.</string>
     <string name="onboarding_start_chatting">Commencer à discuter</string>
 
     <!-- Foreground-service notification (InferenceService). -->
