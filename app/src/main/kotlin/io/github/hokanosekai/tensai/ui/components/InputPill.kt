@@ -154,6 +154,7 @@ private fun GenerationRing(modifier: Modifier = Modifier) {
     val animatorDurationScale = remember(context) {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
     }
+    val reducedMotion = animatorDurationScale == 0f
     val infiniteTransition = rememberInfiniteTransition(label = "inputPillRing")
     val angle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -194,7 +195,14 @@ private fun GenerationRing(modifier: Modifier = Modifier) {
             val band = Path.combine(PathOperation.Difference, outer, inner)
             onDrawBehind {
                 clipPath(band) {
-                    rotate(angle) { drawRect(brush) }
+                    if (reducedMotion) {
+                        // Under "remove animations" the arc cannot travel, and freezing it left a
+                        // lone wedge fading out mid-edge that read as a rendering glitch. A full,
+                        // still ring says "generating" without motion.
+                        drawRect(primary)
+                    } else {
+                        rotate(angle) { drawRect(brush) }
+                    }
                 }
             }
         },
