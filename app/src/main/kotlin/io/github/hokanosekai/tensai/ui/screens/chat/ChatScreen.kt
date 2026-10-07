@@ -109,8 +109,10 @@ fun ChatScreen(
     // Generating still has a model resident, so the pill and the "no model" banner must not fall
     // back to the empty state mid-reply — see residentModel's KDoc (TEN-46, TEN-58).
     val modelInfo = queueState.residentModel
-    val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = false)
-    val enableThinking by viewModel.enableThinking.collectAsState(initial = true)
+    // Null until first emission, like sampling below: the sheet opens only once all of them are known,
+    // so the thinking row never flashes disabled or off before the real values arrive.
+    val supportsThinking by viewModel.currentModelSupportsThinking.collectAsState(initial = null)
+    val enableThinking by viewModel.enableThinking.collectAsState(initial = null)
     // Null until Room's first emission — the settings sheet is seeded from these once and must not
     // open on placeholder values it would then commit back, see ChatSettingsSheet's KDoc.
     val sampling by viewModel.sampling.collectAsState(initial = null)
@@ -124,7 +126,9 @@ fun ChatScreen(
     // transition two chats are composed, and one tap would open both sheets), and nothing opens
     // before Room has emitted the values the sheet seeds from (the tap would look dead, then the
     // sheet would pop up late).
-    val settingsLoaded by rememberUpdatedState(sampling != null && systemPrompt != null)
+    val settingsLoaded by rememberUpdatedState(
+        sampling != null && systemPrompt != null && enableThinking != null && supportsThinking != null,
+    )
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(settingsRequests, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -245,16 +249,21 @@ fun ChatScreen(
 
     val currentSampling = sampling
     val currentSystemPrompt = systemPrompt
-    if (settingsOpen && currentSampling != null && currentSystemPrompt != null) {
+    val currentEnableThinking = enableThinking
+    val currentSupportsThinking = supportsThinking
+    if (settingsOpen && currentSampling != null && currentSystemPrompt != null &&
+        currentEnableThinking != null && currentSupportsThinking != null
+    ) {
         ChatSettingsSheet(
             config = currentSampling,
             systemPrompt = currentSystemPrompt,
-            enableThinking = enableThinking,
-            supportsThinking = supportsThinking,
+            enableThinking = currentEnableThinking,
+            supportsThinking = currentSupportsThinking,
+            contextSize = modelInfo?.nCtxEffective,
             onConfigChange = viewModel::setSampling,
             onSystemPromptChange = viewModel::setSystemPrompt,
             onEnableThinkingChange = viewModel::setEnableThinking,
-            onReset = viewModel::resetSampling,
+            onReset = { viewModel.resetTuning(resetThinking = currentSupportsThinking) },
             onDismiss = { settingsOpen = false },
         )
     }

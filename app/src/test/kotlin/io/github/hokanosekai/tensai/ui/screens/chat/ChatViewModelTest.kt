@@ -1575,6 +1575,21 @@ class ChatViewModelTest {
             conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
         }
 
+        override suspend fun updateSamplingJson(id: String, samplingJson: String?) = patch(id) { it.copy(samplingJson = samplingJson) }
+
+        override suspend fun updateSystemPrompt(id: String, systemPrompt: String?) = patch(id) { it.copy(systemPrompt = systemPrompt) }
+
+        override suspend fun updateEnableThinking(id: String, enableThinking: Boolean) = patch(id) { it.copy(enableThinking = enableThinking) }
+
+        override suspend fun resetSamplingAndThinking(id: String) = patch(id) { it.copy(samplingJson = null, enableThinking = true) }
+
+        /** One atomic column update, like the SQL it stands in for: no suspension point between read and write. */
+        private fun patch(id: String, change: (ConversationEntity) -> ConversationEntity) {
+            val current = conversations[id] ?: return
+            conversations[id] = change(current)
+            conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
+        }
+
         override suspend fun insertMessage(message: MessageEntity) {
             messages.getOrPut(message.conversationId) { mutableListOf() }.add(message)
             messagesFlow.value = messages.mapValues { it.value.toList() }

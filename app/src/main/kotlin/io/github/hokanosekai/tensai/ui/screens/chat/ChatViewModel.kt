@@ -405,9 +405,14 @@ class ChatViewModel(
         updateSettings({ it.copy(samplingJson = SamplingJson.encode(config)) }) { id -> chatRepository.setSampling(id, config) }
     }
 
-    /** Drops the sampling override, back to defaults — see [ChatRepository.resetSampling] for why the system prompt is left alone. */
-    fun resetSampling() {
-        updateSettings({ it.copy(samplingJson = null) }) { id -> chatRepository.resetSampling(id) }
+    /**
+     * Drops the sampling override and, when [resetThinking], turns thinking back on, in one write.
+     * The system prompt is left alone, see [ChatRepository.resetSampling].
+     */
+    fun resetTuning(resetThinking: Boolean) {
+        updateSettings({
+            it.copy(samplingJson = null, enableThinking = if (resetThinking) true else it.enableThinking)
+        }) { id -> chatRepository.resetTuning(id, resetThinking) }
     }
 
     /** Persists [prompt] as this conversation's system prompt. Applies to the next [send]/[regenerate]. */

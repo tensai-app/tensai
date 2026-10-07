@@ -116,8 +116,7 @@ class ChatRepository(private val dao: ChatDao) {
 
     /** Persists [enabled] as [conversationId]'s [ConversationEntity.enableThinking]. No-op if the conversation doesn't exist (e.g. deleted meanwhile). */
     suspend fun setEnableThinking(conversationId: String, enabled: Boolean) {
-        val conversation = dao.getConversation(conversationId) ?: return
-        dao.updateConversation(conversation.copy(enableThinking = enabled))
+        dao.updateEnableThinking(conversationId, enabled)
     }
 
     /**
@@ -131,8 +130,7 @@ class ChatRepository(private val dao: ChatDao) {
      * stored — see [SamplingJson]'s KDoc.
      */
     suspend fun setSampling(conversationId: String, config: SamplingConfig) {
-        val conversation = dao.getConversation(conversationId) ?: return
-        dao.updateConversation(conversation.copy(samplingJson = SamplingJson.encode(config)))
+        dao.updateSamplingJson(conversationId, SamplingJson.encode(config))
     }
 
     /**
@@ -146,8 +144,16 @@ class ChatRepository(private val dao: ChatDao) {
      * button that resets four sliders should not also silently delete a page of prose.
      */
     suspend fun resetSampling(conversationId: String) {
-        val conversation = dao.getConversation(conversationId) ?: return
-        dao.updateConversation(conversation.copy(samplingJson = null))
+        dao.updateSamplingJson(conversationId, null)
+    }
+
+    /**
+     * The settings sheet's Reset: drops the sampling override and, when [resetThinking], turns
+     * thinking back on, in one statement so neither write can be lost to the other. Leaves the
+     * system prompt alone, same reason as [resetSampling].
+     */
+    suspend fun resetTuning(conversationId: String, resetThinking: Boolean) {
+        if (resetThinking) dao.resetSamplingAndThinking(conversationId) else dao.updateSamplingJson(conversationId, null)
     }
 
     /**
@@ -156,8 +162,7 @@ class ChatRepository(private val dao: ChatDao) {
      * system prompt" a single state rather than two. No-op if the conversation doesn't exist.
      */
     suspend fun setSystemPrompt(conversationId: String, prompt: String) {
-        val conversation = dao.getConversation(conversationId) ?: return
-        dao.updateConversation(conversation.copy(systemPrompt = prompt.ifBlank { null }))
+        dao.updateSystemPrompt(conversationId, prompt.ifBlank { null })
     }
 
     /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */

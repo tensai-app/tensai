@@ -45,7 +45,10 @@ class ChatRepositoryTitleTest {
     }
 
     /** In-memory [ChatDao] covering what [ChatRepository]'s title logic touches. */
-    private class FakeChatDao : ChatDao {
+    internal class FakeChatDao : ChatDao {
+        /** Makes every read a suspension point, so a get-copy-update from two coroutines interleaves for real. */
+        var yieldOnRead = false
+
         private val conversations = mutableMapOf<String, ConversationEntity>()
         private val messages = mutableMapOf<String, MutableList<MessageEntity>>()
         private val conversationsFlow = MutableStateFlow<List<ConversationEntity>>(emptyList())
@@ -55,7 +58,11 @@ class ChatRepositoryTitleTest {
         override fun observeMessages(conversationId: String): Flow<List<MessageEntity>> =
             MutableStateFlow(messages[conversationId].orEmpty().toList())
 
-        override suspend fun getConversation(id: String): ConversationEntity? = conversations[id]
+        override suspend fun getConversation(id: String): ConversationEntity? {
+            val read = conversations[id]
+            if (yieldOnRead) kotlinx.coroutines.yield()
+            return read
+        }
 
         override fun observeConversation(id: String): Flow<ConversationEntity?> =
             conversationsFlow.map { list -> list.find { it.id == id } }
@@ -68,6 +75,21 @@ class ChatRepositoryTitleTest {
         }
 
         override suspend fun updateConversation(conversation: ConversationEntity) = insertConversation(conversation)
+
+        override suspend fun updateSamplingJson(id: String, samplingJson: String?) = patch(id) { it.copy(samplingJson = samplingJson) }
+
+        override suspend fun updateSystemPrompt(id: String, systemPrompt: String?) = patch(id) { it.copy(systemPrompt = systemPrompt) }
+
+        override suspend fun updateEnableThinking(id: String, enableThinking: Boolean) = patch(id) { it.copy(enableThinking = enableThinking) }
+
+        override suspend fun resetSamplingAndThinking(id: String) = patch(id) { it.copy(samplingJson = null, enableThinking = true) }
+
+        /** One atomic column update, like the SQL it stands in for: no suspension point between read and write. */
+        private fun patch(id: String, change: (ConversationEntity) -> ConversationEntity) {
+            val current = conversations[id] ?: return
+            conversations[id] = change(current)
+            conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
+        }
 
         override suspend fun insertMessage(message: MessageEntity) {
             messages.getOrPut(message.conversationId) { mutableListOf() }.add(message)

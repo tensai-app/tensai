@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -30,39 +31,60 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 /**
  * Selectable pill from the Calm Night kit (`Chip`): 34dp, 13sp medium, primary-16 fill and primary
  * text when [selected], transparent with a strong hairline otherwise. Single-choice groups use it
- * as a radio, hence [Role.RadioButton].
+ * as a radio, hence [Role.RadioButton]. [onClick] may be `null` for a display-only chip; [enabled] false draws it at 38% and makes it inert.
  */
 @Composable
 fun TensaiChip(
     label: String,
     selected: Boolean,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    mono: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val content = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = if (selected) MaterialTheme.tensaiTints.primary16 else Color.Transparent,
-        contentColor = content,
-        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.tensaiTints.outlineStrong),
-        modifier = modifier
-            .minimumInteractiveComponentSize()
-            .defaultMinSize(minHeight = 34.dp)
-            .semantics {
-                role = Role.RadioButton
-                this.selected = selected
-            },
-    ) {
+    val color = if (selected) MaterialTheme.tensaiTints.primary16 else Color.Transparent
+    val border = if (selected) null else BorderStroke(1.dp, MaterialTheme.tensaiTints.outlineStrong)
+    val chipModifier = modifier
+        .alpha(if (enabled) 1f else 0.38f)
+        .minimumInteractiveComponentSize()
+        .defaultMinSize(minHeight = 34.dp)
+        .semantics {
+            role = Role.RadioButton
+            this.selected = selected
+        }
+    val body: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
         ) {
             if (icon != null) Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
-            Text(text = label, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = if (mono) TensaiMono else null,
+                maxLines = 1,
+            )
         }
+    }
+    // A null onClick is a chip that only reports state (the settings sheet's "Custom"): drawn the
+    // same, but not clickable, so it is not announced or focusable as an action that does nothing.
+    if (onClick != null) {
+        Surface(
+            onClick = onClick,
+            enabled = enabled,
+            shape = CircleShape,
+            color = color,
+            contentColor = content,
+            border = border,
+            modifier = chipModifier,
+            content = body,
+        )
+    } else {
+        Surface(shape = CircleShape, color = color, contentColor = content, border = border, modifier = chipModifier, content = body)
     }
 }
 

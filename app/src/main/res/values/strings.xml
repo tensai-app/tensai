@@ -222,11 +222,31 @@
     <string name="chat_thinking_toggle">Thinking</string>
     <string name="chat_regenerate">Regenerate</string>
     <string name="chat_settings_title">Conversation settings</string>
-    <string name="chat_settings_system_prompt">System prompt</string>
-    <string name="chat_settings_system_prompt_none">None</string>
+    <string name="chat_settings_reset">Reset tuning</string>
+    <string name="chat_settings_section_instructions">Instructions</string>
+    <string name="chat_settings_prompt_placeholder">How should tensai behave in this chat?</string>
+    <!-- %1$d is the system prompt length in characters. -->
+    <string name="chat_settings_prompt_chars">%1$d chars</string>
+    <string name="chat_settings_thinking_supporting">Reason before answering</string>
+    <string name="chat_settings_thinking_unsupported">Not supported by this model</string>
+    <string name="chat_settings_section_style">Response style</string>
+    <string name="chat_settings_style_precise">Precise</string>
+    <string name="chat_settings_style_balanced">Balanced</string>
+    <string name="chat_settings_style_creative">Creative</string>
+    <string name="chat_settings_style_custom">Custom</string>
+    <string name="chat_settings_sampling">Sampling</string>
+    <string name="chat_settings_sampling_expanded">Expanded</string>
+    <string name="chat_settings_sampling_collapsed">Collapsed</string>
+    <string name="chat_settings_temperature_hint">Higher is more varied</string>
+    <string name="chat_settings_top_p_hint">Nucleus sampling cutoff</string>
+    <string name="chat_settings_min_p_hint">Drops unlikely tokens</string>
+    <string name="chat_settings_top_k_hint">Candidates per step</string>
+    <string name="chat_settings_section_length">Max response length</string>
+    <!-- %1$s is the token count, already formatted (e.g. 2,048). -->
+    <string name="chat_settings_length_caption">Up to %1$s tokens per reply</string>
+    <!-- %1$s is the reply token count, %2$s the loaded model context size (e.g. 4k). -->
+    <string name="chat_settings_length_caption_context">Up to %1$s tokens per reply · context %2$s</string>
     <string name="chat_settings_temperature">Temperature</string>
-    <string name="chat_settings_max_tokens">Max tokens</string>
-    <string name="chat_settings_reset_sampling">Reset sampling to defaults</string>
     <string name="chat_settings_stop_sequences">Stop sequences</string>
     <!-- %1$d is the maximum number of stop sequences. -->
     <string name="chat_settings_stop_sequences_help">One per line, up to %1$d. Spaces count.</string>

@@ -33,6 +33,26 @@ interface ChatDao {
     @Update
     suspend fun updateConversation(conversation: ConversationEntity)
 
+    /*
+     * Per-column updates for the settings sheet. Each is one SQL statement, so two settings written
+     * from concurrent coroutines cannot overwrite each other the way a get-copy-update of the whole
+     * row can (the second copy would carry the first read's stale value of the other column). All
+     * are no-ops when the conversation does not exist.
+     */
+
+    @Query("UPDATE conversations SET samplingJson = :samplingJson WHERE id = :id")
+    suspend fun updateSamplingJson(id: String, samplingJson: String?)
+
+    @Query("UPDATE conversations SET systemPrompt = :systemPrompt WHERE id = :id")
+    suspend fun updateSystemPrompt(id: String, systemPrompt: String?)
+
+    @Query("UPDATE conversations SET enableThinking = :enableThinking WHERE id = :id")
+    suspend fun updateEnableThinking(id: String, enableThinking: Boolean)
+
+    /** Sampling override dropped and thinking back on, atomically: the sheet's Reset. */
+    @Query("UPDATE conversations SET samplingJson = NULL, enableThinking = 1 WHERE id = :id")
+    suspend fun resetSamplingAndThinking(id: String)
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertMessage(message: MessageEntity)
 
