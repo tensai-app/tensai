@@ -172,9 +172,21 @@ class ChatRepository(private val dao: ChatDao) {
      * prepended as a [MessageRole.System] message. Thinking content is dropped (the engine only
      * takes rendered content) and every [ChatMessage.toolCalls] comes out `null` — no message with
      * a stored tool call exists yet, see [MessageEntity]'s KDoc.
+     *
+     * An assistant turn with empty content is left out (TEN-110), whatever its thinking: thinking
+     * is never replayed, so a thinking-only row would otherwise render as an empty assistant turn.
+     * Such a row is a stop before the answer (kept so the user sees it), a reply cut inside its
+     * reasoning, or one a killed process left behind. None is something the assistant said, and an
+     * empty assistant turn in the rendered prompt would only break strict templates and the prefix
+     * the warm-up and session reuse (TEN-88) match against.
+     * Dropping it can leave two user turns side by side, which are merged: see
+     * [mergeAdjacentUserTurns].
      */
     fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?): List<ChatMessage> {
-        val history = messages.map { ChatMessage(role = it.role.toEngineRole(), content = it.content, toolCalls = null) }
+        val history = messages
+            .filterNot { it.role == "assistant" && it.content.isEmpty() }
+            .map { ChatMessage(role = it.role.toEngineRole(), content = it.content, toolCalls = null) }
+            .mergeAdjacentUserTurns()
         return if (!systemPrompt.isNullOrBlank()) {
             listOf(ChatMessage(role = MessageRole.System, content = systemPrompt, toolCalls = null)) + history
         } else {
@@ -201,6 +213,25 @@ class ChatRepository(private val dao: ChatDao) {
         )
         return id
     }
+}
+
+/**
+ * Joins runs of adjacent user messages into one, with a blank line between, in order. Strict
+ * templates (Gemma's raises "Conversation roles must alternate") reject two user turns in a row,
+ * and dropping an empty assistant turn (see [ChatRepository.toEngineMessages]) is what creates
+ * them. Nothing else is merged: system and assistant turns are untouched.
+ */
+private fun List<ChatMessage>.mergeAdjacentUserTurns(): List<ChatMessage> {
+    val out = ArrayList<ChatMessage>(size)
+    for (m in this) {
+        val prev = out.lastOrNull()
+        if (m.role == MessageRole.User && prev?.role == MessageRole.User) {
+            out[out.lastIndex] = prev.copy(content = prev.content + "\n\n" + m.content)
+        } else {
+            out += m
+        }
+    }
+    return out
 }
 
 private fun truncateTitle(content: String): String {

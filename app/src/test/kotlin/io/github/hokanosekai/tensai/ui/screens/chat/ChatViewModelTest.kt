@@ -48,6 +48,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -740,6 +741,172 @@ class ChatViewModelTest {
 
         assertEquals(ChatError.GenerationFailed, viewModel.error.value)
         assertEquals(1, chatRepository.observeMessages(conversation).first().size)
+    }
+
+    /**
+     * TEN-110: stop tapped during prefill, before any token. The row used to be deleted as an empty
+     * turn, leaving the user's message alone: no bubble, no "stopped" chip, no Regenerate. It is kept
+     * now, empty and recorded as Cancelled, so it reads exactly like a stop a token later.
+     */
+    @Test
+    fun stoppingBeforeTheFirstTokenKeepsAnEmptyStoppedTurn() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = emptyList()
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        awaitGenerating()
+        viewModel.stop()
+        awaitGeneration()
+
+        val messages = chatRepository.observeMessages(conversation).first()
+        assertEquals(listOf("user", "assistant"), messages.map { it.role })
+        val reply = messages.last()
+        assertEquals("", reply.content)
+        assertNull(reply.tokensGenerated)
+        assertEquals(StopReason.Cancelled.name, reply.stopReason)
+        assertEquals(ReplyEnding.Stopped, viewModel.messages.first().last().ending)
+        assertNull("a stop is not a failure, so no banner", viewModel.error.value)
+    }
+
+    /** Regenerate on the empty stopped turn replaces it, as it does a partial reply. */
+    @Test
+    fun regeneratingAnEmptyStoppedTurnReplacesItWithARealReply() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = emptyList()
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+        viewModel.send("hi")
+        awaitGenerating()
+        viewModel.stop()
+        awaitGeneration()
+        val stoppedId = chatRepository.observeMessages(conversation).first().last().id
+
+        engine.scriptedEvents = null
+        engine.hangBeforeTerminal = false
+        viewModel.regenerate()
+        val messages = awaitAssistantReply(conversation, expectedCount = 2)
+
+        val reply = messages.last()
+        assertNotEquals("the stopped row is gone, not reused", stoppedId, reply.id)
+        assertEquals("hi", reply.content)
+        assertEquals(StopReason.Complete.name, reply.stopReason)
+        assertEquals(listOf("hi"), engine.lastRequest!!.messages.map { it.content })
+    }
+
+    /**
+     * The empty stopped turn is on screen but is not something the assistant said: the next prompt
+     * has to be built as if it were not there.
+     */
+    @Test
+    fun anEmptyStoppedTurnIsNotInTheNextPrompt() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = emptyList()
+        engine.hangBeforeTerminal = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+        viewModel.send("first")
+        awaitGenerating()
+        viewModel.stop()
+        awaitGeneration()
+
+        engine.scriptedEvents = null
+        engine.hangBeforeTerminal = false
+        viewModel.send("second")
+        awaitAssistantReply(conversation, expectedCount = 4)
+
+        val prompt = engine.lastRequest!!.messages
+        assertEquals("one user turn, so strict templates see alternating roles", listOf("first\n\nsecond"), prompt.map { it.content })
+        assertEquals(listOf(MessageRole.User), prompt.map { it.role })
+    }
+
+    /** A row a killed process left behind (empty, no stop reason) between two user turns. */
+    @Test
+    fun anOrphanEmptyAssistantRowIsMergedAwayLikeAStoppedOne() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.appendUserMessage(conversation, "first")
+        chatRepository.startAssistantMessage(conversation)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("second")
+        awaitAssistantReply(conversation, expectedCount = 4)
+
+        assertEquals(listOf("first\n\nsecond"), engine.lastRequest!!.messages.map { it.content })
+    }
+
+    /** Normal alternation, system prompt first, is left exactly as it was. */
+    @Test
+    fun alternatingTurnsAreNotMerged() {
+        fun row(id: String, role: String, content: String) = MessageEntity(
+            id = id, conversationId = "c", role = role, content = content, thinking = null,
+            toolCallsJson = null, tokensGenerated = null, tokPerSec = null, ttftMs = null,
+            stopReason = null, createdAt = 0L,
+        )
+        val out = chatRepository.toEngineMessages(
+            listOf(row("1", "user", "q1"), row("2", "assistant", "a1"), row("3", "user", "q2")),
+            systemPrompt = "sys",
+        )
+        assertEquals(listOf("sys", "q1", "a1", "q2"), out.map { it.content })
+        assertEquals(
+            listOf(MessageRole.System, MessageRole.User, MessageRole.Assistant, MessageRole.User),
+            out.map { it.role },
+        )
+    }
+
+    /** The repository chokepoint itself, which the warm-up shares with a real turn. */
+    @Test
+    fun toEngineMessagesDropsEveryEmptyAssistantTurnEvenAThinkingOnlyOne() {
+        fun row(id: String, role: String, content: String, thinking: String? = null) = MessageEntity(
+            id = id, conversationId = "c", role = role, content = content, thinking = thinking,
+            toolCallsJson = null, tokensGenerated = null, tokPerSec = null, ttftMs = null,
+            stopReason = null, createdAt = 0L,
+        )
+        val out = chatRepository.toEngineMessages(
+            listOf(
+                row("1", "user", "q"),
+                row("2", "assistant", ""),
+                row("3", "assistant", "", thinking = "hmm"),
+                row("4", "assistant", "a"),
+            ),
+            systemPrompt = null,
+        )
+        assertEquals("both empty rows go, the thinking one too, and the two users around them merge", listOf("q", "a"), out.map { it.content })
+        assertEquals(listOf(MessageRole.User, MessageRole.Assistant), out.map { it.role })
+    }
+
+    @Test
+    fun aThinkingOnlyAssistantTurnBetweenTwoUsersMergesThem() {
+        fun row(id: String, role: String, content: String, thinking: String? = null) = MessageEntity(
+            id = id, conversationId = "c", role = role, content = content, thinking = thinking,
+            toolCallsJson = null, tokensGenerated = null, tokPerSec = null, ttftMs = null,
+            stopReason = null, createdAt = 0L,
+        )
+        val out = chatRepository.toEngineMessages(
+            listOf(row("1", "user", "q1"), row("2", "assistant", "", thinking = "hmm"), row("3", "user", "q2")),
+            systemPrompt = null,
+        )
+        assertEquals(listOf("q1\n\nq2"), out.map { it.content })
+    }
+
+    @Test
+    fun threeAdjacentUserTurnsMergeInOrder() {
+        fun row(id: String, role: String, content: String) = MessageEntity(
+            id = id, conversationId = "c", role = role, content = content, thinking = null,
+            toolCallsJson = null, tokensGenerated = null, tokPerSec = null, ttftMs = null,
+            stopReason = null, createdAt = 0L,
+        )
+        val out = chatRepository.toEngineMessages(
+            listOf(
+                row("1", "user", "a"), row("2", "assistant", ""), row("3", "user", "b"),
+                row("4", "assistant", ""), row("5", "user", "c"),
+            ),
+            systemPrompt = null,
+        )
+        assertEquals(listOf("a\n\nb\n\nc"), out.map { it.content })
     }
 
     /**

@@ -234,9 +234,10 @@ sealed class ChatError {
  * Whether a decode's resolved `content`/`thinking` are worth persisting at all (TEN-64) — `false`
  * when both came out empty, whether because generation was cancelled before a first token, or
  * because it never started at all (TEN-65's [io.github.hokanosekai.tensai.engine.StopReason.ContextBudgetExhausted]).
- * An empty-everything assistant turn is not a reply: keeping it would only get replayed into every
- * later prompt via [ChatRepository.toEngineMessages] for nothing, and would show as a blank bubble
- * with no explanation.
+ * An empty-everything assistant turn is not a reply: keeping it would show a blank bubble with no
+ * explanation. The one exception is a stop the user asked for ([keepsEmptyTurn], TEN-110): that
+ * turn is kept empty and recorded as Cancelled, so it carries the "stopped" chip and Regenerate,
+ * and [ChatRepository.toEngineMessages] keeps it out of every later prompt.
  *
  * Does not special-case a failure, and no longer needs to. TEN-52 used to hand an empty failed turn
  * the exception's own message so it would pass this check and survive; TEN-39 lets it be deleted
@@ -246,6 +247,19 @@ sealed class ChatError {
  */
 internal fun hasPersistableContent(content: String, thinking: String?): Boolean =
     content.isNotEmpty() || !thinking.isNullOrEmpty()
+
+/**
+ * Whether an assistant turn with nothing in it is still kept, for the reason it ended (TEN-110):
+ * only a stop the user asked for. Tapping stop during prefill, before any token, used to delete the
+ * turn like any other empty one ([hasPersistableContent]), leaving the user's message alone on
+ * screen with no bubble, no "stopped" chip and no Regenerate, while the same tap a token later left
+ * all three. The row is kept empty and recorded as [StopReason.Cancelled] so both look the same.
+ *
+ * The other empty endings stay deleted: a failure reports through [ChatError.GenerationFailed], and
+ * an exhausted context through [ChatError.ContextWindowFull], neither of which has a stop to show.
+ * The empty row never reaches a prompt, see [ChatRepository.toEngineMessages].
+ */
+internal fun keepsEmptyTurn(stopReason: StopReason?): Boolean = stopReason == StopReason.Cancelled
 
 /**
  * The per-conversation settings the chat screen edits, in the shape [ConversationEntity] stores
@@ -920,7 +934,9 @@ class ChatViewModel(
                 else -> stats?.stopReason
             }
             withContext(NonCancellable) {
-                if (kept) {
+                // TEN-110: a stop is the one empty ending that keeps its row (see
+                // [keepsEmptyTurn]); every other empty ending is still deleted.
+                if (kept || keepsEmptyTurn(stopReason)) {
                     chatRepository.updateAssistantMessage(
                         assistantId,
                         content = content,

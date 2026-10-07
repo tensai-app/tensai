@@ -308,7 +308,8 @@ private fun NoModelBanner(onNavigateToModels: () -> Unit, modifier: Modifier = M
 /**
  * Shown when [ChatViewModel.error] holds [ChatError.ContextWindowFull] (TEN-65) — the prompt alone
  * already filled the model's context window, so the last "reply" wasn't a reply at all: nothing was
- * generated, and no empty bubble was kept for it (see [ChatViewModel.streamInto]). Same sobre
+ * generated, and no empty bubble was kept for it (see [ChatViewModel.streamInto]; a user stop is the one
+ * empty ending that does keep its row, TEN-110). Same sobre
  * treatment as [NoModelBanner]. Dismissing just clears the flag — the conversation itself is still
  * full, no context trimming happens here (TEN-65 deliberately leaves that out of scope), so starting
  * a new chat is the actual way forward.
@@ -332,7 +333,8 @@ private fun ContextWindowFullBanner(onDismiss: () -> Unit, modifier: Modifier = 
 
 /**
  * Shown when [ChatViewModel.error] holds [ChatError.GenerationFailed] (TEN-39) — a decode that
- * broke before its first token, so no turn was kept for it (see [ChatViewModel.streamInto]).
+ * broke before its first token, so no turn was kept for it (see [ChatViewModel.streamInto]; unlike
+ * a user stop, which keeps an empty "stopped" turn, TEN-110).
  *
  * Same treatment as [ContextWindowFullBanner], because it is the same situation: an attempt that
  * left nothing behind to explain itself. What it deliberately does *not* do is say why, in the
