@@ -7,7 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -55,17 +56,20 @@ fun MessageBubble(
 ) {
     if (message.isUser) {
         Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Surface(
-                shape = TensaiShapes.large,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.widthIn(max = 320.dp),
-            ) {
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                )
+            // Design: at most 82% of the row, 20dp corners with the bottom-end one tucked to 6dp,
+            // 15/22 body text (between bodyMedium and bodyLarge, so a local style).
+            Box(modifier = Modifier.fillMaxWidth(0.82f), contentAlignment = Alignment.CenterEnd) {
+                Surface(
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                    )
+                }
             }
         }
     } else {
