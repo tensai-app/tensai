@@ -20,6 +20,7 @@ object SamplingRanges {
     val TopP = 0f..1f
     val TopK = 0..200
     val MinP = 0f..1f
+    val RepeatPenalty = 1f..1.5f
     val MaxTokens = 64..8192
 
     /**
@@ -37,8 +38,8 @@ object SamplingRanges {
  *
  * ### What is, and is not, in the blob
  *
- * Exactly the six knobs a conversation can override: temperature, top-p, top-k, min-p, stop
- * sequences and max tokens. Deliberately **not**:
+ * Exactly the seven knobs a conversation can override: temperature, top-p, top-k, min-p, repeat
+ * penalty, stop sequences and max tokens. Deliberately **not**:
  *
  * - [SamplingConfig.enableThinking], which has had its own [ConversationEntity.enableThinking]
  *   column since schema v4 (TEN-33) and is toggled from the chat screen. Writing it here too would
@@ -73,7 +74,7 @@ object SamplingRanges {
  * after the fact to blobs already on disk.
  *
  * Uses `org.json` (part of the Android framework, no dependency) rather than a serialization
- * library: the whole schema is six scalars and a string array, and the only genuinely hard part is
+ * library: the whole schema is seven scalars and a string array, and the only genuinely hard part is
  * escaping stop sequences, which is exactly what a real JSON writer is for.
  */
 object SamplingJson {
@@ -86,6 +87,7 @@ object SamplingJson {
     private const val KeyTopP = "topP"
     private const val KeyTopK = "topK"
     private const val KeyMinP = "minP"
+    private const val KeyRepeatPenalty = "repeatPenalty"
     private const val KeyStopSequences = "stopSequences"
     private const val KeyMaxTokens = "maxTokens"
 
@@ -97,6 +99,7 @@ object SamplingJson {
             .put(KeyTopP, config.topP.toDouble())
             .put(KeyTopK, config.topK)
             .put(KeyMinP, config.minP.toDouble())
+            .put(KeyRepeatPenalty, config.repeatPenalty.toDouble())
             .put(KeyMaxTokens, config.maxTokens)
             .put(KeyStopSequences, JSONArray(config.stopSequences))
             .toString()
@@ -119,6 +122,8 @@ object SamplingJson {
             topP = obj.floatOr(KeyTopP, defaults.topP, SamplingRanges.TopP),
             topK = obj.intOr(KeyTopK, defaults.topK, SamplingRanges.TopK),
             minP = obj.floatOr(KeyMinP, defaults.minP, SamplingRanges.MinP),
+            // Blobs written before TEN-114 have no key: they read as the default (1.10), which is the fix.
+            repeatPenalty = obj.floatOr(KeyRepeatPenalty, defaults.repeatPenalty, SamplingRanges.RepeatPenalty),
             stopSequences = obj.stopSequencesOr(defaults.stopSequences),
             maxTokens = obj.intOr(KeyMaxTokens, defaults.maxTokens, SamplingRanges.MaxTokens),
         )

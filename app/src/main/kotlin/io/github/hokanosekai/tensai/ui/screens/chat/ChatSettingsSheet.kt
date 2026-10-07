@@ -382,6 +382,17 @@ fun ChatSettingsSheet(
                                     onCommit = { commit(draft.copy(topK = it.toInt())) },
                                 )
                                 HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
+                                ParamRow(
+                                    label = stringResource(R.string.chat_settings_repeat_penalty),
+                                    hint = stringResource(R.string.chat_settings_repeat_penalty_hint),
+                                    value = draft.repeatPenalty,
+                                    min = SamplingRanges.RepeatPenalty.start,
+                                    max = SamplingRanges.RepeatPenalty.endInclusive,
+                                    step = 0.01f,
+                                    decimals = 2,
+                                    onCommit = { commit(draft.copy(repeatPenalty = it)) },
+                                )
+                                HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
                                 key(resetSeed) {
                                     StopSequencesRow(
                                         initial = draft.stopSequences,
@@ -628,7 +639,8 @@ private fun StyleChips(style: ResponseStyle?, onPick: (ResponseStyle) -> Unit) {
 private fun SamplingHeader(config: SamplingConfig, expanded: Boolean, reducedMotion: Boolean, onToggle: () -> Unit) {
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, motionSpec(reducedMotion), label = "chevron")
     val spoken = "${stringResource(R.string.chat_settings_temperature)} ${formatFloatField(config.temperature)}, " +
-        "Top P ${formatFloatField(config.topP)}, Min P ${formatFloatField(config.minP)}, Top K ${config.topK}"
+        "Top P ${formatFloatField(config.topP)}, Min P ${formatFloatField(config.minP)}, Top K ${config.topK}, " +
+        "${stringResource(R.string.chat_settings_repeat_penalty)} ${formatFloatField(config.repeatPenalty)}"
     val state = stringResource(
         if (expanded) R.string.chat_settings_sampling_expanded else R.string.chat_settings_sampling_collapsed,
     )

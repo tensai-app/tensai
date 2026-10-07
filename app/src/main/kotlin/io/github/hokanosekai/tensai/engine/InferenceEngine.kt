@@ -110,6 +110,9 @@ data class ChatMessage(
  *   0 disables the filter.
  * @param minP drop tokens whose probability is below `minP` times the
  *   top token's probability. 0 disables the filter.
+ * @param repeatPenalty discourages tokens already generated in this decode (llama.cpp `penalty_repeat`,
+ *   window 64, generated tokens only: the prompt is not counted, reasoning is). 1.0 disables it.
+ *   Default 1.10 (TEN-114: a thinking model looped on one sentence with no penalty at all).
  * @param stopSequences strings that end generation when they appear in
  *   the output. Implementations must not emit the matched sequence itself.
  * @param maxTokens hard cap on the number of generated tokens when [reasoningBudget] is `null`.
@@ -131,6 +134,7 @@ data class SamplingConfig(
     val topP: Float = 0.95f,
     val topK: Int = 40,
     val minP: Float = 0.05f,
+    val repeatPenalty: Float = 1.10f,
     val stopSequences: List<String> = emptyList(),
     val maxTokens: Int = 2048,
     val enableThinking: Boolean = true,

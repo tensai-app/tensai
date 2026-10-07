@@ -9,11 +9,11 @@ import kotlin.math.roundToInt
  * the "is everything at its default" test. No Compose type in here so a JVM test can reach all of it.
  */
 
-/** The four knobs a response-style preset sets. Max tokens and stop sequences are not part of a style. */
-internal enum class ResponseStyle(val temperature: Float, val topP: Float, val minP: Float, val topK: Int) {
-    Precise(0.2f, 0.9f, 0.1f, 20),
-    Balanced(0.8f, 0.95f, 0.05f, 40),
-    Creative(1.0f, 0.95f, 0.05f, 60),
+/** The five knobs a response-style preset sets. Max tokens and stop sequences are not part of a style. */
+internal enum class ResponseStyle(val temperature: Float, val topP: Float, val minP: Float, val topK: Int, val repeatPenalty: Float) {
+    Precise(0.2f, 0.9f, 0.1f, 20, 1.05f),
+    Balanced(0.8f, 0.95f, 0.05f, 40, 1.10f),
+    Creative(1.0f, 0.95f, 0.05f, 60, 1.10f),
 }
 
 /** Max response length chips, in tokens. Any stored value outside this list simply selects no chip. */
@@ -22,7 +22,7 @@ internal val MaxTokenChoices = listOf(512, 1024, 2048, 4096, 8192)
 /** Half a step of the finest float slider (0.01): absorbs float noise, never merges two real notches. */
 private const val FloatTolerance = 0.005f
 
-/** The preset [config]'s four sampling values match, or `null` for a custom mix. */
+/** The preset [config]'s five sampling values match, or `null` for a custom mix. */
 internal fun detectStyle(config: SamplingConfig): ResponseStyle? =
     ResponseStyle.entries.firstOrNull { it.matches(config) }
 
@@ -30,10 +30,11 @@ private fun ResponseStyle.matches(c: SamplingConfig): Boolean =
     abs(c.temperature - temperature) < FloatTolerance &&
         abs(c.topP - topP) < FloatTolerance &&
         abs(c.minP - minP) < FloatTolerance &&
-        c.topK == topK
+        c.topK == topK &&
+        abs(c.repeatPenalty - repeatPenalty) < FloatTolerance
 
 internal fun SamplingConfig.withStyle(style: ResponseStyle): SamplingConfig =
-    copy(temperature = style.temperature, topP = style.topP, minP = style.minP, topK = style.topK)
+    copy(temperature = style.temperature, topP = style.topP, minP = style.minP, topK = style.topK, repeatPenalty = style.repeatPenalty)
 
 /**
  * True when the sheet shows nothing but the app's defaults: [SamplingConfig]'s own values (which
@@ -80,7 +81,7 @@ internal fun snapToStep(raw: Float, min: Float, max: Float, step: Float): Float 
 /** A max-length chip is offered only when it is below the loaded model's context; no model, no limit. */
 internal fun maxTokenFits(tokens: Int, contextSize: Int?): Boolean = contextSize == null || tokens < contextSize
 
-/** The Sampling card's one-line summary: temperature, top P, min P, top K. */
+/** The Sampling card's one-line summary: temperature, top P, min P, top K, repeat penalty. */
 internal fun samplingSummary(config: SamplingConfig): String =
     "t ${formatFloatField(config.temperature)} · p ${formatFloatField(config.topP)} · " +
-        "m ${formatFloatField(config.minP)} · k ${config.topK}"
+        "m ${formatFloatField(config.minP)} · k ${config.topK} · r ${formatFloatField(config.repeatPenalty)}"

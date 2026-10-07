@@ -25,6 +25,15 @@ class SheetModelTest {
     }
 
     @Test
+    fun presetsCarryTheirRepeatPenalty() {
+        assertEquals(1.05f, ResponseStyle.Precise.repeatPenalty, 0f)
+        assertEquals(1.10f, ResponseStyle.Balanced.repeatPenalty, 0f)
+        assertEquals(1.10f, ResponseStyle.Creative.repeatPenalty, 0f)
+        assertEquals(1.10f, SamplingConfig().repeatPenalty, 0f)
+        assertNull(detectStyle(SamplingConfig().copy(repeatPenalty = 1.0f)))
+    }
+
+    @Test
     fun oneOffValueIsCustom() {
         val c = SamplingConfig().withStyle(ResponseStyle.Precise).copy(topK = 21)
         assertNull(detectStyle(c))
@@ -67,6 +76,7 @@ class SheetModelTest {
         assertFalse(isSheetDefault(d.copy(maxTokens = 512), true, true))
         assertFalse(isSheetDefault(d.copy(stopSequences = listOf("x")), true, true))
         assertFalse(isSheetDefault(d.withStyle(ResponseStyle.Creative), true, true))
+        assertFalse(isSheetDefault(d.copy(repeatPenalty = 1.0f), true, true))
         assertFalse(isSheetDefault(d, false, true))
     }
 
@@ -88,6 +98,7 @@ class SheetModelTest {
         assertEquals(0.95f, c.topP, 0f)
         assertEquals(0.05f, c.minP, 0f)
         assertEquals(60, c.topK)
+        assertEquals(1.10f, c.repeatPenalty, 0f)
         assertEquals(ResponseStyle.Creative, detectStyle(SamplingConfig(temperature = 1.0f, topP = 0.95f, minP = 0.05f, topK = 60)))
         assertNull("the old Creative values are now a custom mix", detectStyle(SamplingConfig(temperature = 1.2f, topP = 0.98f, minP = 0.02f, topK = 80)))
     }
@@ -106,6 +117,6 @@ class SheetModelTest {
 
     @Test
     fun summaryListsTemperatureTopPMinPAndTopK() {
-        assertEquals("t 0.80 · p 0.95 · m 0.05 · k 40", samplingSummary(SamplingConfig()))
+        assertEquals("t 0.80 · p 0.95 · m 0.05 · k 40 · r 1.10", samplingSummary(SamplingConfig()))
     }
 }

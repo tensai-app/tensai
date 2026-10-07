@@ -25,6 +25,7 @@ class SamplingJsonTest {
         topP = 0.72f,
         topK = 7,
         minP = 0.11f,
+        repeatPenalty = 1.27f,
         stopSequences = listOf("\nUser:", " assistant said \"no\"", "back\\slash", "終わり"),
         maxTokens = 512,
     )
@@ -93,6 +94,23 @@ class SamplingJsonTest {
      * known ones still apply — a downgrade must cost the user the settings that genuinely cannot be
      * represented here, and not one more.
      */
+    /** TEN-114: rows written before the field existed decode to the new default, 1.10, on purpose. */
+    @Test
+    fun aBlobWithoutRepeatPenaltyReadsAsTheDefault() {
+        val old = """{"v":1,"temperature":0.3,"topP":0.9,"topK":20,"minP":0.1,"maxTokens":512,"stopSequences":[]}"""
+
+        val decoded = SamplingJson.decode(old)
+
+        assertEquals(1.10f, decoded.repeatPenalty, 0f)
+        assertEquals(0.3f, decoded.temperature, 1e-6f)
+    }
+
+    @Test
+    fun repeatPenaltyIsClampedIntoItsRange() {
+        assertEquals(1.5f, SamplingJson.decode("""{"repeatPenalty":9}""").repeatPenalty, 0f)
+        assertEquals(1.0f, SamplingJson.decode("""{"repeatPenalty":0.2}""").repeatPenalty, 0f)
+    }
+
     @Test
     fun aBlobFromAFutureVersionKeepsTheFieldsThisVersionUnderstands() {
         val future = """

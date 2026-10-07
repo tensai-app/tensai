@@ -187,6 +187,8 @@
     <string name="chat_settings_min_p_hint">Écarte les tokens improbables</string>
     <string name="chat_settings_top_k_hint">Candidats par étape</string>
     <string name="chat_settings_section_length">Longueur max de réponse</string>
+    <string name="chat_settings_repeat_penalty">Pénalité de répétition</string>
+    <string name="chat_settings_repeat_penalty_hint">Limite les boucles et les répétitions</string>
     <string name="chat_settings_length_caption">Jusqu\'à %1$s tokens par réponse</string>
     <string name="chat_settings_length_caption_context">Jusqu\'à %1$s tokens par réponse · contexte %2$s</string>
     <string name="chat_settings_temperature">Température</string>

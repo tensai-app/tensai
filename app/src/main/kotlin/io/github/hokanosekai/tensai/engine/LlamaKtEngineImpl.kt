@@ -389,6 +389,8 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                             topK = request.sampling.topK,
                             topP = request.sampling.topP,
                             minP = request.sampling.minP,
+                            repeatPenalty = request.sampling.repeatPenalty,
+                            repeatLastN = RepeatPenaltyLastN,
                             stopSequences = request.sampling.stopSequences,
                         )
                         val callback = TokenCallback { token ->
@@ -593,5 +595,8 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
     private companion object {
         /** `nGpuLayers` value that offloads every layer llama.cpp reports (safe over-count). */
         const val FULL_GPU_OFFLOAD = 99
+
+        /** `penalty_last_n`: llama.cpp's default window for the repeat penalty (TEN-114). */
+        const val RepeatPenaltyLastN = 64
     }
 }

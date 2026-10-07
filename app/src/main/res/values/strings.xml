@@ -246,6 +246,8 @@
     <string name="chat_settings_min_p_hint">Drops unlikely tokens</string>
     <string name="chat_settings_top_k_hint">Candidates per step</string>
     <string name="chat_settings_section_length">Max response length</string>
+    <string name="chat_settings_repeat_penalty">Repeat penalty</string>
+    <string name="chat_settings_repeat_penalty_hint">Discourages loops and repeats</string>
     <!-- %1$s is the token count, already formatted (e.g. 2,048). -->
     <string name="chat_settings_length_caption">Up to %1$s tokens per reply</string>
     <!-- %1$s is the reply token count, %2$s the loaded model context size (e.g. 4k). -->
