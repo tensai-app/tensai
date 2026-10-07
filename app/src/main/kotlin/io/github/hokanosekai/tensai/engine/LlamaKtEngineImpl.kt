@@ -376,6 +376,10 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
 
                 try {
                     val prompt = llamaEngine.formatChat(libMessages, request.sampling.enableThinking)
+                    // TEN-113: a blank prompt for a non-empty conversation is a failed render, not
+                    // a prompt. Thrown into the catch below (Error event) rather than tokenized and
+                    // decoded from an empty context.
+                    BlankPromptGuard.check(libMessages.size, prompt)?.let { throw it }
                     // TEN-65: the prompt itself already spends part of nCtxEffective — bound
                     // nPredict by whatever's actually left rather than handing requestedNPredict to
                     // llama.cpp blind. A long-enough conversation used to leave zero room to answer

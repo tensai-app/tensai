@@ -718,6 +718,22 @@ class ChatViewModelTest {
         assertEquals("user", messages.single().role)
     }
 
+    /** TEN-113: the blank-prompt error (InferenceException) takes the same road as any early failure. */
+    @Test
+    fun aBlankPromptErrorKeepsNoTurnAndRaisesTheFailureBanner() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = listOf(
+            DecodeEvent.Error(InferenceException("Chat template rendering failed: the formatted prompt is empty")),
+        )
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        assertEquals(ChatError.GenerationFailed, viewModel.error.value)
+        assertEquals(1, chatRepository.observeMessages(conversation).first().size)
+    }
     /**
      * The same, for a reply that opened and closed an empty `<think>` block before failing: the
      * splitter reports an empty (not absent) reasoning, which is still nothing worth keeping by
