@@ -115,6 +115,10 @@
     <string name="settings_footer">made to run free</string>
     <!-- %1$s is a license name (MIT, Apache 2.0…), %2$s the copyright holder. -->
     <string name="settings_license_line">%1$s · %2$s</string>
+    <string name="licenses_group_components">tensai components</string>
+    <string name="licenses_group_libraries">Libraries</string>
+    <!-- %1$s is the copyright holder. -->
+    <string name="licenses_copyright_line">Copyright %1$s</string>
 
     <!-- ==================== Empty states and errors (TEN-39) ==================== -->
 

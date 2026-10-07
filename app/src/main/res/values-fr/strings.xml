@@ -92,6 +92,9 @@
     <string name="settings_licenses_collapsed">Replié</string>
     <string name="settings_footer">fait pour tourner libre</string>
     <string name="settings_license_line">%1$s · %2$s</string>
+    <string name="licenses_group_components">Composants de tensai</string>
+    <string name="licenses_group_libraries">Bibliothèques</string>
+    <string name="licenses_copyright_line">Copyright %1$s</string>
 
     <!-- ==================== Empty states and errors (TEN-39) ==================== -->
 

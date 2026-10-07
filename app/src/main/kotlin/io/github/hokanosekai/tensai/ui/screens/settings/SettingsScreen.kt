@@ -75,15 +75,17 @@ import kotlinx.coroutines.launch
  * Settings (TEN-38, TEN-117): appearance, inference, storage, about, as Calm Night cards.
  *
  * Everything shown is read from a store through [SettingsViewModel], there is no local state on
- * this screen except dialog visibility and the licenses row being expanded. That is what makes a theme or
+ * this screen except dialog visibility. That is what makes a theme or
  * language tap apply immediately (the write comes back through the flow `MainActivity` is
  * collecting) and what makes the values here the same ones the onboarding wrote.
  *
  * @param onNavigateToModels where "Manage models" goes.
+ * @param onNavigateToLicenses where the open-source licenses row goes.
  */
 @Composable
 fun SettingsScreen(
     onNavigateToModels: () -> Unit,
+    onNavigateToLicenses: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = remember { SettingsViewModel() },
 ) {
@@ -98,7 +100,6 @@ fun SettingsScreen(
     val uiScope = rememberCoroutineScope()
     var confirmingClear by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<Picker?>(null) }
-    var licensesOpen by remember { mutableStateOf(false) }
 
     // Resolved here, not in the callback below: the purge's continuation is not a composition, so
     // it has no `stringResource` to call, and building the message by pasting a size onto a
@@ -198,18 +199,9 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Description,
                     title = stringResource(R.string.settings_licenses),
-                    onClick = { licensesOpen = !licensesOpen },
-                    stateDescription = stringResource(
-                        if (licensesOpen) R.string.settings_licenses_expanded else R.string.settings_licenses_collapsed,
-                    ),
-                    trailing = { Chevron(rotation = if (licensesOpen) 90f else 0f) },
+                    onClick = onNavigateToLicenses,
+                    trailing = { Chevron() },
                 )
-                if (licensesOpen) {
-                    ThirdPartyLicenses.forEach { entry ->
-                        RowDivider()
-                        LicenseRow(entry)
-                    }
-                }
             }
 
             Footer()
@@ -490,32 +482,6 @@ private fun StorageSection(
     }
 }
 
-/** One open-source dependency, shown as a row (no icon) when the licenses row is expanded. */
-@Composable
-private fun LicenseRow(entry: ThirdPartyLicense, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth().padding(start = 52.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
-        Text(
-            text = entry.name,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = stringResource(R.string.settings_license_line, entry.license, entry.author),
-            fontSize = 12.5.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-        Text(
-            text = entry.url,
-            fontFamily = TensaiMono,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-    }
-}
-
 /** The 天 sign-off closing the screen: the glyph at half opacity over the tagline, centred. */
 @Composable
 private fun Footer(modifier: Modifier = Modifier) {
@@ -535,7 +501,7 @@ private fun Footer(modifier: Modifier = Modifier) {
 
 /** Eyebrow above a card: 12sp bold uppercase, 0.06em tracking, text-secondary. */
 @Composable
-private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
+internal fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         fontSize = 12.sp,
@@ -548,7 +514,7 @@ private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
 
 /** Card: surface fill, 1dp outline hairline, 20dp radius, content clipped to the shape. */
 @Composable
-private fun SectionCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun SectionCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Surface(
         shape = TensaiShapes.large,
         color = MaterialTheme.colorScheme.surface,
@@ -560,7 +526,7 @@ private fun SectionCard(modifier: Modifier = Modifier, content: @Composable () -
 }
 
 @Composable
-private fun RowDivider() {
+internal fun RowDivider() {
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.tensaiTints.outline))
 }
 
@@ -639,7 +605,7 @@ private fun MonoText(text: String) {
 }
 
 @Composable
-private fun Chevron(rotation: Float = 0f) {
+internal fun Chevron(rotation: Float = 0f) {
     Icon(
         imageVector = if (rotation == 0f) Icons.Rounded.ChevronRight else Icons.Rounded.ExpandMore,
         contentDescription = null,

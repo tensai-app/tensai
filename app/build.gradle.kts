@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.aboutlibraries)
 }
 
 android {
@@ -84,6 +85,18 @@ android {
     }
 }
 
+// Maven dependencies of the APK (AndroidX, Kotlin, ...) listed on Settings > Open-source licenses (TEN-120).
+// The plugin writes `aboutlibraries.json` as a raw resource from the resolved dependency graph at
+// build time (licenses read from the POMs Gradle already cached), nothing is fetched at runtime.
+aboutLibraries {
+    // No network at all while building (the default pulls SPDX license texts from the web, which
+    // would make the output depend on it): the report holds ids, names and URLs, the texts are
+    // ours, see GeneratedLicenses.kt.
+    offlineMode = true
+    // Drops the build timestamp so the same dependencies give the same bytes.
+    excludeFields = arrayOf("generated")
+}
+
 kotlin {
     jvmToolchain(21)
 }
@@ -115,6 +128,7 @@ dependencies {
     implementation(libs.compose.material.icons.extended)
     implementation(libs.commonmark)
     implementation(libs.commonmark.ext.gfm.tables)
+    implementation(libs.aboutlibraries.core)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
@@ -132,3 +146,4 @@ dependencies {
     androidTestImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.room.testing)
 }
+

@@ -9,6 +9,7 @@ sealed class TensaiDestination(val route: String) {
     data object Home : TensaiDestination("home")
     data object Models : TensaiDestination("models")
     data object Settings : TensaiDestination("settings")
+    data object Licenses : TensaiDestination("settings/licenses")
     data object Server : TensaiDestination("server")
 
     data object Chat : TensaiDestination("chat/{conversationId}?prompt={prompt}") {

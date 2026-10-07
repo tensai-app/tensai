@@ -17,6 +17,7 @@ import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
+import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
 
 /**
@@ -161,7 +162,12 @@ fun TensaiNavGraph(
                 // returns to the group the user left, rather than wherever they entered Settings
                 // from.
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
             )
+        }
+
+        composable(TensaiDestination.Licenses.route) {
+            LicensesScreen()
         }
 
         composable(TensaiDestination.Server.route) {

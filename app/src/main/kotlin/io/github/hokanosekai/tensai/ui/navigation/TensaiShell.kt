@@ -44,6 +44,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     route == TensaiDestination.Models.route -> TensaiChrome.Detail
     route?.startsWith("model/") == true -> TensaiChrome.Detail
     route == TensaiDestination.Settings.route -> TensaiChrome.Detail
+    route == TensaiDestination.Licenses.route -> TensaiChrome.Detail
     route == TensaiDestination.Server.route -> TensaiChrome.Detail
     else -> TensaiChrome.None // loading, onboarding
 }
@@ -52,6 +53,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
 private fun detailTitleForRoute(route: String?): Int? = when {
     route == TensaiDestination.Models.route || route?.startsWith("model/") == true -> R.string.nav_models
     route == TensaiDestination.Settings.route -> R.string.nav_settings
+    route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Server.route -> R.string.nav_server
     else -> null
 }
