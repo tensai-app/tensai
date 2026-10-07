@@ -88,10 +88,41 @@ fun TensaiChip(
     }
 }
 
+/**
+ * Primary-tone badge from the kit (`Badge tone="primary"`): 22dp pill, primary-16 fill, primary
+ * 12sp semibold text, optional 13dp [icon] with a 5dp gap.
+ */
+@Composable
+fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null) {
+    Surface(shape = CircleShape, color = MaterialTheme.tensaiTints.primary16, modifier = modifier.defaultMinSize(minHeight = 22.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(13.dp),
+                )
+            }
+            Text(
+                text = text,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
 /** Mono metadata badge from the kit (`Badge mono`): 22dp pill, surface-variant fill, 11sp mono. */
 @Composable
 fun TensaiMonoBadge(text: String, modifier: Modifier = Modifier) {
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier) {
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier.defaultMinSize(minHeight = 22.dp)) {
         Text(
             text = text,
             fontFamily = TensaiMono,

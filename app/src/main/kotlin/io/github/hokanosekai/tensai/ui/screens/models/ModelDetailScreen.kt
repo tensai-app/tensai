@@ -1,6 +1,8 @@
 package io.github.hokanosekai.tensai.ui.screens.models
 
-import androidx.compose.foundation.background
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,42 +12,94 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Eject
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.compat.CompatibilityChecker
+import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
+import io.github.hokanosekai.tensai.runtime.LoadPlan
+import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import io.github.hokanosekai.tensai.runtime.residentModel
+import io.github.hokanosekai.tensai.ui.components.TensaiBadge
+import io.github.hokanosekai.tensai.ui.components.TensaiButton
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
+import io.github.hokanosekai.tensai.ui.components.TensaiProgressBar
+import io.github.hokanosekai.tensai.ui.screens.settings.MonoText
+import io.github.hokanosekai.tensai.ui.screens.settings.RowDivider
+import io.github.hokanosekai.tensai.ui.screens.settings.SectionCard
+import io.github.hokanosekai.tensai.ui.screens.settings.SectionLabel
+import io.github.hokanosekai.tensai.ui.screens.settings.SettingsRow
+import io.github.hokanosekai.tensai.ui.screens.settings.ValueText
+import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Locale
 
 /**
- * Model detail — metadata, load/delete actions. Chrome (back button, title) is owned by
- * `TensaiShell`; this composable is body content only.
+ * Model detail (TEN-122): header block, MODEL / ON THIS DEVICE / SAVED SESSIONS cards, actions.
+ * Chrome (back button, title) is owned by `TensaiShell`; this composable is body content only.
+ *
+ * Re-import of a missing file goes through the same picker as the library. When the picked file is
+ * the one this row describes (same name and size), `ModelImporter` relinks the row to the new copy:
+ * same id, so saved sessions stay attached, and a failed import changes nothing.
  */
 @Composable
 fun ModelDetailScreen(
@@ -57,193 +111,393 @@ fun ModelDetailScreen(
 ) {
     val models by repository.models.collectAsState(initial = null)
     val model = models?.find { it.id == modelId }
+    val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
+    val isLoaded = queueState.residentModel?.modelId == modelId
+    val allSessions by RuntimeGraph.sessionRepository.observeSessions().collectAsState(initial = emptyList())
+    val sessions = remember(allSessions, modelId) { sessionsOfModel(modelId, allSessions) }
 
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    var deleteError by remember { mutableStateOf<String?>(null) }
+    // Bumped after a successful import: a relink keeps the id and may keep the path, so the row can
+    // be structurally equal and nothing else would re-run the file-existence check.
+    var refreshTick by remember { mutableIntStateOf(0) }
+    var importProgress by remember { mutableStateOf<Float?>(null) }
+    var importTotalBytes by remember { mutableStateOf<Long?>(null) }
+    var importFailure by remember { mutableStateOf<ImportFailure?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val clearDescription = stringResource(R.string.model_detail_sessions_clear_desc)
 
-    LaunchedEffect(deleteError) {
-        deleteError?.let {
-            snackbarHostState.showSnackbar(it)
-            deleteError = null
+    // Null until the stat() has answered: nothing is drawn before then, so a model never shows
+    // "Load model" for a frame and then flips to "File missing".
+    val fileExists by produceState<Boolean?>(null, model?.filePath, refreshTick) {
+        value = null
+        val path = model?.filePath ?: return@produceState
+        value = withContext(Dispatchers.IO) { File(path).exists() }
+    }
+
+    suspend fun removeModel(name: String): Boolean = try {
+        repository.deleteModel(modelId)
+        true
+    } catch (e: ModelInUseException) {
+        snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, name))
+        false
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            importProgress = 0f
+            importFailure = null
+            importTotalBytes = repository.uriSize(uri)
+            try {
+                repository.importModel(uri) { importProgress = it }
+                refreshTick++
+                // Same file: the importer relinked this row (same id, sessions kept) and the
+                // screen updates in place.
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                importFailure = ImportFailure.of(e)
+            } finally {
+                importProgress = null
+            }
         }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        when {
-            models == null -> Unit // initial Room query hasn't emitted yet.
-            model == null -> {
-                Text(
-                    text = stringResource(R.string.model_removed),
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
-            else -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(20.dp),
-                ) {
-                    Text(text = model.displayName, style = MaterialTheme.typography.headlineSmall)
-
-                    val fileExists = rememberFileExists(model.filePath)
-                    val compatibility = modelCompatibility(model)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(top = 8.dp),
-                    ) {
-                        CompatDot(compatibility.verdict)
-                        Text(
-                            text = compatLabel(compatibility.verdict),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    // The file can go missing without this row's compatibility check noticing —
-                    // it's estimated from the persisted GGUF metadata, not the file itself — so
-                    // this is checked and surfaced separately.
-                    if (!fileExists) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+        Column(modifier = Modifier.fillMaxSize()) {
+            importProgress?.let { ImportProgress(it, importTotalBytes) }
+            when {
+                models == null -> Unit // initial Room query hasn't emitted yet.
+                model == null -> {
+                    if (importProgress == null) {
+                        Box(modifier = Modifier.fillMaxSize()) {
                             Text(
-                                text = stringResource(R.string.model_detail_file_missing),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = stringResource(R.string.model_removed),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.align(Alignment.Center),
                             )
                         }
                     }
-
-                    Column(modifier = Modifier.padding(top = 20.dp)) {
-                        MetadataRow(stringResource(R.string.model_detail_architecture), model.architecture)
-                        MetadataRow(stringResource(R.string.model_detail_parameters), formatParamCount(model.paramCount))
-                        MetadataRow(stringResource(R.string.model_detail_quantization), model.quantLabel)
-                        MetadataRow(
-                            stringResource(R.string.model_detail_context_length),
-                            pluralStringResource(
-                                R.plurals.model_detail_context_length_value,
-                                model.contextLength.toInt(),
-                                model.contextLength,
-                            ),
-                        )
-                        MetadataRow(stringResource(R.string.model_detail_file_size), formatFileSize(model.sizeBytes))
-                        MetadataRow(
-                            stringResource(R.string.model_detail_thinking),
-                            stringResource(
-                                if (model.supportsThinking) R.string.model_detail_supported else R.string.model_detail_not_supported,
-                            ),
-                        )
-                        MetadataRow(stringResource(R.string.model_detail_recommended_backend), compatibility.recommendedBackend.name)
-                        WrappingMetadataRow(stringResource(R.string.model_detail_estimated_memory), compatExplanation(compatibility))
-                    }
-
-                    Button(
-                        onClick = { onLoadClick(model.id) },
-                        enabled = fileExists,
-                        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
-                    ) {
-                        Text(stringResource(R.string.model_load))
-                    }
-
-                    TextButton(
-                        onClick = { showDeleteConfirm = true },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    ) {
-                        Text(stringResource(R.string.model_delete))
-                    }
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 24.dp),
-                        color = MaterialTheme.tensaiTints.outline,
-                    )
-
-                    // TODO(TEN-34): list this model's saved sessions here.
-                    Text(text = stringResource(R.string.model_detail_saved_sessions), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = stringResource(R.string.model_detail_coming_soon),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
                 }
+                fileExists == null -> Unit
+                else -> {
+                    val exists = fileExists == true
+                    val profile = remember(model) { RuntimeGraph.deviceProfiler.profile() }
+                    val compatibility = remember(model, profile) { CompatibilityChecker.check(model, profile) }
+                    val plannedCtx = remember(model, profile) {
+                        when (val plan = LoadPolicy.compute(model, profile)) {
+                            is LoadPlan.Feasible -> plan.nCtx
+                            is LoadPlan.Infeasible -> plan.floor.nCtx
+                        }
+                    }
+                    val wontFit = compatibility.verdict == Verdict.WontFit && !isLoaded
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                    ) {
+                        if (!exists) {
+                            MissingFileCard(onReimport = { importLauncher.launch(GgufMimeTypes) })
+                        }
 
-                if (showDeleteConfirm) {
-                    AlertDialog(
-                        onDismissRequest = { showDeleteConfirm = false },
-                        title = { Text(stringResource(R.string.model_delete_confirm_title, model.displayName)) },
-                        text = { Text(stringResource(R.string.model_delete_confirm_body)) },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showDeleteConfirm = false
-                                scope.launch {
-                                    try {
-                                        repository.deleteModel(model.id)
-                                        onDeleted()
-                                    } catch (e: ModelInUseException) {
-                                        deleteError = context.getString(R.string.model_delete_in_use, model.displayName)
-                                    }
-                                }
-                            }) {
-                                Text(stringResource(R.string.model_delete_confirm), color = MaterialTheme.colorScheme.error)
+                        Column(modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp)) {
+                            Text(
+                                text = model.displayName,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                lineHeight = 26.sp,
+                            )
+                            Text(
+                                text = formatParamCount(model.paramCount),
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.padding(top = 10.dp),
+                            ) {
+                                ModelStatus(if (exists) compatibility else null, fontSize = 12.5f)
+                                if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
                             }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.action_cancel)) }
-                        },
-                    )
+                            ModelBadges(model, if (exists) compatibility else null, isLoaded = false, modifier = Modifier.padding(top = 12.dp))
+                            if (wontFit && exists) WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
+                        }
+
+                        SectionLabel(stringResource(R.string.model_detail_section_model))
+                        SectionCard {
+                            SettingsRow(Icons.Default.AccountTree, stringResource(R.string.model_detail_architecture), trailing = { MonoText(model.architecture) })
+                            RowDivider()
+                            SettingsRow(Icons.Default.Hub, stringResource(R.string.model_detail_parameters), trailing = { MonoText(formatParamCount(model.paramCount)) })
+                            RowDivider()
+                            SettingsRow(Icons.Default.Compress, stringResource(R.string.model_detail_quantization), trailing = { MonoText(model.quantLabel) })
+                            RowDivider()
+                            SettingsRow(Icons.Default.Storage, stringResource(R.string.model_detail_file_size), trailing = { MonoText(formatFileSize(model.sizeBytes)) })
+                            RowDivider()
+                            val trained = if (model.contextLength > 0) groupedNumber(model.contextLength) else null
+                            SettingsRow(
+                                icon = Icons.Default.Straighten,
+                                title = stringResource(R.string.model_detail_context_length),
+                                supportingAnnotated = trained?.let {
+                                    monoFigures(stringResource(R.string.model_detail_context_trained, it), listOf(it))
+                                },
+                                trailing = { MonoText(stringResource(R.string.model_detail_context_used, groupedNumber(plannedCtx.toLong()))) },
+                            )
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Psychology,
+                                title = stringResource(R.string.model_detail_thinking),
+                                trailing = {
+                                    ValueText(
+                                        stringResource(
+                                            if (model.supportsThinking) R.string.model_detail_supported else R.string.model_detail_not_supported,
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+
+                        SectionLabel(stringResource(R.string.model_detail_section_device))
+                        SectionCard {
+                            SettingsRow(
+                                icon = Icons.Default.Memory,
+                                title = stringResource(R.string.model_detail_estimated_memory),
+                                trailing = { MonoText(formatGigabytes(compatibility.estimatedBytes)) },
+                            ) {
+                                Column {
+                                    val available = profile.availableRamBytes
+                                    TensaiProgressBar(
+                                        progress = if (available > 0) (compatibility.estimatedBytes.toFloat() / available) else 1f,
+                                        height = 4.dp,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.model_detail_ram_available, formatGigabytes(available)),
+                                        fontFamily = TensaiMono,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    )
+                                }
+                            }
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Bolt,
+                                title = stringResource(R.string.model_detail_recommended_backend),
+                                trailing = {
+                                    ValueText(
+                                        stringResource(
+                                            if (backendTag(compatibility) == ModelFilter.Vulkan) R.string.models_filter_vulkan
+                                            else R.string.models_filter_cpu,
+                                        ),
+                                    )
+                                },
+                            )
+                            RowDivider()
+                            FileLocationRow(path = model.filePath)
+                        }
+
+                        SectionLabel(stringResource(R.string.model_detail_saved_sessions))
+                        SectionCard {
+                            if (sessions != null) {
+                                SettingsRow(
+                                    icon = Icons.Default.History,
+                                    title = stringResource(R.string.model_detail_saved_sessions),
+                                    supportingAnnotated = buildAnnotatedString {
+                                        pushStyle(SpanStyle(fontFamily = TensaiMono))
+                                        append("${sessions.count} · ${formatFileSize(sessions.bytes)}")
+                                        pop()
+                                    },
+                                    trailing = {
+                                        TensaiButton(
+                                            text = stringResource(R.string.model_detail_sessions_clear),
+                                            onClick = {
+                                                // applicationScope: the delete holds the session mutex and must finish
+                                                // even if the user leaves right after tapping.
+                                                RuntimeGraph.applicationScope.launch {
+                                                    RuntimeGraph.sessionRepository.deleteForModel(modelId)
+                                                }
+                                            },
+                                            variant = TensaiButtonVariant.Text,
+                                            size = TensaiButtonSize.Sm,
+                                            contentColor = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.semantics { contentDescription = clearDescription },
+                                        )
+                                    },
+                                )
+                            } else {
+                                SettingsRow(Icons.Default.History, stringResource(R.string.model_detail_sessions_none))
+                            }
+                        }
+
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(top = 28.dp),
+                        ) {
+                            // Same selection as the card; a missing, unloaded file has only the
+                            // "Remove from library" button below.
+                            val action = modelAction(isLoaded, exists, wontFit)
+                            if (action != ModelAction.Remove) {
+                                ModelActionButton(
+                                    action = action,
+                                    onLoad = { onLoadClick(model.id) },
+                                    onUnload = {
+                                        // applicationScope like the library and the notification:
+                                        // the unload may save a session first and must outlive this screen.
+                                        RuntimeGraph.applicationScope.launch {
+                                            unloadResidentModel(RuntimeGraph.inferenceQueue)
+                                        }
+                                    },
+                                    onRemove = {},
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            TensaiButton(
+                                text = stringResource(if (exists) R.string.model_delete else R.string.model_detail_remove_from_library),
+                                onClick = {
+                                    // A missing file has nothing left to lose: no confirmation.
+                                    if (exists) {
+                                        showDeleteConfirm = true
+                                    } else {
+                                        scope.launch { if (removeModel(model.displayName)) onDeleted() }
+                                    }
+                                },
+                                variant = TensaiButtonVariant.Text,
+                                enabled = !isLoaded,
+                                contentColor = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            if (isLoaded) {
+                                Text(
+                                    text = stringResource(R.string.model_detail_unload_first),
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+
+                    if (showDeleteConfirm) {
+                        DeleteModelDialog(
+                            modelName = model.displayName,
+                            onCancel = { showDeleteConfirm = false },
+                            onConfirm = {
+                                showDeleteConfirm = false
+                                scope.launch { if (removeModel(model.displayName)) onDeleted() }
+                            },
+                        )
+                    }
                 }
             }
+        }
+
+        importFailure?.let { failure ->
+            ImportFailureDialog(
+                failure = failure,
+                onRetry = {
+                    importFailure = null
+                    importLauncher.launch(GgufMimeTypes)
+                },
+                onDismiss = { importFailure = null },
+            )
         }
 
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
+/** Error card at the top of a model whose file is gone: text and a tonal "Re-import". */
 @Composable
-private fun MetadataRow(label: String, value: String, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.align(Alignment.CenterStart),
-        )
-        Text(
-            text = value,
-            fontFamily = TensaiMono,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.align(Alignment.CenterEnd),
-        )
+private fun MissingFileCard(onReimport: () -> Unit) {
+    val error = MaterialTheme.colorScheme.error
+    Surface(
+        shape = TensaiShapes.large,
+        color = MaterialTheme.tensaiTints.error12,
+        border = BorderStroke(1.dp, error.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            Icon(Icons.Default.Error, contentDescription = null, tint = error, modifier = Modifier.size(22.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.model_detail_file_missing),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                )
+                TensaiButton(
+                    text = stringResource(R.string.model_detail_reimport),
+                    onClick = onReimport,
+                    variant = TensaiButtonVariant.Tonal,
+                    size = TensaiButtonSize.Sm,
+                    icon = Icons.Default.FolderOpen,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+        }
     }
 }
 
-/**
- * Like [MetadataRow], but stacks [value] below [label] instead of side-by-side — for values too
- * long to share a line at any reasonable width, e.g. [compatExplanation]'s sentence.
- */
+/** Path with the directory shrinking first (ellipsis) and the file name kept whole, plus a copy button. */
 @Composable
-private fun WrappingMetadataRow(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = value,
-            fontFamily = TensaiMono,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 2.dp),
-        )
+private fun FileLocationRow(path: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1400)
+            copied = false
+        }
+    }
+    val file = File(path)
+    val dir = file.parent?.let { "$it/" }.orEmpty()
+    SettingsRow(
+        icon = Icons.Default.Folder,
+        title = stringResource(R.string.model_detail_file_location),
+        trailing = {
+            IconButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(path))
+                    copied = true
+                },
+            ) {
+                Icon(
+                    imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                    contentDescription = stringResource(if (copied) R.string.model_detail_path_copied else R.string.model_detail_copy_path),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = dir,
+                fontFamily = TensaiMono,
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(
+                text = file.name,
+                fontFamily = TensaiMono,
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
+
+/** 32768 -> "32,768", fixed to US grouping like every other mono figure on these screens. */
+private fun groupedNumber(value: Long): String = String.format(Locale.US, "%,d", value)

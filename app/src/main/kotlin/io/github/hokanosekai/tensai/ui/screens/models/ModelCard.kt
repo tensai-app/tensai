@@ -1,202 +1,365 @@
 package io.github.hokanosekai.tensai.ui.screens.models
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.Eject
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
-import io.github.hokanosekai.tensai.ui.theme.TensaiMono
+import io.github.hokanosekai.tensai.ui.components.TensaiBadge
+import io.github.hokanosekai.tensai.ui.components.TensaiButton
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
+import io.github.hokanosekai.tensai.ui.components.TensaiMonoBadge
+import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
-import java.io.File
 
 /**
- * Card for a single imported model — name, params, quant/size badges, RAM-fit dot, and a
- * full-width "Load model" action. Bordered in primary + a "loaded" chip when [isLoaded].
+ * Card for a single imported model: name, params, status top-right, badges, and one full-width
+ * action chosen by [modelAction]. Bordered in primary and badged "Loaded" when [isLoaded].
  *
- * If [model]'s file no longer exists on disk (its DB row outlived the file — e.g. storage was
- * wiped outside the app), [CompatIndicator] is replaced by [MissingFileBadge] and the "Load
- * model" action is replaced by "Remove", since there's nothing left to load (or by "Unload" when
- * the model is still resident, TEN-107: it cannot be removed until released). The delete icon
- * (top-right) always fires [onDeleteClick] with the file's current existence, letting the caller
- * decide whether a confirmation is warranted — see `ModelsScreen`'s handling of it.
+ * - normal: tonal "Load model"
+ * - loaded: outlined "Unload"
+ * - won't fit (and not loaded): a "Needs X, phone has Y" line and an outlined "Load anyway". Not
+ *   disabled, the estimate is an estimate; `LoadingScreen` asks again before it really loads
+ * - file missing ([fileExists] false): error dot and label instead of the verdict, no backend
+ *   badge, error-tonal "Unload" (still resident, TEN-107) or "Remove"
  *
- * A [Verdict.WontFit] model gets the third treatment (TEN-39): the red dot keeps its label, the
- * figures behind it are spelled out underneath ("needs ~6.2 GB, your phone has 8.0 GB" — from
- * [compatExplanation], the one place those numbers become words), and the filled "Load model"
- * button steps down to a quiet text action. Not disabled: the estimate is an estimate, and the
- * user is allowed to disagree with it. Tapping it still lands on `LoadingScreen`'s own
- * [io.github.hokanosekai.tensai.ui.screens.loading.LoadUiState.Blocked] confirmation, which is
- * deliberate — the card only declines to *recommend* the load, the dialog is what actually asks.
+ * The overflow menu (details, delete) replaces the old trash icon. [onDeleteClick] gets the file's
+ * current existence so the caller can decide whether a confirmation is warranted.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelCard(
     model: ModelEntity,
+    fileExists: Boolean,
+    compatibility: Compatibility?,
     isLoaded: Boolean,
     onClick: () -> Unit,
     onLoadClick: () -> Unit,
     onDeleteClick: (fileExists: Boolean) -> Unit,
     onUnloadClick: () -> Unit,
+    onDetailsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val fileExists = rememberFileExists(model.filePath)
-    // One check per card, shared by the badge row and the action below it — the two must never
-    // reach different conclusions about the same model.
-    val compatibility = if (fileExists) modelCompatibility(model) else null
+    // No ripple on a card this big: a press just settles it to 0.99, like the kit's ModelCard.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val reducedMotion = rememberReducedMotion()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.99f else 1f,
+        animationSpec = if (reducedMotion) snap() else spring(),
+        label = "modelCardScale",
+    )
+    val openDetails = stringResource(R.string.model_open_details)
+    val wontFit = compatibility?.verdict == Verdict.WontFit && !isLoaded
     Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(TensaiShapes.large)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClickLabel = openDetails,
+                role = Role.Button,
+                onClick = onClick,
+            ),
         shape = TensaiShapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = if (isLoaded) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, if (isLoaded) MaterialTheme.colorScheme.primary else MaterialTheme.tensaiTints.outline),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = model.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                if (isLoaded) {
-                    Surface(shape = TensaiShapes.extraLarge, color = MaterialTheme.tensaiTints.primary12) {
-                        Text(
-                            text = stringResource(R.string.model_loaded_badge),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                    }
-                }
-                IconButton(onClick = { onDeleteClick(fileExists) }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.model_delete_named, model.displayName),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = model.displayName,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 22.sp,
+                    )
+                    Text(
+                        text = formatParamCount(model.paramCount),
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
-            }
-
-            Text(
-                text = formatParamCount(model.paramCount),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 10.dp),
-            ) {
-                MonoBadge(model.quantLabel)
-                MonoBadge(formatFileSize(model.sizeBytes))
-                if (compatibility != null) CompatIndicator(compatibility) else MissingFileBadge()
-            }
-
-            if (compatibility?.verdict == Verdict.WontFit) {
-                Text(
-                    text = compatExplanation(compatibility),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp),
+                ModelStatus(compatibility, modifier = Modifier.padding(top = 2.dp).widthIn(max = 140.dp))
+                ModelOverflowMenu(
+                    modelName = model.displayName,
+                    onDetails = onDetailsClick,
+                    onDelete = { onDeleteClick(fileExists) },
                 )
-                TextButton(
-                    onClick = onLoadClick,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-                    modifier = Modifier.padding(top = 4.dp),
-                ) {
-                    Text(stringResource(R.string.model_compat_load_anyway))
-                }
-            } else if (fileExists) {
-                Button(onClick = onLoadClick, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                    Text(stringResource(R.string.model_load))
-                }
-            } else {
-                val unload = missingFileAction(isLoaded) == MissingFileAction.Unload
-                Button(
-                    onClick = { if (unload) onUnloadClick() else onDeleteClick(false) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.tensaiTints.error12,
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                ) {
-                    Text(stringResource(if (unload) R.string.model_unload else R.string.model_remove))
-                }
             }
+
+            ModelBadges(model, compatibility, isLoaded, modifier = Modifier.padding(top = 12.dp))
+
+            if (wontFit && compatibility != null) {
+                WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
+            }
+
+            ModelActionButton(
+                action = modelAction(isLoaded, fileExists, wontFit),
+                onLoad = onLoadClick,
+                onUnload = onUnloadClick,
+                onRemove = { onDeleteClick(false) },
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            )
         }
     }
 }
 
-/** Dot + label shown instead of [CompatIndicator] when a model's file is gone — see [ModelCard]. */
+/** Header status slot: the verdict, or "File missing" in error color when there is no verdict. */
 @Composable
-private fun MissingFileBadge(modifier: Modifier = Modifier) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-        Box(modifier = Modifier.size(8.dp).background(MaterialTheme.colorScheme.error, CircleShape))
-        Text(
-            text = stringResource(R.string.model_file_missing),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+internal fun ModelStatus(compatibility: Compatibility?, modifier: Modifier = Modifier, fontSize: Float = 12f) {
+    if (compatibility != null) {
+        StatusIndicator(
+            color = verdictColor(compatibility.verdict),
+            label = compatLabel(compatibility.verdict),
+            modifier = modifier,
+            fontSize = fontSize,
+        )
+    } else {
+        StatusIndicator(
+            color = MaterialTheme.colorScheme.error,
+            label = stringResource(R.string.model_file_missing),
+            labelColor = MaterialTheme.colorScheme.error,
+            modifier = modifier,
+            fontSize = fontSize,
         )
     }
 }
 
-/**
- * Whether [filePath] exists on disk. A single `stat()` call, same "cheap enough for a
- * composable" bar as [modelCompatibility]'s `ActivityManager` query below — not worth a
- * dispatcher hop. Recomputed whenever [filePath] changes, e.g. this composable being reused for
- * a different [ModelEntity] after the list reorders.
- */
-// The body below does assign `value` directly — this suppresses a compose-runtime lint false
-// positive (ProduceStateDoesNotAssignValue can't see the assignment under Kotlin 2.0's K2 UAST
-// in this AGP/lint version) rather than a real bug.
-@Suppress("ProduceStateDoesNotAssignValue")
+/** "Loaded" first, then quant, size, and the recommended backend (none without a verdict). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun rememberFileExists(filePath: String): Boolean {
-    val exists by produceState(initialValue = true, filePath) {
-        value = File(filePath).exists()
+internal fun ModelBadges(
+    model: ModelEntity,
+    compatibility: Compatibility?,
+    isLoaded: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier,
+    ) {
+        if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
+        TensaiMonoBadge(model.quantLabel)
+        TensaiMonoBadge(formatFileSize(model.sizeBytes))
+        when (backendTag(compatibility)) {
+            ModelFilter.Vulkan -> TensaiBadge(stringResource(R.string.models_filter_vulkan), icon = Icons.Default.Bolt)
+            ModelFilter.Cpu -> TensaiBadge(stringResource(R.string.models_filter_cpu), icon = Icons.Default.Memory)
+            else -> Unit
+        }
     }
-    return exists
 }
 
+/**
+ * "Needs X, phone has Y" under the badges of a model that won't fit, figures in mono. Both come
+ * off the [Compatibility] that produced the verdict (the total RAM, not the free RAM: that is what
+ * the verdict is measured against, so "free" would misreport it).
+ */
 @Composable
-private fun MonoBadge(text: String, modifier: Modifier = Modifier) {
-    Surface(shape = TensaiShapes.small, color = MaterialTheme.colorScheme.surface, modifier = modifier) {
+internal fun WontFitLine(compatibility: Compatibility, modifier: Modifier = Modifier) {
+    val needs = formatGigabytes(compatibility.estimatedBytes)
+    val has = formatGigabytes(compatibility.deviceRamBytes)
+    Text(
+        text = monoFigures(stringResource(R.string.model_compat_needs, needs, has), listOf(needs, has)),
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier,
+    )
+}
+
+/** The full-width button for a [ModelAction]. */
+@Composable
+internal fun ModelActionButton(
+    action: ModelAction,
+    onLoad: () -> Unit,
+    onUnload: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val error = MaterialTheme.colorScheme.error
+    val errorTint = MaterialTheme.tensaiTints.error12
+    when (action) {
+        ModelAction.Load -> TensaiButton(
+            text = stringResource(R.string.model_load),
+            onClick = onLoad,
+            variant = TensaiButtonVariant.Tonal,
+            icon = Icons.Default.PlayArrow,
+            modifier = modifier,
+        )
+        ModelAction.LoadAnyway -> TensaiButton(
+            text = stringResource(R.string.model_compat_load_anyway),
+            onClick = onLoad,
+            variant = TensaiButtonVariant.Outlined,
+            icon = Icons.Default.PlayArrow,
+            modifier = modifier,
+        )
+        ModelAction.Unload -> TensaiButton(
+            text = stringResource(R.string.model_unload),
+            onClick = onUnload,
+            variant = TensaiButtonVariant.Outlined,
+            icon = Icons.Default.Eject,
+            modifier = modifier,
+        )
+        ModelAction.UnloadMissing -> TensaiButton(
+            text = stringResource(R.string.model_unload),
+            onClick = onUnload,
+            variant = TensaiButtonVariant.Tonal,
+            icon = Icons.Default.Eject,
+            containerColor = errorTint,
+            contentColor = error,
+            modifier = modifier,
+        )
+        ModelAction.Remove -> TensaiButton(
+            text = stringResource(R.string.model_remove),
+            onClick = onRemove,
+            variant = TensaiButtonVariant.Tonal,
+            icon = Icons.Default.Delete,
+            containerColor = errorTint,
+            contentColor = error,
+            modifier = modifier,
+        )
+    }
+}
+
+/** more_vert trigger (48dp target) and its menu: surface, hairline, radius 16, "Model details" / "Delete model". */
+@Composable
+private fun ModelOverflowMenu(modelName: String, onDetails: () -> Unit, onDelete: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.size(48.dp)) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = stringResource(R.string.model_options),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            shape = TensaiShapes.medium,
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+            border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outline),
+            modifier = Modifier.widthIn(min = 196.dp),
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.model_details_menu), fontSize = 14.5.sp, fontWeight = FontWeight.Medium) },
+                leadingIcon = {
+                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp))
+                },
+                onClick = {
+                    open = false
+                    onDetails()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(R.string.model_delete),
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = {
+                    open = false
+                    onDelete()
+                },
+            )
+        }
+    }
+}
+
+/** The header's top-right slot: 9dp dot + medium label, shrinkable so the name keeps room. */
+@Composable
+internal fun StatusIndicator(
+    color: Color,
+    label: String,
+    modifier: Modifier = Modifier,
+    labelColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    fontSize: Float = 12f,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
+        Box(modifier = Modifier.size(9.dp).background(color, CircleShape))
         Text(
-            text = text,
-            fontFamily = TensaiMono,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            text = label,
+            fontSize = fontSize.sp,
+            fontWeight = FontWeight.Medium,
+            color = labelColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }
@@ -205,27 +368,13 @@ private fun MonoBadge(text: String, modifier: Modifier = Modifier) {
  * Dot + short label for a [CompatibilityChecker] verdict on this device.
  *
  * Takes the [Compatibility] rather than the model it came from (TEN-39): callers that also show
- * the explanation next to it — [ModelCard], the onboarding's import step — would otherwise run the
+ * the explanation next to it, [ModelCard] and the onboarding's import step, would otherwise run the
  * check twice against a [io.github.hokanosekai.tensai.compat.DeviceProfile] read at two different
  * instants, and `availableRamBytes` moves between them. One check, one verdict, one sentence.
  */
 @Composable
 internal fun CompatIndicator(compatibility: Compatibility, modifier: Modifier = Modifier) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-        CompatDot(compatibility.verdict)
-        Text(
-            text = compatLabel(compatibility.verdict),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/** Small colored dot for a [Verdict] — [tensaiColors.success]/[tensaiColors.warning]/error. */
-@Composable
-internal fun CompatDot(verdict: Verdict, modifier: Modifier = Modifier) {
-    val color = verdictColor(verdict)
-    Box(modifier = modifier.size(8.dp).background(color, CircleShape))
+    StatusIndicator(verdictColor(compatibility.verdict), compatLabel(compatibility.verdict), modifier)
 }
 
 @Composable
@@ -237,9 +386,10 @@ internal fun verdictColor(verdict: Verdict): Color = when (verdict) {
 
 /**
  * [CompatibilityChecker.check] against the current [io.github.hokanosekai.tensai.compat.DeviceProfile].
- * Deliberately not `remember`-ed: the device's RAM fits changes between recompositions (other
- * apps, GC, …) and the check itself is cheap (an `ActivityManager` query plus arithmetic), so it's
- * recomputed on every recomposition rather than risk showing a stale verdict.
+ * Deliberately not `remember`-ed: free RAM changes between recompositions and the check is cheap, so
+ * the single-model screen (onboarding) recomputes it rather than show a stale verdict. The Models
+ * list and the detail screen do the opposite on purpose: one verdict per model, kept until the
+ * library changes, so the filter, the card and the detail agree.
  */
 @Composable
 internal fun modelCompatibility(model: ModelEntity) =

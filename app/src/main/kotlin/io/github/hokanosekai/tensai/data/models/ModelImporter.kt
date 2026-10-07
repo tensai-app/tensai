@@ -7,9 +7,13 @@ import java.io.InputStream
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * The half of [ModelRepository.importModel] that starts once the source `Uri` has been resolved
@@ -32,7 +36,10 @@ internal class ModelImporter(
     private val modelDao: ModelDao,
     private val models: Flow<List<ModelEntity>>,
     private val readMetadata: suspend (path: String) -> GgufInfo,
+    private val fileExists: (path: String) -> Boolean = { File(it).exists() },
 ) {
+    private val commitMutex = Mutex()
+
 
     /**
      * Copies the source into [modelsDir] and persists a [ModelEntity] for it.
@@ -55,9 +62,12 @@ internal class ModelImporter(
         openSource: () -> InputStream,
         onProgress: (Float) -> Unit,
     ): ModelEntity {
+        var relink: ModelEntity? = null
         if (sourceSize != null) {
-            if (isDuplicate(sourceName, sourceSize)) {
-                throw DuplicateModelException(sourceName)
+            when (val match = match(sourceName, sourceSize)) {
+                is Match.Duplicate -> throw DuplicateModelException(sourceName)
+                is Match.Relink -> relink = match.row
+                Match.None -> Unit
             }
             val free = freeBytes()
             if (free < sourceSize) {
@@ -78,6 +88,7 @@ internal class ModelImporter(
         // SecurityException (SAF permission revoked mid-copy) strand a multi-GB partial file with
         // no row pointing at it and no way for the user to find it (TEN-53). The catches inside
         // classify; this one cleans up, and re-throws whatever it caught untouched.
+        var committed = false
         try {
             val copiedBytes = try {
                 copyInto(destFile, sourceSize, openSource, onProgress)
@@ -88,8 +99,12 @@ internal class ModelImporter(
             }
 
             // Covers content providers that don't report a size upfront (checked pre-copy above).
-            if (sourceSize == null && isDuplicate(sourceName, copiedBytes)) {
-                throw DuplicateModelException(sourceName)
+            if (sourceSize == null) {
+                when (val match = match(sourceName, copiedBytes)) {
+                    is Match.Duplicate -> throw DuplicateModelException(sourceName)
+                    is Match.Relink -> relink = match.row
+                    Match.None -> Unit
+                }
             }
 
             val info = try {
@@ -142,16 +157,54 @@ internal class ModelImporter(
                 // straight back to the backfill on the next start.
                 kvShapeVersion = info.kvShapeVersion,
             )
-            modelDao.insert(entity)
-            return entity
+            // The commit. NonCancellable so that leaving the screen cannot land between "the row
+            // is written" and "the copy is kept": once this block starts it runs to the end, and
+            // [committed] stops the catch below from deleting a file a row now points at.
+            val stored = withContext(NonCancellable) {
+                commitMutex.withLock {
+                    // A re-import of a file whose row survived it (same name and size, file gone)
+                    // relinks: the row keeps its id, so sessions saved against it stay attached.
+                    // Re-read under the lock: two concurrent relinks of one row would otherwise
+                    // both write it and leave the loser's copy with no row. The second one finds
+                    // the first one's file on disk and is refused as the duplicate it now is.
+                    val target = relink?.let { modelDao.getById(it.id) }
+                    if (target != null && target.filePath != destFile.absolutePath && fileExists(target.filePath)) {
+                        throw DuplicateModelException(sourceName)
+                    }
+                    val toStore = if (target == null) {
+                        entity
+                    } else {
+                        entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt)
+                    }
+                    // One statement: REPLACE on the primary key (see ModelDao.insert). A failure
+                    // leaves the old row exactly as it was.
+                    modelDao.insert(toStore)
+                    committed = true
+                    toStore
+                }
+            }
+            return stored
         } catch (e: Throwable) {
-            destFile.delete()
+            if (!committed) destFile.delete()
             throw e
         }
     }
 
-    private suspend fun isDuplicate(fileName: String, sizeBytes: Long): Boolean =
-        models.first().any { it.fileName == fileName && it.sizeBytes == sizeBytes }
+    private sealed interface Match {
+        data object None : Match
+
+        /** A row with this name and size whose file is on disk: nothing to import. */
+        data object Duplicate : Match
+
+        /** A row with this name and size whose file is gone: the import re-links it. */
+        data class Relink(val row: ModelEntity) : Match
+    }
+
+    private suspend fun match(fileName: String, sizeBytes: Long): Match {
+        val same = models.first().filter { it.fileName == fileName && it.sizeBytes == sizeBytes }
+        if (same.any { fileExists(it.filePath) }) return Match.Duplicate
+        return same.firstOrNull()?.let { Match.Relink(it) } ?: Match.None
+    }
 
     /**
      * Creates and returns an unused file under [modelsDir] — [sourceName] if it is free, then

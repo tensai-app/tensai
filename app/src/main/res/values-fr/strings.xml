@@ -148,6 +148,7 @@
 
     <!-- Navigation: drawer, top bars. -->
     <string name="nav_models">Modèles</string>
+    <string name="nav_model_details">Détails du modèle</string>
     <string name="nav_settings">Paramètres</string>
     <string name="nav_server">Serveur</string>
     <string name="drawer_new_chat">Nouvelle discussion</string>
@@ -213,15 +214,43 @@
     <!-- Models list, model card and model detail. -->
     <string name="models_import">Importer un fichier GGUF</string>
     <string name="models_empty_title">Aucun modèle pour l\'instant</string>
-    <string name="models_empty_body">Importer un fichier GGUF pour commencer.</string>
+    <string name="models_empty_body">Importer un fichier GGUF depuis ce téléphone pour discuter hors ligne.</string>
+    <string name="model_open_details">Ouvrir les détails du modèle</string>
+    <string name="model_options">Options du modèle</string>
+    <string name="model_details_menu">Détails du modèle</string>
+    <string name="models_add">Ajouter un modèle</string>
+    <string name="models_add_phone_title">Depuis ce téléphone</string>
+    <string name="models_add_phone_body">Importer un fichier GGUF</string>
+    <string name="models_add_hf_title">Depuis Hugging Face</string>
+    <string name="models_add_hf_body">Parcourir et télécharger des modèles</string>
+    <string name="models_coming_soon">Bientôt</string>
+    <string name="model_compat_needs">Nécessite %1$s, le téléphone dispose de %2$s</string>
+    <string name="models_import_progress">Copie du modèle · %1$s / %2$s</string>
+    <string name="models_import_progress_unknown">Copie du modèle</string>
+    <string name="model_detail_section_model">Modèle</string>
+    <string name="model_detail_section_device">Sur cet appareil</string>
+    <string name="model_detail_context_trained">%1$s entraînés</string>
+    <string name="model_detail_context_used">%1$s utilisés</string>
+    <string name="model_detail_ram_available">%1$s disponibles</string>
+    <string name="model_detail_file_location">Emplacement du fichier</string>
+    <string name="model_detail_copy_path">Copier le chemin</string>
+    <string name="model_detail_path_copied">Chemin copié</string>
+    <string name="model_detail_sessions_none">Aucune session enregistrée pour ce modèle</string>
+    <string name="model_detail_sessions_clear">Effacer</string>
+    <string name="model_detail_sessions_clear_desc">Effacer les sessions enregistrées</string>
+    <string name="model_detail_reimport">Réimporter</string>
+    <string name="model_detail_remove_from_library">Retirer de la bibliothèque</string>
+    <string name="model_detail_unload_first">Le décharger d\'abord</string>
+    <string name="models_filter_all">Tous</string>
+    <string name="models_filter_empty_vulkan">Aucun modèle Vulkan</string>
+    <string name="models_filter_empty_cpu">Aucun modèle CPU</string>
     <string name="model_load">Charger le modèle</string>
     <string name="model_delete">Supprimer le modèle</string>
     <string name="model_remove">Retirer</string>
     <string name="model_unload">Décharger</string>
-    <string name="model_loaded_badge">chargé</string>
+    <string name="model_loaded_badge">Chargé</string>
     <string name="model_file_missing">Fichier manquant</string>
     <string name="model_removed">Ce modèle a été supprimé.</string>
-    <string name="model_delete_named">Supprimer « %1$s »</string>
     <string name="model_delete_confirm_title">Supprimer « %1$s » ?</string>
     <string name="model_delete_confirm_body">Le fichier du modèle sera supprimé de cet appareil. Cette action est irréversible.</string>
     <string name="model_delete_confirm">Supprimer</string>
@@ -232,11 +261,6 @@
     <string name="model_detail_parameters">Paramètres</string>
     <string name="model_detail_quantization">Quantification</string>
     <string name="model_detail_context_length">Longueur de contexte</string>
-    <plurals name="model_detail_context_length_value">
-        <item quantity="one">%1$d token</item>
-        <item quantity="many">%1$d tokens</item>
-        <item quantity="other">%1$d tokens</item>
-    </plurals>
     <string name="model_detail_file_size">Taille du fichier</string>
     <string name="model_detail_thinking">Mode réflexion</string>
     <string name="model_detail_supported">Pris en charge</string>
@@ -244,7 +268,6 @@
     <string name="model_detail_recommended_backend">Backend recommandé</string>
     <string name="model_detail_estimated_memory">Mémoire estimée</string>
     <string name="model_detail_saved_sessions">Sessions enregistrées</string>
-    <string name="model_detail_coming_soon">Bientôt disponible.</string>
 
     <!-- Loading screen and its dialogs. -->
     <string name="loading_progress">chargement en mémoire · %1$s / %2$s GB</string>

@@ -56,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -545,56 +546,70 @@ private fun RowIcon(icon: ImageVector) {
  * slot. Tappable only when [onClick] is set, so read-only facts do not look interactive.
  */
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     icon: ImageVector,
     title: String,
     modifier: Modifier = Modifier,
     supporting: String? = null,
+    supportingAnnotated: AnnotatedString? = null,
     onClick: (() -> Unit)? = null,
     stateDescription: String? = null,
     trailing: (@Composable () -> Unit)? = null,
+    content: (@Composable () -> Unit)? = null,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .then(if (stateDescription != null) Modifier.semantics { this.stateDescription = stateDescription } else Modifier)
             .padding(horizontal = 16.dp, vertical = 13.dp),
     ) {
-        RowIcon(icon)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (supporting != null) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            RowIcon(icon)
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = supporting,
-                    fontSize = 12.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
+                    text = title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+                if (supporting != null) {
+                    Text(
+                        text = supporting,
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                if (supportingAnnotated != null) {
+                    Text(
+                        text = supportingAnnotated,
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+            if (trailing != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    trailing()
+                }
             }
         }
-        if (trailing != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                trailing()
-            }
-        }
+        if (content != null) Box(modifier = Modifier.padding(start = 36.dp, top = 10.dp)) { content() }
     }
 }
 
 @Composable
-private fun ValueText(text: String) {
+internal fun ValueText(text: String) {
     Text(text = text, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.End)
 }
 
 @Composable
-private fun MonoText(text: String) {
+internal fun MonoText(text: String) {
     Text(
         text = text,
         fontFamily = TensaiMono,

@@ -380,8 +380,110 @@ class ModelImporterTest {
         override fun read(): Int = throw UnsupportedOperationException("the copy reads in buffers")
     }
 
+    // ---- re-import of a missing file (TEN-122) ----
+
+    private suspend fun importMine(using: ModelImporter = importer) =
+        using.import("m.gguf", sourceSize = 64, plentyOfSpace, { ByteArrayInputStream(ByteArray(64)) }) {}
+
+    /** The row survives a re-import of its own file: same id, new path that exists. */
+    @Test
+    fun reImportingAMissingFileRelinksTheRowAndKeepsItsId() = runBlocking {
+        val first = importMine()
+        File(first.filePath).delete()
+
+        val again = importMine()
+
+        assertEquals("relink must keep the id so saved sessions stay attached", first.id, again.id)
+        assertEquals(1, dao.rows.size)
+        assertEquals(again, dao.rows.single())
+        assertTrue(File(again.filePath).exists())
+    }
+
+    /** A failed re-import changes nothing: the row is the one it was, and no copy is left. */
+    @Test
+    fun aFailedReImportLeavesTheMissingRowUntouched() = runBlocking {
+        val first = importMine()
+        File(first.filePath).delete()
+
+        try {
+            importMine(newImporter(readMetadata = { throw IOException("bad header") }))
+            fail("expected ModelMetadataException")
+        } catch (expected: ModelMetadataException) {
+            // expected
+        }
+
+        assertEquals(listOf(first), dao.rows)
+        assertEquals(emptyList<String>(), filesOnDisk())
+    }
+
+    /** A row whose file is still there keeps rejecting the same file. */
+    @Test
+    fun reImportingAPresentFileIsStillADuplicate() = runBlocking {
+        importMine()
+        try {
+            importMine()
+            fail("expected DuplicateModelException")
+        } catch (expected: DuplicateModelException) {
+            // expected
+        }
+        assertEquals(1, dao.rows.size)
+    }
+
+    /**
+     * The relink is one atomic write: if it fails, the old row is still there and the new copy is
+     * removed. (A delete-then-insert would have lost the row here.)
+     */
+    @Test
+    fun aFailedRelinkWriteKeepsTheOldRowAndRemovesTheCopy() = runBlocking {
+        val first = importMine()
+        File(first.filePath).delete()
+        dao.failNextInsert = IOException("disk full")
+
+        try {
+            importMine()
+            fail("expected the insert failure")
+        } catch (expected: IOException) {
+            // expected
+        }
+
+        assertEquals(listOf(first), dao.rows)
+        assertEquals(emptyList<String>(), filesOnDisk())
+    }
+
+    /**
+     * A competing relink of the same row commits while this one is still copying. Under the commit
+     * lock the importer re-reads the row, finds the other one's file on disk and refuses this one
+     * as the duplicate it now is, removing its copy: no file is left without a row. (Simulated
+     * from inside the source stream, which runs after the destination is reserved and before the
+     * commit, so the interleaving is exact and not left to thread timing.)
+     */
+    @Test
+    fun aRelinkThatLosesToAConcurrentOneIsRefusedAndLeavesNoOrphanFile() = runBlocking {
+        val first = importMine()
+        File(first.filePath).delete()
+        val winnerFile = File(modelsDir, "winner.gguf").apply { writeBytes(ByteArray(64)) }
+        val winnerRow = first.copy(filePath = winnerFile.absolutePath)
+
+        val source: () -> InputStream = {
+            runBlocking { dao.insert(winnerRow) }
+            ByteArrayInputStream(ByteArray(64))
+        }
+        try {
+            importer.import("m.gguf", 64, plentyOfSpace, source) {}
+            fail("expected DuplicateModelException")
+        } catch (expected: DuplicateModelException) {
+            // expected
+        }
+
+        assertEquals(listOf(winnerRow), dao.rows)
+        assertEquals(listOf("winner.gguf"), filesOnDisk())
+    }
+
     /** In-memory stand-in for Room, same idea as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeModelDao : ModelDao {
+        /** Makes the next insert throw before touching anything, like a transaction that rolled back. */
+        var failNextInsert: Throwable? = null
+
         val rows = mutableListOf<ModelEntity>()
         private val flow = MutableStateFlow<List<ModelEntity>>(emptyList())
 
@@ -402,6 +504,9 @@ class ModelImporterTest {
 
         // Synchronized because the race test really does insert from two threads at once.
         override suspend fun insert(model: ModelEntity) = synchronized(rows) {
+            failNextInsert?.let { failNextInsert = null; throw it }
+            // REPLACE on the primary key, one atomic step, like the real DAO.
+            rows.removeAll { it.id == model.id }
             rows.add(model)
             flow.value = rows.toList()
         }

@@ -51,7 +51,8 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
 
 @StringRes
 private fun detailTitleForRoute(route: String?): Int? = when {
-    route == TensaiDestination.Models.route || route?.startsWith("model/") == true -> R.string.nav_models
+    route == TensaiDestination.Models.route -> R.string.nav_models
+    route?.startsWith("model/") == true -> R.string.nav_model_details
     route == TensaiDestination.Settings.route -> R.string.nav_settings
     route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Server.route -> R.string.nav_server
@@ -170,7 +171,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                         actions = {
                             if (currentRoute == TensaiDestination.Models.route) {
                                 IconButton(onClick = { modelsImportRequests.tryEmit(Unit) }) {
-                                    Icon(imageVector = Icons.Default.Add, contentDescription = stringResource(R.string.models_import))
+                                    Icon(imageVector = Icons.Default.Add, contentDescription = stringResource(R.string.models_add))
                                 }
                             }
                         },

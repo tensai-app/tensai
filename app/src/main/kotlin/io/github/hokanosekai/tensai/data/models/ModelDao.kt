@@ -45,7 +45,14 @@ interface ModelDao {
         kvShapeVersion: Long,
     )
 
-    @Insert(onConflict = OnConflictStrategy.ABORT)
+    /**
+     * REPLACE, not ABORT: a re-import of a missing file relinks its row by inserting it again under
+     * the same id, and that has to be one statement (one transaction). A delete followed by an
+     * insert could be interrupted between the two and lose the row. Ids are UUIDs, so a fresh
+     * import never collides and behaves as before. No foreign key points at `models`, so REPLACE
+     * cannot cascade into anything.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(model: ModelEntity)
 
     @Delete

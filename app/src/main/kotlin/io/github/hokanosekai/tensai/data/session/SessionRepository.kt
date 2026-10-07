@@ -450,6 +450,21 @@ class SessionRepository(
     }
 
     /**
+     * Deletes every session saved against [modelId], rows whose file is already gone included
+     * (they are not restorable and the screen that offers this does not count them). Under
+     * [commitMutex] like every other mutation, so it cannot race a [save]. Returns how many rows
+     * went.
+     */
+    suspend fun deleteForModel(modelId: String): Int = commitMutex.withLock {
+        val rows = dao.allSessions().filter { it.modelId == modelId }
+        for (row in rows) {
+            File(row.filePath).delete()
+            dao.delete(row.conversationId)
+        }
+        rows.size
+    }
+
+    /**
      * Deletes every persisted session — every row, every file each row points at, and every
      * *orphan* state file left in the sessions directory by a save that died between its rename
      * and its DB write. Settings > Storage > Clear (TEN-38) is the only caller.

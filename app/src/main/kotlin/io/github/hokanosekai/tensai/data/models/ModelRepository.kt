@@ -206,6 +206,9 @@ class ModelRepository(
             }
         }
 
+    /** Size [uri] reports, `null` if it does not say. Off the main thread: it queries a content provider. */
+    suspend fun uriSize(uri: Uri): Long? = withContext(Dispatchers.IO) { runCatching { querySize(uri) }.getOrNull() }
+
     private fun querySize(uri: Uri): Long? = context.contentResolver
         .query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
         ?.use { cursor ->
