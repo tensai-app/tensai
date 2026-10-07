@@ -12,8 +12,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -517,6 +519,60 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
 
             awaitClose { llamaEngine.interrupt() }
         }.buffer(Channel.UNLIMITED)
+
+        /**
+         * TEN-88. [WarmUpPrompt] decides *what* to prefill; this decides where it runs: formatting,
+         * the room check and the prefill are all one `async(dispatcher)`, because each is a
+         * blocking native call that owns [dispatcher] for as long as it takes.
+         *
+         * Cancelling the caller interrupts the prefill, same mechanism as [decode]'s `awaitClose`,
+         * and then *waits for it to return*: [coroutineScope] does not complete until `work` has,
+         * so a caller that cancels and joins (the queue does, before a generation, a swap or a
+         * save) really does get the engine thread back, and never starts its own call behind a
+         * prefill that is still decoding. The `ensureActive()` before the native call is
+         * [decode]'s last-look for the same reason: `nativePrefill` clears the interrupt flag on
+         * entry, so a cancel landing during the formatting above it would be erased.
+         *
+         * [refreshKvUsedCells] runs on every way out, interrupted included: a prefill moves the
+         * cache without a single token callback to refresh it, and the published figure is what
+         * the restore gate ("is the cache empty") and the save skip ("same token count") read.
+         */
+        override suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean {
+            checkOpen()
+            return coroutineScope {
+                val work = async(dispatcher) {
+                    try {
+                        val prompt = WarmUpPrompt.build(messages) { rendered ->
+                            llamaEngine.formatChat(
+                                rendered.map { LlamaChatMessage(it.role.toLibRole(), it.content) },
+                                enableThinking,
+                            )
+                        } ?: return@async false
+                        // The same room test a decode makes (TEN-65), on the same count. A prompt
+                        // that leaves nothing to answer into is not worth caching, and the native
+                        // side would decline it anyway before touching the cache.
+                        val promptTokens = llamaEngine.tokenize(prompt).size
+                        if (!ContextBudget.hasRoom(ContextBudget.available(metadata.nCtxEffective, promptTokens))) {
+                            return@async false
+                        }
+                        ensureActive()
+                        val resident = llamaEngine.prefill(prompt)
+                        // Negative is the native side failing, not declining: a failure, not a skip.
+                        if (resident < 0) throw InferenceException("Prefill failed in the native engine (returned $resident)")
+                        resident > 0
+                    } finally {
+                        refreshKvUsedCells()
+                    }
+                }
+                try {
+                    work.await()
+                } catch (e: CancellationException) {
+                    // Repeated, not once: see [interruptUntilDone].
+                    interruptUntilDone(work) { llamaEngine.interrupt() }
+                    throw e
+                }
+            }
+        }
 
         override suspend fun tokenize(text: String): Int = onEngineThread {
             try {

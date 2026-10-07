@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.runtime
 
 import io.github.hokanosekai.tensai.data.session.SessionRestoreOutcome
 import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
+import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.InferenceEngine
@@ -12,6 +13,10 @@ import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
@@ -145,6 +151,29 @@ class GenerationStopSignal {
     }
 }
 
+/** How an [InferenceQueue.warmUp] ended. */
+enum class WarmUpOutcome {
+    /** The cache now holds the whole warm-up prompt. */
+    Warmed,
+
+    /**
+     * Nothing was done: the queue was not on the expected model, was busy, already had a warm-up
+     * running, or the engine declined (no room in the window, no prefill support, nothing to cut
+     * the prompt at).
+     */
+    Skipped,
+
+    /**
+     * The queue stopped it to make way for a generation, a load, an unload or a restore. Whatever
+     * had been decoded by then stays in the cache, as a valid prefix of the prompt the next turn
+     * will send.
+     */
+    Interrupted,
+
+    /** The engine threw. Swallowed: a warm-up is an optimisation and must never fail a turn. */
+    Failed,
+}
+
 /**
  * Single, app-wide entry point for every inference in Tensai.
  *
@@ -265,6 +294,26 @@ class InferenceQueue(private val engine: InferenceEngine) {
     private var activeGeneration: ActiveGeneration? = null
 
     /**
+     * The [warmUp] currently holding the engine, if any (TEN-88). Written only under [mutex], and
+     * only while [state] is [QueueState.ModelReady]: a warm-up is deliberately *not* a state of its
+     * own, so the notification and the chat chrome keep saying "ready" and nothing offers a stop for
+     * something the user never asked for.
+     *
+     * What keeps it out of everyone's way is that it does not hold [mutex] while it runs (it can
+     * last minutes) and so *cannot* exclude anyone by itself. Every operation that takes the engine
+     * for its own purposes looks here under the lock instead, and when it finds one, leaves the
+     * lock, cancels it and tries again: [generate],
+     * [loadModel], [unloadModel], [saveSession] and [restoreSession]. The warm-up's own cleanup
+     * clears this *inside* the job being joined, so a joiner that wakes up sees it cleared; clearing
+     * it after the join would have a retry loop spin against a job that is already complete, the
+     * shape [liveGenerationJobLocked] documents.
+     *
+     * `@Volatile` for [cancelWarmUp], which reads it without the lock like [cancelActive] does.
+     */
+    @Volatile
+    private var activeWarmUp: Job? = null
+
+    /**
      * Loads the model described by [config], implicitly unloading and
      * releasing whatever model is currently loaded first (there is never
      * more than one model resident at a time).
@@ -312,6 +361,13 @@ class InferenceQueue(private val engine: InferenceEngine) {
                         // Someone is generating right now — stop them first (see class KDoc),
                         // then retry once they've fully wound down.
                         pendingJob = liveGenerationJobLocked()
+                        null
+                    }
+                    // A warm-up is background work for a conversation the user is leaving by
+                    // asking for this load: stopped the same way, and awaited for the same reason
+                    // (the model must not be released under a prefill still decoding).
+                    activeWarmUp != null -> {
+                        pendingJob = activeWarmUp
                         null
                     }
                     else -> performLoadLocked(config)
@@ -456,6 +512,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 if (_state.value is QueueState.Generating) {
                     pendingJob = liveGenerationJobLocked()
                     false
+                } else if (activeWarmUp != null) {
+                    pendingJob = activeWarmUp
+                    false
                 } else {
                     try {
                         releaseLoadedLocked()
@@ -491,6 +550,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * or another generation is already active. This queue never queues up
      * a second generation behind the first; the caller must retry.
      *
+     * A running [warmUp] is no reason to reject: it is cancelled and awaited before the generation
+     * starts (TEN-88), and the prefix it had already decoded is reused by this one.
+     *
      * @param stopSignal marked if — and only if — [cancelActive] is what ends *this* generation,
      *   so the collector can tell a stop the user asked for from every other way its collection
      *   can end (TEN-79). Optional: a caller with nothing to record about it passes none.
@@ -506,7 +568,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         // *else* is generating must not run a cleanup that would clear that generation's job and
         // drop [state] out of `Generating` behind its back.
         var acquired = false
-        val model = mutex.withLock {
+        val model = underLockWithoutWarmUp {
             val current = _state.value
             if (current is QueueState.ModelReady) {
                 acquired = true
@@ -642,10 +704,12 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * Serialized on [mutex] like every other queue operation, so it can never race a concurrent
      * [loadModel]/[unloadModel]/[generate] — unlike [onBeforeModelSwap], which runs already inside
      * [mutex], this is meant for callers *outside* the queue and must take the lock itself.
+     *
+* **Cancels a running [warmUp] and waits for it to stop** (TEN-88), then takes the lock. The * saves that land here are `onStop` and a reply finishing in the background, the ones that * exist so the state is on disk if the process dies, and a save that waited out a warm-up * (minutes) would leave nothing written for exactly that long. Saving mid-warm-up instead would * queue the dump behind the prefill on the engine's single thread *while holding [mutex]*, the * thing the mid-generation decline above exists to avoid. What is saved is whatever the cache * holds when the warm-up stopped: a valid prefix of the next prompt, `embd` already trimmed to * `n_past`, so the token count written is true and a restore resumes from it. The stop is * prompt, the engine interrupts repeatedly (see `interruptUntilDone`).
      */
-    suspend fun saveSession(path: String): SessionSaveOutcome = mutex.withLock {
-        if (_state.value !is QueueState.ModelReady) return@withLock SessionSaveOutcome.NotAttempted
-        val llama = engine as? LlamaKtEngine ?: return@withLock SessionSaveOutcome.NotAttempted
+    suspend fun saveSession(path: String): SessionSaveOutcome = underLockWithoutWarmUp {
+        if (_state.value !is QueueState.ModelReady) return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
+        val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
         try {
             SessionSaveOutcome.Wrote(llama.saveSession(path))
         } catch (e: CancellationException) {
@@ -686,20 +750,23 @@ class InferenceQueue(private val engine: InferenceEngine) {
      *
      * Serialized on [mutex] like every other queue operation, so it can't race a concurrent
      * [loadModel]/[unloadModel]/[generate] — must be called before [generate].
+     *
+     * Cancels a running [warmUp] first (TEN-88) and waits for it to wind down: a restore replaces
+     * the whole cache, so there is nothing of the warm-up left worth finishing.
      */
     suspend fun restoreSession(
         path: String,
         expectedModel: LoadedModelInfo? = null,
-    ): SessionRestoreOutcome = mutex.withLock {
+    ): SessionRestoreOutcome = underLockWithoutWarmUp {
         val current = _state.value
-        if (current !is QueueState.ModelReady) return@withLock SessionRestoreOutcome.NotAttempted
+        if (current !is QueueState.ModelReady) return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         // The revalidation TEN-81 asks for, and it has to be here rather than at the caller: this
         // is the only place "the model is X" and "the engine is about to be handed this file" are
         // true at the same instant, because nothing else can take [mutex] in between.
         if (expectedModel != null && current.info != expectedModel) {
-            return@withLock SessionRestoreOutcome.NotAttempted
+            return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         }
-        val llama = engine as? LlamaKtEngine ?: return@withLock SessionRestoreOutcome.NotAttempted
+        val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         try {
             if (llama.loadSession(path)) SessionRestoreOutcome.Restored else SessionRestoreOutcome.EngineRefused
         } catch (e: CancellationException) {
@@ -712,4 +779,101 @@ class InferenceQueue(private val engine: InferenceEngine) {
             SessionRestoreOutcome.EngineRefused
         }
     }
+
+    /**
+     * Prefills the loaded model's KV cache with the start of the prompt the *next* turn of
+     * [messages] will send, without generating anything (TEN-88), see
+     * [io.github.hokanosekai.tensai.engine.WarmUpPrompt] for what that is and why a reply is worth
+     * it: after a long reply the cache and the next prompt disagree from the reply's first token
+     * on, and the whole reply would otherwise be re-decoded before the next turn's first token.
+     * Meant to be called right after a reply ends, while the user reads, for the conversation whose
+     * cache is resident.
+     *
+     * **Background work that yields to everything.** A warm-up can run for minutes and holds
+     * neither [mutex] nor a [QueueState] of its own, so it shows up nowhere: the notification and
+     * the chat keep saying "ready", and sending is not disabled. Instead, every operation that
+     * wants the engine cancels it (see [activeWarmUp]), and one that cannot start a warm-up never
+     * starts one, it is skipped unless [state] is [QueueState.ModelReady] on [expectedModel] at
+     * the moment it takes the lock, which is also how it loses a race against a [generate] that
+     * got there first. Only one runs at a time. Whatever it had decoded when it was stopped stays
+     * in the cache (see [WarmUpOutcome.Interrupted]), which is what makes cancelling cheap: the
+     * generation that cancelled it reuses that prefix on its own.
+     *
+     * Cancelling the *caller* throws as usual. The queue stopping it does not: it ends in
+     * [WarmUpOutcome.Interrupted] and the caller is left running, because "something more important
+     * came along" is the normal ending of this call, not an error.
+     *
+     * @param expectedModel the model the reply that just ended was generated on (TEN-81's check,
+     *   for the same reason: the caller decided to warm up outside the lock). A different or absent
+     *   one means the cache is not the conversation's any more.
+     */
+    suspend fun warmUp(
+        messages: List<ChatMessage>,
+        enableThinking: Boolean,
+        expectedModel: LoadedModelInfo,
+    ): WarmUpOutcome = coroutineScope {
+        // Its own job, not the caller's: cancelling this is the queue's call and must not end
+        // whatever the caller is running.
+        val work = async {
+            val model = mutex.withLock {
+                val current = _state.value
+                if (current !is QueueState.ModelReady || current.info != expectedModel || activeWarmUp != null) {
+                    return@withLock null
+                }
+                activeWarmUp = currentCoroutineContext().job
+                loadedModel
+            } ?: return@async WarmUpOutcome.Skipped
+            try {
+                if (model.warmUp(messages, enableThinking)) WarmUpOutcome.Warmed else WarmUpOutcome.Skipped
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                WarmUpOutcome.Failed
+            } finally {
+                // Inside the job being joined, and uncancellable: see [activeWarmUp].
+                withContext(NonCancellable) { mutex.withLock { activeWarmUp = null } }
+            }
+        }
+        try {
+            work.await()
+        } catch (e: CancellationException) {
+            // Either the caller is being cancelled (rethrown), or the queue cancelled `work` to
+            // make way for something else.
+            coroutineContext.ensureActive()
+            WarmUpOutcome.Interrupted
+        }
+    }
+
+    /**
+     * Stops the running [warmUp], if any. Does not wait: collect [warmUp] to completion for that.
+     * For a caller that knows the engine is about to be wanted before the queue finds out ,
+     * `ChatViewModel` calls it before saving the outgoing conversation of a switch, and when the
+     * screen is left. A no-op when nothing is warming up.
+     */
+    fun cancelWarmUp() {
+        activeWarmUp?.cancel()
+    }
+
+    /**
+     * Runs [block] under [mutex] once no [warmUp] is running, cancelling one first and waiting for it
+     * to stop. The lock is released while waiting: the warm-up's own cleanup takes it,
+     * and joining under it would be a deadlock. Looping rather than "cancel, then lock" because a
+     * warm-up can register itself between the join and the lock; registration and this check are
+     * both under [mutex], which is what settles it.
+     */
+    private suspend fun <T> underLockWithoutWarmUp(block: suspend () -> T): T {
+        while (true) {
+            var pending: Job? = null
+            val ran = mutex.withLock {
+                pending = activeWarmUp
+                if (pending == null) Ran(block()) else null
+            }
+            if (ran != null) return ran.value
+            pending?.cancel()
+            pending?.join()
+        }
+    }
+
+    /** Distinguishes "[underLockWithoutWarmUp]'s block ran and returned `null`" from "it did not run". */
+    private class Ran<T>(val value: T)
 }

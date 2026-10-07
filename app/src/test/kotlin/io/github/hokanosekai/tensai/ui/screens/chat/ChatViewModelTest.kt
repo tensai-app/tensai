@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.data.session.SessionRepository
+import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
@@ -25,12 +26,15 @@ import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
+import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModelId
 import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
@@ -103,6 +107,8 @@ class ChatViewModelTest {
         // ActiveSessionTracker is process-wide, mutable state — clear it so no leftover value from
         // a previous test (or from ChatViewModel's real usage elsewhere) leaks into this one.
         ActiveSessionTracker.clear()
+        // Process-wide too, and a warm-up (TEN-88) only starts with the user in the app.
+        AppForegroundTracker.onActivityStarted()
     }
 
     @After
@@ -113,6 +119,7 @@ class ChatViewModelTest {
         // — see [awaitGeneration].
         viewModelJob.cancel()
         storageRoot.deleteRecursively()
+        AppForegroundTracker.onActivityStopped()
         ActiveSessionTracker.clear()
     }
 
@@ -189,7 +196,13 @@ class ChatViewModelTest {
      * [QueueState.ModelReady] — and every assertion that follows one can be a single read.
      */
     private suspend fun awaitGeneration() {
-        viewModelJob.children.toList().forEach { it.join() }
+        // Until none are left, not one snapshot: a long reply launches its warm-up (TEN-88) as a new child
+        // from inside the generation being joined, after the snapshot was taken.
+        while (true) {
+            val running = viewModelJob.children.toList()
+            if (running.isEmpty()) break
+            running.forEach { it.join() }
+        }
     }
 
     /**
@@ -1192,6 +1205,180 @@ class ChatViewModelTest {
         assertEquals("third", awaitAssistantReply(id, expectedCount = 4)[2].content)
     }
 
+    /** A reply that ended with [stopReason] after [tokens] tokens, as the engine would report it. */
+    private fun finishedReply(tokens: Int, stopReason: StopReason = StopReason.Complete) = listOf(
+        DecodeEvent.Token("a long answer"),
+        DecodeEvent.Done(DecodeStats(tokensGenerated = tokens, tokPerSec = 1f, ttftMs = 1L, stopReason = stopReason)),
+    )
+
+    /**
+     * TEN-88: the trigger. A reply that ended on its own and reached the threshold is followed by a
+     * warm-up of the conversation that produced it, built from the history *including* that reply
+     * (the next prompt carries it) with the conversation's own thinking setting.
+     */
+    @Test
+    fun aLongReplyThatEndedNormallyIsFollowedByAWarmUpOfItsConversation() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        val conversation = chatRepository.createConversation(modelId = null, systemPrompt = "be brief", enableThinking = false)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        assertEquals("exactly one warm-up", 1, engine.warmUps.size)
+        val (messages, enableThinking) = engine.warmUps.single()
+        assertEquals(
+            "system prompt, the user turn, and the reply that just finished, in the order the next prompt carries them",
+            listOf(MessageRole.System, MessageRole.User, MessageRole.Assistant),
+            messages.map { it.role },
+        )
+        assertEquals("a long answer", messages.last().content)
+        assertFalse("the conversation's thinking setting, which is the next turn's", enableThinking)
+    }
+
+    @Test
+    fun aReplyThatEndsWhileTheAppIsInTheBackgroundIsNotWarmedUp() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        val conversation = chatRepository.createConversation(modelId = null)
+
+        val viewModel = newViewModel(conversation)
+        AppForegroundTracker.onActivityStopped()
+        viewModel.send("hi")
+        awaitGeneration()
+
+        assertTrue(engine.warmUps.isEmpty())
+    }
+
+    @Test
+    fun aReplyShortOfTheThresholdIsNotWarmedUp() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(299)
+        val conversation = chatRepository.createConversation(modelId = null)
+
+        newViewModel(conversation).send("hi")
+        awaitGeneration()
+
+        assertTrue(engine.warmUps.isEmpty())
+    }
+
+    @Test
+    fun aReplyCutAtItsTokenCapIsWarmedUpButOtherBudgetEndingsAreNot() = runBlocking {
+        loadFakeModel()
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens, StopReason.TokenBudget)
+        viewModel.send("one")
+        awaitGeneration()
+        assertEquals("TokenBudget is a normal ending for this", 1, engine.warmUps.size)
+
+        for (reason in listOf(
+            StopReason.ResponseBudgetExhausted,
+            StopReason.ReasoningBudgetExhausted,
+            StopReason.ContextBudgetClipped,
+        )) {
+            engine.scriptedEvents = finishedReply(WarmUpMinTokens, reason)
+            viewModel.send("again")
+            awaitGeneration()
+        }
+        assertEquals("none of the others add one", 1, engine.warmUps.size)
+    }
+
+    @Test
+    fun aFailedOrStoppedGenerationIsNotWarmedUp() = runBlocking {
+        loadFakeModel()
+        val failing = chatRepository.createConversation(modelId = null)
+        engine.scriptedEvents = listOf(DecodeEvent.Token("half"), DecodeEvent.Error(InferenceException("boom")))
+        newViewModel(failing).send("fails")
+        awaitGeneration()
+
+        // Its own conversation: [awaitStreamingReply] would otherwise return on the failed reply's
+        // text, before this one has started.
+        val stopped = chatRepository.createConversation(modelId = null)
+        engine.scriptedEvents = listOf(DecodeEvent.Token("half an answer"))
+        engine.hangBeforeTerminal = true
+        val viewModel = newViewModel(stopped)
+        viewModel.send("stopped")
+        awaitStreamingReply(stopped)
+        viewModel.stop()
+        awaitGeneration()
+
+        assertTrue(engine.warmUps.isEmpty())
+    }
+
+    /**
+     * The warm-up is background work, so it must not stand between the user and their next message:
+     * sending while it runs interrupts it, and the reply is generated as usual.
+     */
+    @Test
+    fun sendingWhileTheWarmUpRunsInterruptsItAndGeneratesNormally() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        engine.warmUpHangs = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("first")
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        assertTrue(
+            "a warm-up is not a generation: nothing may show or offer to stop one",
+            inferenceQueue.state.value is QueueState.ModelReady,
+        )
+
+        engine.warmUpHangs = false
+        viewModel.send("second")
+        withTimeout(5_000) { awaitGeneration() }
+
+        assertEquals("the warm-up was interrupted by the send", 1, engine.warmUpInterrupted)
+        val messages = chatRepository.observeMessages(conversation).first()
+        assertEquals(listOf("first", "a long answer", "second", "a long answer"), messages.map { it.content })
+    }
+
+    @Test
+    fun leavingTheConversationInterruptsItsWarmUp() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        engine.warmUpHangs = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        viewModel.leave()
+        withTimeout(5_000) { awaitGeneration() }
+
+        assertEquals(1, engine.warmUpInterrupted)
+    }
+
+    @Test
+    fun aModelSwapInterruptsTheWarmUpAndCompletes() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        engine.warmUpHangs = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        withTimeout(5_000) { inferenceQueue.unloadModel() }
+        withTimeout(5_000) { awaitGeneration() }
+
+        assertEquals(1, engine.warmUpInterrupted)
+        assertTrue(inferenceQueue.state.value is QueueState.Idle)
+    }
+
+    @Test
+    fun theWarmUpThresholdAndStopReasonsAreWhatTheTicketSays() {
+        fun stats(tokens: Int, reason: StopReason) = DecodeStats(tokens, 1f, 1L, reason)
+        assertEquals(300, WarmUpMinTokens)
+        assertTrue(worthWarmingUp(stats(300, StopReason.Complete)))
+        assertTrue(worthWarmingUp(stats(2048, StopReason.TokenBudget)))
+        assertFalse(worthWarmingUp(stats(299, StopReason.Complete)))
+        assertFalse(worthWarmingUp(stats(2048, StopReason.ContextBudgetExhausted)))
+    }
+
     /** In-memory [ChatDao] fake — no Room/Android needed, same convention as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeChatDao : ChatDao {
         private val conversations = mutableMapOf<String, ConversationEntity>()
@@ -1378,6 +1565,19 @@ class ChatViewModelTest {
         /** The last [DecodeRequest] handed to [LoadedModel.decode] — TEN-35 asserts on its sampling. */
         var lastRequest: DecodeRequest? = null
 
+        /** TEN-88: every [LoadedModel.warmUp] the engine was asked for, with its thinking flag. */
+        val warmUps = mutableListOf<Pair<List<ChatMessage>, Boolean>>()
+
+        /** Completed when a warm-up is inside the engine; reassign for each wait. */
+        var warmUpEntered = CompletableDeferred<Unit>()
+
+        /** Holds a warm-up open until it is cancelled, the only way to interrupt one that is running. */
+        var warmUpHangs = false
+
+        /** How many warm-ups ended by being cancelled while they ran. */
+        var warmUpInterrupted = 0
+            private set
+
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             // A load gets a fresh llama.cpp context, so the cache it reports starts empty — which
             // is what makes `ChatViewModel`'s cold-start restore path reachable after a model swap.
@@ -1403,6 +1603,20 @@ class ChatViewModelTest {
                 if (!endsOnItsOwnTerminal) {
                     emit(DecodeEvent.Done(DecodeStats(tokensGenerated = TOKENS_PER_TURN, tokPerSec = 1f, ttftMs = 1L)))
                 }
+            }
+
+            override suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean {
+                warmUps += messages to enableThinking
+                warmUpEntered.complete(Unit)
+                if (warmUpHangs) {
+                    try {
+                        awaitCancellation()
+                    } catch (e: CancellationException) {
+                        warmUpInterrupted++
+                        throw e
+                    }
+                }
+                return true
             }
 
             override suspend fun tokenize(text: String): Int = 0

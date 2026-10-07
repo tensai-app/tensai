@@ -434,6 +434,22 @@ interface LoadedModel {
      */
     suspend fun decode(request: DecodeRequest): Flow<DecodeEvent>
 
+    /**
+     * Prefill the KV cache with the start of the prompt the *next* turn of [messages] will send,
+     * without generating anything (TEN-88), see [WarmUpPrompt] for what is prefilled and why.
+     * Best-effort and purely an optimisation: an engine with no way to prefill keeps this default
+     * and the next turn simply pays for it itself.
+     *
+     * Cancellable like [decode]: cancelling the caller interrupts the prefill, suspends until the
+     * engine is actually back, and keeps what was decoded, so the next turn resumes from there.
+     *
+     * @param messages the conversation ending on the assistant reply that just finished.
+     * @param enableThinking the setting the next turn will render its prompt with.
+     * @return `true` if the cache now holds the whole warm-up prompt, `false` if nothing was done
+     *   or it could not be completed (it does not fit the context window, nothing to cut at).
+     */
+    suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean = false
+
     /** Tokenize [text] with this model's tokenizer and return the token count. */
     suspend fun tokenize(text: String): Int
 

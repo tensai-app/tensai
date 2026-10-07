@@ -32,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -81,6 +82,10 @@ fun ChatScreen(
     // back, never a reason to build another one.
     var createdConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     val viewModel = remember(conversationId) { ChatViewModel(conversationId ?: createdConversationId) }
+    // Leaving this conversation (another one, a new chat, Home, Models) ends the cache warm-up
+    // that was preparing for the user's next message here. Keyed on the instance, so switching
+    // conversations disposes the outgoing one's. The reply itself is not touched, see ChatViewModel.leave.
+    DisposableEffect(viewModel) { onDispose { viewModel.leave() } }
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     LaunchedEffect(currentConversationId) {
         if (conversationId == null && currentConversationId != null) createdConversationId = currentConversationId

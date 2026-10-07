@@ -18,6 +18,7 @@ import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
+import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.GenerationStopSignal
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
@@ -41,6 +42,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+/**
+ * Fewest tokens a reply must have generated for [ChatViewModel] to warm the cache up behind it
+ * (TEN-88). What a warm-up saves is the length of the reply (the next turn re-decodes it, at 6-7
+ * tok/s prefill on the reference device), so for a short one the saving is a few seconds, not
+ * worth the CPU busy in the background for nothing.
+ */
+internal const val WarmUpMinTokens = 300
+
+/**
+ * Whether a generation that ended with [stats] is worth a warm-up: it ended on its own or at its
+ * token cap, and was long enough to matter. A reply the user stopped or the engine broke has no
+ * stats at all, so it never gets here; every other [StopReason] is either a reply with nothing to
+ * cache or one cut by a budget this ticket did not look at.
+ */
+internal fun worthWarmingUp(stats: DecodeStats): Boolean =
+    stats.tokensGenerated >= WarmUpMinTokens &&
+        (stats.stopReason == StopReason.Complete || stats.stopReason == StopReason.TokenBudget)
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
@@ -450,6 +469,26 @@ class ChatViewModel(
     private var generationJob: Job? = null
 
     /**
+     * The cache warm-up this instance started after its last long reply, if it is still running
+     * (TEN-88). Its own job rather than part of [generationJob]: that one must be over for
+     * [send] to accept the next message, and a warm-up is precisely what runs *after* the reply is
+     * done, while the user reads. [send], [regenerate] and [leave] cancel it; so does the queue,
+     * for everything else that wants the engine (see [InferenceQueue.warmUp]).
+     */
+    private var warmUpJob: Job? = null
+
+    /**
+     * To be called when the screen showing this conversation goes away (a different conversation,
+     * a new chat, Home, Models): the user is no longer about to type here, so the warm-up that was
+     * preparing for it stops and gives the CPU back. What it had already decoded stays in the
+     * cache. Idempotent, and a no-op when nothing is warming up. Nothing else is torn down: a reply
+     * still streaming must survive leaving the screen, see this class's KDoc.
+     */
+    fun leave() {
+        warmUpJob?.cancel()
+    }
+
+    /**
      * Appends [text] as a user message and streams a reply. A no-op (besides surfacing
      * [ChatError.NoModelLoaded]) if no model is loaded; also a no-op if [text] is blank or a
      * generation is already running — `ChatScreen` disables send in both cases, this is just belt
@@ -469,6 +508,9 @@ class ChatViewModel(
             return
         }
         _error.value = null
+        // Synchronously, before the launch: the warm-up is read-only on the conversation, but one
+        // that starts after this message is stored would read it as the end of the history.
+        warmUpJob?.cancel()
         generationJob = scope.launch {
             val conversationId = ensureConversation()
             chatRepository.appendUserMessage(conversationId, trimmed)
@@ -529,6 +571,7 @@ class ChatViewModel(
             return
         }
         _error.value = null
+        warmUpJob?.cancel()
         generationJob = scope.launch {
             val last = chatRepository.observeMessages(conversationId).first().lastOrNull()
             if (last != null && last.role == "assistant") {
@@ -572,8 +615,14 @@ class ChatViewModel(
      * user actually set.
      */
     private suspend fun generateReply(conversationId: String) {
+        // Before the sync below, not left to [InferenceQueue.generate]: a switch saves the outgoing
+        // conversation first, and the save would then be the one cancelling the outgoing
+        // conversation's warm-up, after this conversation's user has already been kept waiting.
+        inferenceQueue.cancelWarmUp()
         syncSessionForConversationSwitch(conversationId)
         reportActiveSession(conversationId)
+        // The model this reply is generated on, which is what a warm-up behind it must find loaded.
+        val model = inferenceQueue.state.value.residentModel
 
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
@@ -590,7 +639,51 @@ class ChatViewModel(
             messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
             sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
-        streamInto(assistantId, request)
+        val finished = streamInto(assistantId, request)
+        if (model != null && finished != null && worthWarmingUp(finished)) {
+            warmUpAfterReply(conversationId, model)
+        }
+    }
+
+    /**
+     * Starts the warm-up behind a long reply that just ended normally (TEN-88): rewrites the KV
+     * cache into the form the next turn's prompt will take, while the user reads and types, see
+     * [InferenceQueue.warmUp] and [io.github.hokanosekai.tensai.engine.WarmUpPrompt]. Launched on
+     * its own job so [generateReply] (and with it [generationJob]) ends, and [send] is accepted,
+     * the moment the reply is on screen.
+     *
+     * Two checks before any work, both against a window the reply left open. The cache must still
+     * be this conversation's: [ActiveSessionTracker] is what [reportActiveSession] filled in when
+     * this turn started, so anything else there means another conversation has taken the engine
+     * since, and prefilling this one's history would only evict what that one is building (and, with
+     * no id reported at all, there is nothing to say whose cache it is). And the history must still
+     * end on the assistant's reply: a [send] that stored its message in the meantime has moved the
+     * end of the conversation, and a prompt built on it would be the wrong prefix. [send] cancels
+     * this job first, so that second check is a backstop for a different instance's send.
+     *
+     * The messages go through [ChatRepository.toEngineMessages] and the thinking flag is read off
+     * the row, exactly as [generateReply] builds a real turn, so the prompt this prefills is
+     * the one the next turn will render, to the byte; the engine then cuts it where the user's
+     * words would start.
+     */
+    private fun warmUpAfterReply(conversationId: String, model: LoadedModelInfo) {
+        // Only while the user is here. A reply that lands in the background has already had the cold
+        // cache saved ([io.github.hokanosekai.tensai.runtime.saveSessionAfterBackgroundedGeneration]),
+        // and a warm-up would burn minutes of CPU unseen, its result never written down: any save
+        // ([InferenceQueue.saveSession]) cancels it.
+        if (!AppForegroundTracker.isForeground.value) return
+        warmUpJob?.cancel()
+        warmUpJob = scope.launch {
+            if (ActiveSessionTracker.current.value?.first != conversationId) return@launch
+            val conversation = chatRepository.getConversation(conversationId) ?: return@launch
+            val history = chatRepository.observeMessages(conversationId).first()
+            if (history.lastOrNull()?.role != "assistant") return@launch
+            inferenceQueue.warmUp(
+                messages = chatRepository.toEngineMessages(history, conversation.systemPrompt),
+                enableThinking = conversation.enableThinking,
+                expectedModel = model,
+            )
+        }
     }
 
     /**
@@ -755,11 +848,19 @@ class ChatViewModel(
      * failure was persisted as if the model had simply been interrupted on purpose; and a stopped
      * one used to be recorded as nothing at all, which a still-streaming row also looks like.
      * All three are now written down.
+     *
+     * @return the generation's [DecodeStats] if it ended on its own, `null` if it was stopped or
+     *   failed (or this coroutine was cancelled, in which case nothing is returned at all), what
+     *   [generateReply] decides on a warm-up from (TEN-88).
      */
-    private suspend fun streamInto(assistantId: String, request: DecodeRequest) {
+    private suspend fun streamInto(assistantId: String, request: DecodeRequest): DecodeStats? {
         val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
         var failed = false
+        // What the caller gets back: the stats of a generation that ended on its own, and nothing
+        // for one that was stopped or failed. Set in the `finally` once the row is written, so
+        // whatever reads the history next sees the finished reply.
+        var finished: DecodeStats? = null
         var lastPersistAt = 0L
         // Fresh per turn, and handed to the queue so it is *this* generation that gets marked when
         // the user stops one — see [GenerationStopSignal] for why a flag on this object could not
@@ -834,6 +935,8 @@ class ChatViewModel(
                     chatRepository.deleteMessage(assistantId)
                 }
             }
+            // `failed` wins over `stats` here as it does for the recorded reason above.
+            finished = stats.takeUnless { failed }
 
             // Two ways to end a turn with nothing to show for it, both of which the user has to
             // hear about because no bubble was left behind to say it for them:
@@ -859,5 +962,6 @@ class ChatViewModel(
                 _error.value = ChatError.GenerationFailed
             }
         }
+        return finished
     }
 }
