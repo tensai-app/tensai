@@ -231,11 +231,12 @@ consumer, donc `app/proguard-rules.pro` garde les méthodes `native` de
 `LlamaEngine` et les trois interfaces de callback que le C++ résout par nom
 (`GetMethodID` sur `onToken`, `onChatParse`, `onProgress`). Vérifié sur le dex de
 l'APK release (les classes qui les implémentent exposent bien ces noms et ces
-signatures), pas sur device : la release n'a pas été lancée. `native.yml` exécute
+signatures), puis sur device le 2026-10-07 : APK release installée, chargement et génération Qwen3 sans erreur JNI. `native.yml` exécute
 désormais `assembleRelease` (non signé) pour que R8, `shrinkResources` et le build
-CMake release soient exercés avant tout tag. Surcoût estimé : de l'ordre de 5 à
-10 minutes par run (CMake release, pas de cache `.cxx/`), **non mesuré** sur un
-runner.
+CMake release soient exercés avant tout tag. Surcoût mesuré sur le run 37634183340 (`91c2876`) : **18 min 41** pour
+`assembleRelease`, contre 16 min 09 pour `assembleDebug`, soit un job de 38 min au
+total. L'estimation initiale de 5 à 10 minutes était fausse : le CMake release ne
+réutilise rien du debug.
 
 #### Ce qu'il reste à faire au propriétaire
 
