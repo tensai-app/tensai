@@ -21,7 +21,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
@@ -33,6 +36,8 @@ import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /** Which chrome (top bar) a given route gets. */
@@ -76,6 +81,21 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // TEN-111: the IME sits above the drawer. Drop focus and hide it as soon as the drawer starts
+    // opening (button or edge swipe: targetValue flips to Open on drag settle intent, not on click).
+    // Only Open triggers it, so closing never steals or restores focus.
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(drawerState) {
+        snapshotFlow { drawerState.targetValue == DrawerValue.Open }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect {
+                focusManager.clearFocus()
+                keyboardController?.hide()
+            }
+    }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
