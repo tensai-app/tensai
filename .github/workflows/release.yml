@@ -26,7 +26,8 @@ permissions:
 jobs:
   build:
     name: Signed release APK
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to Ubuntu 26 on 2026-10-19 (runner-images#14748).
+    runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 60
     permissions:
@@ -36,7 +37,7 @@ jobs:
       # Historique complet : le merge-base avec main et le tag précédent en ont
       # besoin. Pas de credentials laissés dans .git pendant un build qui porte
       # le keystore.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -152,7 +153,7 @@ jobs:
           mkdir dist
           mv "$apk" "dist/tensai-${REF_NAME#v}.apk"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-apk
           path: dist/*.apk
@@ -166,7 +167,8 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: build
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to Ubuntu 26 on 2026-10-19 (runner-images#14748).
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Seul job qui écrit. Pas de checkout, pas de secrets : il ne fait que
     # poser l'APK déjà vérifiée sur la release.
@@ -174,7 +176,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-apk
           path: dist

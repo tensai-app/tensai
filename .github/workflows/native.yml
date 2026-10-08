@@ -52,10 +52,11 @@ permissions:
 jobs:
   native-build:
     name: Native build (assembleDebug + lint)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to Ubuntu 26 on 2026-10-19 (runner-images#14748).
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Sous-modules, NDK/glslc, shaders (cache), libOpenCL.so, java et gradle :
       # tout est dans l'action composite, partagée avec release.yml.
@@ -83,7 +84,7 @@ jobs:
       # privé et « ça compile » est tout ce qu'on attend d'ici.
       - name: Upload lint report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lint-report
           path: app/build/reports/lint-results-debug.html

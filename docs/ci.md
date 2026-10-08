@@ -67,6 +67,12 @@ S'y ajoutent `workflow_dispatch` et un cron hebdomadaire (lundi 04:17 UTC). Le
 cron est le rattrapage : sans lui, un mois sans commit natif voudrait dire un
 mois sans savoir si l'image du runner a bougé sous nos pieds.
 
+Les jobs tournent sur `ubuntu-24.04` (épinglé, pas `ubuntu-latest`) et les actions
+sont sur leurs majeures Node 24 (`checkout@v7`, `cache@v6`, `setup-java@v6`,
+`setup-gradle@v5`, `upload-artifact@v7`, `download-artifact@v8`). Passer à Ubuntu 26
+est un changement explicite : revérifier `$ANDROID_HOME`, `sdkmanager`, le NDK et
+`build-tools/*/apksigner`.
+
 #### Le cache des shaders
 
 132 fichiers `*.comp.cpp` (134 Mo) plus `ggml-vulkan-shaders.hpp`, régénérés par
@@ -367,7 +373,8 @@ Pas rejouable ici, et donc à surveiller au premier run réel :
 - **Le filtre de chemins sur un pointeur de sous-module.** `third_party/**` est
   écrit large exprès, mais qu'un changement de gitlink apparaisse bien dans la
   liste des fichiers modifiés d'un push n'est pas vérifiable d'ici.
-- **Les versions du runner `ubuntu-latest`** : présence du NDK dans l'image (le
+- **Les versions de l'image `ubuntu-24.04`** (runner épinglé, `ubuntu-latest` passe
+  à Ubuntu 26 le 2026-10-19) : présence du NDK dans l'image (le
   workflow l'installe si besoin, ce qui ajoute une à deux minutes), version de
   `cmake` et de `g++`.
 - **Le temps de build sur le runner**, dont les chiffres ci-dessus sont une
