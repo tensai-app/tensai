@@ -511,7 +511,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         } else {
                             val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                             val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
-                            val tokPerSec = tokensPredicted * 1000f / elapsedMs
+                            val tokPerSec = generationTokPerSec(tokensPredicted, elapsedMs, ttftMs)
                             val stopReason = DecodeOutcome.stopReason(
                                 budgetStopReason = budgetStopReason,
                                 tokensPredicted = tokensPredicted,

@@ -26,7 +26,9 @@ import androidx.room.PrimaryKey
  *   Always `null` in V1.
  * @param tokensGenerated see [io.github.hokanosekai.tensai.engine.DecodeStats.tokensGenerated] —
  *   `null` until the assistant message finishes generating (or for non-assistant messages).
- * @param tokPerSec see [io.github.hokanosekai.tensai.engine.DecodeStats.tokPerSec].
+ * @param tokPerSec see [io.github.hokanosekai.tensai.engine.DecodeStats.tokPerSec]. Definition
+ *   changed in TEN-109: new rows are generation speed with prefill excluded, rows written before
+ *   hold tokens / total time with prefill included (no migration). `0` means "not measurable".
  * @param ttftMs see [io.github.hokanosekai.tensai.engine.DecodeStats.ttftMs].
  * @param stopReason name of the [io.github.hokanosekai.tensai.engine.StopReason] the decode ended
  *   on, or `null` for messages generated before this was recorded (schema v4 and earlier), for

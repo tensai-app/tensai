@@ -367,9 +367,15 @@ data class DecodeRequest(
 /**
  * Statistics reported when a decode completes — see [DecodeEvent.Done].
  *
- * @param tokensGenerated number of tokens streamed to the caller.
- * @param tokPerSec average generation throughput over the whole decode.
- * @param ttftMs time to first token, in milliseconds.
+ * @param tokensGenerated llama.cpp's count of sampled tokens for the whole reply, reasoning
+ *   tokens included (TEN-79). Unchanged by TEN-109.
+ * @param tokPerSec generation throughput: [tokensGenerated] over the time spent *after* the first
+ *   token, i.e. `(total - ttftMs)`, so prefill is excluded and the figure is comparable with
+ *   llama.kt's tg numbers (TEN-109, see [generationTokPerSec]). `0` when it can't be measured
+ *   (fewer than 2 tokens, or no time after TTFT): the UI then shows no tok/s. Rows stored before
+ *   TEN-109 hold the old definition, `tokensGenerated / total` with prefill included, and are not
+ *   migrated, so they read lower after a long prefill.
+ * @param ttftMs time to first token, in milliseconds (prefill time, roughly).
  * @param stopReason why generation ended — see [StopReason]. Lets the UI tell a finished reply
  *   apart from one cut off at the budget, which otherwise look identical (TEN-60).
  */
@@ -379,6 +385,19 @@ data class DecodeStats(
     val ttftMs: Long,
     val stopReason: StopReason = StopReason.Complete,
 )
+
+/**
+ * Generation speed in tokens/s, prefill excluded (TEN-109): `tokens / (totalMs - ttftMs)`.
+ *
+ * Returns `0f` when there is no meaningful decode window: fewer than 2 tokens (the single token
+ * lands at TTFT, so what is left of the total is noise) or `ttftMs >= totalMs`. Callers treat `0`
+ * as "no figure" rather than dividing by ~0 or falling back to a prefill-inclusive number.
+ */
+fun generationTokPerSec(tokens: Int, totalMs: Long, ttftMs: Long): Float {
+    val decodeMs = totalMs - ttftMs
+    if (tokens < 2 || decodeMs <= 0L) return 0f
+    return tokens * 1000f / decodeMs
+}
 
 /** An event emitted while streaming a [DecodeRequest]. */
 sealed class DecodeEvent {

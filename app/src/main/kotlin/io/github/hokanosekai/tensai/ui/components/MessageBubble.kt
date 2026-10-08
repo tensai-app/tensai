@@ -157,12 +157,7 @@ private fun EndingChip(text: String, color: Color, modifier: Modifier = Modifier
 @Composable
 private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
     Surface(shape = TensaiShapes.small, color = MaterialTheme.colorScheme.surface, modifier = modifier) {
-        val figures = "%.1f tok/s · %d tok · TTFT %dms".format(
-            Locale.US,
-            stats.tokPerSec,
-            stats.tokensGenerated,
-            stats.ttftMs,
-        )
+        val figures = statsFigures(stats)
         // A reply cut off at the budget used to be indistinguishable from a finished one — same
         // chip, same figures, the text just stopped (TEN-60). Reasoning cut short and answer cut
         // short call for different reactions from the user (wait longer vs. it's just short), so
@@ -188,3 +183,11 @@ private fun StatsChip(stats: MessageStatsUi, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** The figures part of the stats chip. tok/s is left out when it could not be measured (TEN-109). */
+internal fun statsFigures(stats: MessageStatsUi): String =
+    if (stats.tokPerSec > 0f) {
+        "%.1f tok/s · %d tok · TTFT %dms".format(Locale.US, stats.tokPerSec, stats.tokensGenerated, stats.ttftMs)
+    } else {
+        "%d tok · TTFT %dms".format(Locale.US, stats.tokensGenerated, stats.ttftMs)
+    }
