@@ -116,14 +116,10 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     val chatSettingsRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     // Draft chats that got their row, by back stack entry id: their route still says "new".
+    // Not pruned when an entry leaves the back stack: the only way to list live entries is
+    // NavController.currentBackStack, which is restricted to androidx.navigation (lint
+    // RestrictedApi). A stale entry is two short strings that no drawer row matches.
     val createdChatIds = remember { mutableStateMapOf<String, String>() }
-
-    // Entries that left the back stack take their id with them.
-    val liveEntryIds by navController.currentBackStack.collectAsState()
-    LaunchedEffect(liveEntryIds) {
-        val live = liveEntryIds.map { it.id }.toSet()
-        createdChatIds.keys.retainAll(live)
-    }
 
     val startDestination = when (onboardingEntry) {
         OnboardingEntry.None -> TensaiDestination.Home.route

@@ -43,7 +43,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -130,10 +129,12 @@ fun ModelDetailScreen(
 
     // Null until the stat() has answered: nothing is drawn before then, so a model never shows
     // "Load model" for a frame and then flips to "File missing".
-    val fileExists by produceState<Boolean?>(null, model?.filePath, refreshTick) {
-        value = null
-        val path = model?.filePath ?: return@produceState
-        value = withContext(Dispatchers.IO) { File(path).exists() }
+    // remember + LaunchedEffect rather than a keyed produceState: lint's
+    // ProduceStateDoesNotAssignValue misreads the keyed overloads.
+    var fileExists by remember(model?.filePath, refreshTick) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(model?.filePath, refreshTick) {
+        val path = model?.filePath ?: return@LaunchedEffect
+        fileExists = withContext(Dispatchers.IO) { File(path).exists() }
     }
 
     suspend fun removeModel(name: String): Boolean = try {

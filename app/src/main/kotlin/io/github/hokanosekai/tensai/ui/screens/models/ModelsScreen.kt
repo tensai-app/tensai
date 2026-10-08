@@ -35,7 +35,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -188,16 +187,20 @@ fun ModelsScreen(
     // Verdicts are computed here, once per model, so the filter and the badge on each card read the
     // same answer (they used to be computed per card). File existence is a stat() per model, done
     // off the main thread; until it lands every file counts as present, as `rememberFileExists` did.
+    // Not keyed: the map survives a library change (no blank list, no scroll jump); the effect
+    // below refreshes it. remember + LaunchedEffect rather than a keyed produceState: lint's
+    // ProduceStateDoesNotAssignValue misreads the keyed overloads.
     val seenTick = remember { intArrayOf(0) }
-    val existence by produceState<Map<String, Boolean>>(emptyMap(), currentModels, refreshTick) {
-        val list = currentModels ?: return@produceState
+    var existence by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    LaunchedEffect(currentModels, refreshTick) {
+        val list = currentModels ?: return@LaunchedEffect
         // A tick means "the files changed under unchanged rows": drop the old answers so no card
         // renders from a stale one. A plain library change keeps them (no blank list, no scroll jump).
         if (seenTick[0] != refreshTick) {
             seenTick[0] = refreshTick
-            value = emptyMap()
+            existence = emptyMap()
         }
-        value = withContext(Dispatchers.IO) { list.associate { it.id to File(it.filePath).exists() } }
+        existence = withContext(Dispatchers.IO) { list.associate { it.id to File(it.filePath).exists() } }
     }
     // Until every id has been statted the list is held back (no card, no filter result): a card
     // cannot say "Load model" for a frame and then flip to "File missing".

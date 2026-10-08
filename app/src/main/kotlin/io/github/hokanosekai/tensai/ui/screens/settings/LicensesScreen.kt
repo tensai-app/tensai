@@ -251,8 +251,11 @@ private fun LicenseSheet(row: LicenseRow, onDismiss: () -> Unit) {
             }
         },
     ) {
-        val body by produceState<String?>(initialValue = null, row.key) {
-            value = withContext(Dispatchers.IO) { runCatching { row.text(context) }.getOrElse { row.fallbackText.ifBlank { row.url } } }
+        // remember + LaunchedEffect rather than a keyed produceState: lint's
+        // ProduceStateDoesNotAssignValue misreads the keyed overloads.
+        var body by remember(row.key) { mutableStateOf<String?>(null) }
+        LaunchedEffect(row.key) {
+            body = withContext(Dispatchers.IO) { runCatching { row.text(context) }.getOrElse { row.fallbackText.ifBlank { row.url } } }
         }
         val copyrightLine = if (row.copyright.isBlank()) "" else stringResource(R.string.licenses_copyright_line, row.copyright)
         val density = LocalDensity.current
