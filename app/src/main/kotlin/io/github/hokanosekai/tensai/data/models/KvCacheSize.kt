@@ -82,21 +82,40 @@ object KvCacheSize {
      * would come out under. No shipped GGUF does that, and llama.cpp would read such a model as
      * `n_head_kv == n_head` anyway; stated here so the claim isn't mistaken for a proof.
      */
-    fun bytesAt(model: ModelEntity, nCtx: Long, kvCacheType: KvCacheType): Long {
+    fun bytesAt(model: ModelEntity, nCtx: Long, kvCacheType: KvCacheType): Long = bytesAt(
+        embeddingLength = model.embeddingLength,
+        blockCount = model.blockCount,
+        kvFullElementsPerToken = model.kvFullElementsPerToken,
+        kvSwaElementsPerToken = model.kvSwaElementsPerToken,
+        slidingWindow = model.slidingWindow,
+        nCtx = nCtx,
+        kvCacheType = kvCacheType,
+    )
+
+    /** [bytesAt] from the raw attention shape, for a model that is not a [ModelEntity] (a catalog entry with no file yet). */
+    fun bytesAt(
+        embeddingLength: Long,
+        blockCount: Long,
+        kvFullElementsPerToken: Long,
+        kvSwaElementsPerToken: Long,
+        slidingWindow: Long,
+        nCtx: Long,
+        kvCacheType: KvCacheType,
+    ): Long {
         val cells = padToCells(nCtx)
 
-        if (model.kvFullElementsPerToken <= 0) {
-            val elements = KV_CACHE_TENSORS * cells * model.embeddingLength * model.blockCount
+        if (kvFullElementsPerToken <= 0) {
+            val elements = KV_CACHE_TENSORS * cells * embeddingLength * blockCount
             return bytesForElements(elements, kvCacheType)
         }
 
         val swaCells = when {
-            model.kvSwaElementsPerToken <= 0 -> 0L
+            kvSwaElementsPerToken <= 0 -> 0L
 
             // Padded after the min and not clamped back to `cells`, exactly as
             // llama_kv_cache_iswa does it. `cells` is already a whole number of blocks, so the
             // windowed cache can never come out larger than the full one anyway.
-            model.slidingWindow > 0 -> padToCells(minOf(cells, model.slidingWindow + UBATCH_TOKENS))
+            slidingWindow > 0 -> padToCells(minOf(cells, slidingWindow + UBATCH_TOKENS))
 
             // Windowed layers with no window to cap them: the row says the model has a windowed
             // cache but not how small it gets. Charging 0 would silently drop that whole cache
@@ -108,7 +127,7 @@ object KvCacheSize {
             else -> cells
         }
 
-        val elements = model.kvFullElementsPerToken * cells + model.kvSwaElementsPerToken * swaCells
+        val elements = kvFullElementsPerToken * cells + kvSwaElementsPerToken * swaCells
         return bytesForElements(elements, kvCacheType)
     }
 

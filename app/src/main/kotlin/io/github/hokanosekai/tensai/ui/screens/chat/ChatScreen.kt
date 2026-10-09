@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
+import io.github.hokanosekai.tensai.ui.components.SuggestionChips
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -225,6 +226,16 @@ fun ChatScreen(
                 // so the button never races it with a second one of its own.
                 onClick = { followStream = true },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+            )
+        }
+
+        // Starters for a conversation with no message yet; the same chips as Home, and they fill the
+        // pill the same way. Gone as soon as there is a message.
+        if (currentMessages != null && currentMessages.isEmpty()) {
+            SuggestionChips(
+                onPick = { input = it },
+                wrap = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
         }
 

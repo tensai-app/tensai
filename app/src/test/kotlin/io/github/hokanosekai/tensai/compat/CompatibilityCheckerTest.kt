@@ -218,6 +218,48 @@ class CompatibilityCheckerTest {
         assertEquals("8.0 GB", formatGigabytes(result.deviceRamBytes))
     }
 
+    /**
+     * The facts overload (the onboarding catalog, no file) is the same code path: the verdict, the
+     * estimate and the backend match what the entity overload gives for the same figures, and an
+     * unknown attention shape falls back to the same KV formula.
+     */
+    @Test
+    fun factsOverloadAgreesWithTheEntityOverload() {
+        val entity = model(
+            architecture = "qwen3",
+            paramCount = 1_720_000_000,
+            contextLength = 40_960,
+            embeddingLength = 2048,
+            blockCount = 28,
+            sizeBytes = 1_282_439_584,
+        )
+        val facts = ModelFacts(
+            sizeBytes = entity.sizeBytes,
+            paramCount = entity.paramCount,
+            architecture = entity.architecture,
+            contextLength = entity.contextLength,
+            embeddingLength = entity.embeddingLength,
+            blockCount = entity.blockCount,
+        )
+
+        assertEquals(CompatibilityChecker.check(entity, dimensity900_8gb), CompatibilityChecker.check(facts, dimensity900_8gb))
+    }
+
+    @Test
+    fun factsOverloadHonoursTheParamCountCeiling() {
+        val facts = ModelFacts(
+            sizeBytes = 2_497_280_960,
+            paramCount = 4_020_000_000,
+            architecture = "qwen3",
+            contextLength = 40_960,
+            embeddingLength = 2560,
+            blockCount = 36,
+            kvFullElementsPerToken = 2L * 36 * 8 * 128,
+        )
+
+        assertEquals(Verdict.TightFit, CompatibilityChecker.check(facts, dimensity900_8gb).verdict)
+    }
+
     private fun model(
         architecture: String,
         paramCount: Long,

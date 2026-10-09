@@ -5,22 +5,18 @@ import java.io.File
 
 /**
  * The first-run flow's steps, in the order they are shown. [OnboardingScreen] walks this list by
- * ordinal, so a future step is added by inserting an entry at the right place and giving it a
- * body — V1.1's in-app download (TEN-45) belongs right before [Import], V3's agent
- * skills/permissions right after [Preferences]. Nothing else needs to change for the wizard to
- * grow.
+ * ordinal (the step dots are one per entry), so a future step is added by inserting an entry at the
+ * right place and giving it a body: V1.1's in-app download (TEN-45) belongs inside [Import], V3's
+ * agent skills/permissions right before [Ready].
  */
 enum class OnboardingStep {
-    /** Glyph, name, one-line pitch. */
+    /** Glyph, name, one-line pitch, and the theme and language pills. */
     Welcome,
 
-    /** Guides a GGUF import through SAF and shows the traffic light on what came in. */
+    /** Recommends a model for this device and guides a GGUF import through SAF. */
     Import,
 
-    /** Backend and theme choice. */
-    Preferences,
-
-    /** "Your model is ready" — hands off to the load. */
+    /** "Your model is ready" and hands off to the load. */
     Ready,
 }
 

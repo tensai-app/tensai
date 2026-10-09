@@ -289,16 +289,34 @@
     <string name="loading_retry">Réessayer</string>
     <string name="loading_retry_on_cpu">Réessayer sur CPU</string>
 
-    <!-- First-run onboarding (TEN-36). -->
+    <!-- First-run onboarding (TEN-36, TEN-118). -->
     <string name="onboarding_skip">Passer</string>
-    <string name="onboarding_welcome_body">Un agent IA local, qui tourne entièrement sur le téléphone. Rien ne quitte l\'appareil.</string>
+    <string name="onboarding_continue">Continuer</string>
+    <string name="onboarding_step_progress">Étape %1$d sur %2$d</string>
     <string name="onboarding_welcome_title">Bienvenue sur tensai</string>
+    <string name="onboarding_welcome_body">Un agent IA local, qui tourne entièrement sur le téléphone. Rien ne quitte l\'appareil.</string>
+    <string name="onboarding_model_title">Choisir un modèle pour le téléphone</string>
+    <string name="onboarding_import_body">tensai exécute les modèles GGUF depuis le stockage. En télécharger un sur un ordinateur, le copier sur le téléphone, puis l\'importer ici.</string>
     <string name="onboarding_recommended">Recommandé pour cet appareil</string>
     <string name="onboarding_ram_badge">%1$s de RAM</string>
-    <string name="onboarding_get_started">Commencer</string>
-    <string name="onboarding_import_body">tensai exécute les modèles GGUF directement depuis le stockage. En télécharger un sur un ordinateur, le copier sur le téléphone, puis le sélectionner ici.</string>
-    <string name="onboarding_copying">Copie dans tensai…</string>
-    <string name="onboarding_backend">Backend</string>
+    <string name="onboarding_smallest">Option la plus légère</string>
+    <string name="onboarding_pref_expanded">Déplié</string>
+    <string name="onboarding_pref_collapsed">Replié</string>
+    <string name="onboarding_options_show">Voir les autres options</string>
+    <string name="onboarding_options_hide">Masquer les autres options</string>
+    <string name="onboarding_importing">Import en cours</string>
+    <string name="onboarding_import_error">Ce fichier n\'a pas pu être lu comme un modèle GGUF.</string>
+    <string name="onboarding_try_another">Essayer un autre fichier</string>
+    <string name="onboarding_your_model">Le modèle</string>
+    <string name="onboarding_imported_badge">Importé</string>
+    <string name="onboarding_download_soon">Télécharger des modèles directement depuis l\'app</string>
+    <string name="onboarding_coming_soon">Bientôt</string>
+    <string name="onboarding_ready_title">%1$s est prêt à être chargé</string>
+    <string name="onboarding_ready_body">Le chargement prend quelques secondes. Le modèle reste ensuite en mémoire.</string>
+    <string name="onboarding_summary_model">Modèle</string>
+    <string name="onboarding_summary_size">Taille</string>
+    <string name="onboarding_summary_compatibility">Compatibilité</string>
+    <string name="onboarding_summary_backend">Backend</string>
     <string name="onboarding_start_chatting">Commencer à discuter</string>
 
     <!-- Foreground-service notification (InferenceService). -->

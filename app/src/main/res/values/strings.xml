@@ -360,18 +360,37 @@
     <string name="loading_retry">Retry</string>
     <string name="loading_retry_on_cpu">Retry on CPU</string>
 
-    <!-- First-run onboarding (TEN-36). Backend and theme choices reuse the settings_* strings above. -->
+    <!-- First-run onboarding (TEN-36, TEN-118). Theme, language, the verdict words and the import button reuse the settings_*, model_compat_* and models_import strings. -->
     <string name="onboarding_skip">Skip</string>
-    <string name="onboarding_welcome_body">A local AI agent, running fully on your phone. Nothing leaves the device.</string>
+    <string name="onboarding_continue">Continue</string>
+    <!-- Spoken for the step dots: %1$d is the current step, %2$d the number of steps. -->
+    <string name="onboarding_step_progress">Step %1$d of %2$d</string>
     <string name="onboarding_welcome_title">Welcome to tensai</string>
+    <string name="onboarding_welcome_body">A local AI agent, running fully on your phone. Nothing leaves the device.</string>
+    <string name="onboarding_model_title">Pick a model for your phone</string>
+    <string name="onboarding_import_body">tensai runs GGUF models from your storage. Download one on a computer, copy it to your phone, then import it here.</string>
     <string name="onboarding_recommended">Recommended for your device</string>
     <!-- %1$s is the phone's total memory, e.g. 6.0 GB. -->
     <string name="onboarding_ram_badge">%1$s RAM</string>
-    <string name="onboarding_get_started">Get started</string>
-    <string name="onboarding_import_body">tensai runs GGUF models straight off your storage. Download one on your computer, copy it to the phone, then pick it here.</string>
-    <string name="onboarding_copying">Copying into tensai…</string>
-    <string name="onboarding_backend">Backend</string>
-    <!-- %1$s is the imported model's display name. -->
+    <string name="onboarding_smallest">Smallest option</string>
+    <string name="onboarding_pref_expanded">Expanded</string>
+    <string name="onboarding_pref_collapsed">Collapsed</string>
+    <string name="onboarding_options_show">See other options</string>
+    <string name="onboarding_options_hide">Hide other options</string>
+    <string name="onboarding_importing">Importing</string>
+    <string name="onboarding_import_error">This file couldn\'t be read as a GGUF model.</string>
+    <string name="onboarding_try_another">Try another file</string>
+    <string name="onboarding_your_model">Your model</string>
+    <string name="onboarding_imported_badge">Imported</string>
+    <string name="onboarding_download_soon">Download models directly from the app</string>
+    <string name="onboarding_coming_soon">Coming soon</string>
+    <!-- %1$s is the model's display name. -->
+    <string name="onboarding_ready_title">%1$s is ready to load</string>
+    <string name="onboarding_ready_body">Loading takes a few seconds. It stays in memory afterwards.</string>
+    <string name="onboarding_summary_model">Model</string>
+    <string name="onboarding_summary_size">Size</string>
+    <string name="onboarding_summary_compatibility">Compatibility</string>
+    <string name="onboarding_summary_backend">Backend</string>
     <string name="onboarding_start_chatting">Start chatting</string>
 
     <!-- Foreground-service notification (InferenceService). Resolved through withAppLanguage, like the UI. -->

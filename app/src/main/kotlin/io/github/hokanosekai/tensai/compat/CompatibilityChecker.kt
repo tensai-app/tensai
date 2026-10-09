@@ -52,6 +52,36 @@ data class Compatibility(
 )
 
 /**
+ * What [CompatibilityChecker] needs to know about a model, and nothing about its file: the figures
+ * [ModelEntity] carries, minus the bookkeeping. Lets a model that is not on the device yet (the
+ * onboarding catalog) be judged by the same rules as an imported one. Field meanings are
+ * [ModelEntity]'s.
+ */
+data class ModelFacts(
+    val sizeBytes: Long,
+    val paramCount: Long,
+    val architecture: String,
+    val contextLength: Long,
+    val embeddingLength: Long,
+    val blockCount: Long,
+    val kvFullElementsPerToken: Long = 0,
+    val kvSwaElementsPerToken: Long = 0,
+    val slidingWindow: Long = 0,
+)
+
+private fun ModelEntity.facts() = ModelFacts(
+    sizeBytes = sizeBytes,
+    paramCount = paramCount,
+    architecture = architecture,
+    contextLength = contextLength,
+    embeddingLength = embeddingLength,
+    blockCount = blockCount,
+    kvFullElementsPerToken = kvFullElementsPerToken,
+    kvSwaElementsPerToken = kvSwaElementsPerToken,
+    slidingWindow = slidingWindow,
+)
+
+/**
  * Estimates whether a [ModelEntity] will run acceptably on this device and which backend it
  * should prefer, calibrated against the measured pp/tg table in
  * `third_party/llama.kt/README.md` ("Status" + "Measured performance" sections) for an
@@ -119,8 +149,15 @@ object CompatibilityChecker {
     /** Dense architectures — fastest on the big CPU cores (see this object's KDoc). */
     private val DENSE_ARCH_MARKERS = listOf("qwen", "llama", "gemma")
 
-    fun check(model: ModelEntity, profile: DeviceProfile): Compatibility {
-        val estimatedBytes = model.sizeBytes + kvCacheBytes(model) + OVERHEAD_BYTES
+    fun check(model: ModelEntity, profile: DeviceProfile): Compatibility = check(model.facts(), profile)
+
+    /**
+     * Same verdict as [check] for a model known only by its facts: a catalog entry with no file on
+     * the device yet (the onboarding recommendation). One implementation behind both, so a model
+     * gets the same answer whether it was imported or merely described.
+     */
+    fun check(facts: ModelFacts, profile: DeviceProfile): Compatibility {
+        val estimatedBytes = facts.sizeBytes + kvCacheBytes(facts) + OVERHEAD_BYTES
 
         // [DeviceProfile.usableRamBytes], the same basis LoadPolicy budgets its context against —
         // see that property's KDoc. A verdict decided from one memory reading and a context
@@ -129,7 +166,7 @@ object CompatibilityChecker {
         val wontFit = estimatedBytes > profile.usableRamBytes
         // availableRamBytes only ever softens a verdict here, never decides fit: "the system is
         // busy right now" is the one question a free-memory reading answers honestly.
-        val tightFit = !wontFit && (estimatedBytes > profile.availableRamBytes || isLikelySlow(model))
+        val tightFit = !wontFit && (estimatedBytes > profile.availableRamBytes || isLikelySlow(facts))
 
         val verdict = when {
             wontFit -> Verdict.WontFit
@@ -141,7 +178,7 @@ object CompatibilityChecker {
             verdict = verdict,
             estimatedBytes = estimatedBytes,
             deviceRamBytes = profile.totalRamBytes,
-            recommendedBackend = recommendedBackend(model.architecture, profile.hasVulkan),
+            recommendedBackend = recommendedBackend(facts.architecture, profile.hasVulkan),
         )
     }
 
@@ -150,19 +187,27 @@ object CompatibilityChecker {
      * [KvCacheSize], which also holds the fallback for models whose shape is unknown (imported
      * before TEN-18, or a header that didn't yield one).
      */
-    private fun kvCacheBytes(model: ModelEntity): Long {
+    private fun kvCacheBytes(facts: ModelFacts): Long {
         // A header with no context_length key records 0, which isn't a context anything will be
         // loaded at — the engine turns a non-positive n_ctx into 4096 (tensai_jni.cpp), which is
         // PLANNED_CTX_TOKENS. Taking the min with 0 would report a model as needing no KV cache
         // at all. Same reasoning as LoadPolicy.trainedContextOf.
-        val trainedCtx = if (model.contextLength > 0) model.contextLength else PLANNED_CTX_TOKENS
+        val trainedCtx = if (facts.contextLength > 0) facts.contextLength else PLANNED_CTX_TOKENS
         val plannedCtx = minOf(trainedCtx, PLANNED_CTX_TOKENS)
-        return KvCacheSize.bytesAt(model, plannedCtx, KvCacheType.F16)
+        return KvCacheSize.bytesAt(
+            embeddingLength = facts.embeddingLength,
+            blockCount = facts.blockCount,
+            kvFullElementsPerToken = facts.kvFullElementsPerToken,
+            kvSwaElementsPerToken = facts.kvSwaElementsPerToken,
+            slidingWindow = facts.slidingWindow,
+            nCtx = plannedCtx,
+            kvCacheType = KvCacheType.F16,
+        )
     }
 
-    private fun isLikelySlow(model: ModelEntity): Boolean {
-        val arch = model.architecture.lowercase()
-        return model.paramCount >= TIGHT_PARAM_THRESHOLD || TIGHT_ARCHITECTURE_MARKERS.any { arch.contains(it) }
+    private fun isLikelySlow(facts: ModelFacts): Boolean {
+        val arch = facts.architecture.lowercase()
+        return facts.paramCount >= TIGHT_PARAM_THRESHOLD || TIGHT_ARCHITECTURE_MARKERS.any { arch.contains(it) }
     }
 
     private fun recommendedBackend(architecture: String, hasVulkan: Boolean): BackendHint {

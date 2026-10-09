@@ -2,11 +2,10 @@ package io.github.hokanosekai.tensai.ui.screens
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.components.InputPill
+import io.github.hokanosekai.tensai.ui.components.SuggestionChips
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import java.time.LocalTime
@@ -47,20 +46,6 @@ private val WatermarkSize = 300.dp
 
 /** How far past the right edge the watermark sits, so only part of the glyph is on screen. */
 private val WatermarkOffsetX = 84.dp
-
-/**
- * One suggestion chip. Label and prompt are the same string — tapping a chip fills the input pill
- * with its text rather than sending it, so the user can edit before committing.
- *
- * The design allows **four** chips; this enum is the whole set, and Home renders all of it. Adding
- * a fifth means dropping one, not widening the row.
- */
-private enum class HomeSuggestion(@StringRes val labelRes: Int) {
-    SummarizeLog(R.string.home_suggestion_summarize_log),
-    ExplainError(R.string.home_suggestion_explain_error),
-    DraftReply(R.string.home_suggestion_draft_reply),
-    CommitMessage(R.string.home_suggestion_commit_message),
-}
 
 @StringRes
 private fun Greeting.labelRes(): Int = when (this) {
@@ -175,36 +160,6 @@ fun HomeScreen(
                     text = stringResource(R.string.home_pill_no_model),
                     showDot = false,
                     onClick = onNavigateToModels,
-                )
-            }
-        }
-    }
-}
-
-/**
- * The suggestion row. Horizontally scrollable rather than wrapped: four chips do not fit across a
- * phone, and a single line that scrolls keeps the screen's vertical rhythm fixed whatever the
- * translation's word lengths turn out to be (TEN-41).
- */
-@Composable
-private fun SuggestionChips(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        HomeSuggestion.entries.forEach { suggestion ->
-            val label = stringResource(suggestion.labelRes)
-            Surface(
-                onClick = { onPick(label) },
-                shape = TensaiShapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 )
             }
         }

@@ -34,10 +34,11 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 enum class TensaiButtonVariant { Filled, Tonal, Outlined, Text }
 
-/** Heights and type from the kit's `Button` (`lg` is unused so far). */
+/** Heights and type from the kit's `Button`. [Lg] is the full-width action at the foot of a page (onboarding). */
 enum class TensaiButtonSize(val height: Dp, val horizontalPadding: Dp, val fontSize: Int) {
     Sm(36.dp, 16.dp, 13),
     Md(44.dp, 22.dp, 14),
+    Lg(52.dp, 24.dp, 15),
 }
 
 /**
@@ -46,7 +47,8 @@ enum class TensaiButtonSize(val height: Dp, val horizontalPadding: Dp, val fontS
  * a strong hairline + body text, [Text][TensaiButtonVariant.Text] primary text on nothing,
  * [Filled][TensaiButtonVariant.Filled] primary fill. The height is a minimum so a large font scale
  * grows the pill instead of clipping it. Pass `Modifier.fillMaxWidth()` for the kit's `full`.
- * [containerColor]/[contentColor] override the variant's colors (the destructive "Remove").
+ * [containerColor]/[contentColor] override the variant's colors (the destructive "Remove"). [trailingIcon]
+ * follows the label, for a forward action ("Continue" with an arrow).
  */
 @Composable
 fun TensaiButton(
@@ -56,6 +58,7 @@ fun TensaiButton(
     variant: TensaiButtonVariant = TensaiButtonVariant.Filled,
     size: TensaiButtonSize = TensaiButtonSize.Md,
     icon: ImageVector? = null,
+    trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     containerColor: Color? = null,
     contentColor: Color? = null,
@@ -104,6 +107,9 @@ fun TensaiButton(
                 Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size((size.fontSize + 4).dp))
             }
             Text(text = text, fontSize = size.fontSize.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            if (trailingIcon != null) {
+                Icon(imageVector = trailingIcon, contentDescription = null, modifier = Modifier.size((size.fontSize + 4).dp))
+            }
         }
     }
 }

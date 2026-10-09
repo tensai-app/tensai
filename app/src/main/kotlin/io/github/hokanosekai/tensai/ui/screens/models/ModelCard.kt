@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Eject
@@ -44,8 +46,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +68,8 @@ import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
 import io.github.hokanosekai.tensai.ui.components.TensaiMonoBadge
 import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
+import io.github.hokanosekai.tensai.ui.screens.settings.openLink
+import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -79,20 +87,27 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *
  * The overflow menu (details, delete) replaces the old trash icon. [onDeleteClick] gets the file's
  * current existence so the caller can decide whether a confirmation is warranted.
+ *
+ * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button, the overflow
+ * menu and the tap target, [link] adds a mono "open in the browser" row, and [extraBadge] is one
+ * more badge after the others ("Imported"). The click callbacks are then unused, hence their defaults.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelCard(
     model: ModelEntity,
-    fileExists: Boolean,
     compatibility: Compatibility?,
-    isLoaded: Boolean,
-    onClick: () -> Unit,
-    onLoadClick: () -> Unit,
-    onDeleteClick: (fileExists: Boolean) -> Unit,
-    onUnloadClick: () -> Unit,
-    onDetailsClick: () -> Unit,
     modifier: Modifier = Modifier,
+    fileExists: Boolean = true,
+    isLoaded: Boolean = false,
+    onClick: () -> Unit = {},
+    onLoadClick: () -> Unit = {},
+    onDeleteClick: (fileExists: Boolean) -> Unit = {},
+    onUnloadClick: () -> Unit = {},
+    onDetailsClick: () -> Unit = {},
+    link: ModelCardLink? = null,
+    noAction: Boolean = false,
+    extraBadge: (@Composable () -> Unit)? = null,
 ) {
     // No ripple on a card this big: a press just settles it to 0.99, like the kit's ModelCard.
     val interaction = remember { MutableInteractionSource() }
@@ -113,12 +128,18 @@ internal fun ModelCard(
                 scaleY = scale
             }
             .clip(TensaiShapes.large)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClickLabel = openDetails,
-                role = Role.Button,
-                onClick = onClick,
+            .then(
+                if (noAction) {
+                    Modifier
+                } else {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClickLabel = openDetails,
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                },
             ),
         shape = TensaiShapes.large,
         color = MaterialTheme.colorScheme.surface,
@@ -141,27 +162,72 @@ internal fun ModelCard(
                     )
                 }
                 ModelStatus(compatibility, modifier = Modifier.padding(top = 2.dp).widthIn(max = 140.dp))
-                ModelOverflowMenu(
-                    modelName = model.displayName,
-                    onDetails = onDetailsClick,
-                    onDelete = { onDeleteClick(fileExists) },
-                )
+                if (!noAction) {
+                    ModelOverflowMenu(
+                        modelName = model.displayName,
+                        onDetails = onDetailsClick,
+                        onDelete = { onDeleteClick(fileExists) },
+                    )
+                }
             }
 
-            ModelBadges(model, compatibility, isLoaded, modifier = Modifier.padding(top = 12.dp))
+            ModelBadges(model, compatibility, isLoaded, modifier = Modifier.padding(top = 12.dp), extraBadge = extraBadge)
+
+            if (link != null) {
+                ModelLinkRow(link, modifier = Modifier.padding(top = 4.dp))
+            }
 
             if (wontFit && compatibility != null) {
                 WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
             }
 
-            ModelActionButton(
-                action = modelAction(isLoaded, fileExists, wontFit),
-                onLoad = onLoadClick,
-                onUnload = onUnloadClick,
-                onRemove = { onDeleteClick(false) },
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            )
+            if (!noAction) {
+                ModelActionButton(
+                    action = modelAction(isLoaded, fileExists, wontFit),
+                    onLoad = onLoadClick,
+                    onUnload = onUnloadClick,
+                    onRemove = { onDeleteClick(false) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                )
+            }
         }
+    }
+}
+
+/** A web page a [ModelCard] points at: [label] is what is shown (no scheme), [url] what is opened. */
+internal data class ModelCardLink(val label: String, val url: String)
+
+/**
+ * The card's link row: [ModelCardLink.label] in primary mono and an open-in-new icon, 48dp tall to
+ * be a real tap target. Opens the browser, or says there is none (same path as the licenses screen).
+ */
+@Composable
+internal fun ModelLinkRow(link: ModelCardLink, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val description = stringResource(R.string.licenses_open_url, link.label)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button) { openLink(context, link.url) }
+            .semantics { contentDescription = description },
+    ) {
+        Text(
+            text = link.label,
+            fontFamily = TensaiMono,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics { },
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+        )
     }
 }
 
@@ -194,6 +260,7 @@ internal fun ModelBadges(
     compatibility: Compatibility?,
     isLoaded: Boolean,
     modifier: Modifier = Modifier,
+    extraBadge: (@Composable () -> Unit)? = null,
 ) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -208,6 +275,7 @@ internal fun ModelBadges(
             ModelFilter.Cpu -> TensaiBadge(stringResource(R.string.models_filter_cpu), icon = Icons.Default.Memory)
             else -> Unit
         }
+        extraBadge?.invoke()
     }
 }
 

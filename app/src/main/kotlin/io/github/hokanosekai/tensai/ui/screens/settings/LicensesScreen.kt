@@ -356,7 +356,7 @@ private fun ProjectLink(url: String, link: String, modifier: Modifier = Modifier
     }
 }
 
-private fun openLink(context: Context, link: String) {
+internal fun openLink(context: Context, link: String) {
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
         context.startActivity(intent)
