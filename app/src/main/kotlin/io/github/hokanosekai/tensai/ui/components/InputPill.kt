@@ -94,11 +94,14 @@ fun InputPill(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth().padding(3.dp),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            // The bottom row sits ControlInset from the pill's side and bottom edges, so the chip and
+            // the send circle (radius ControlHeight / 2) are concentric with the pill's 28dp corners:
+            // inner radius = outer radius minus inset (TEN-134).
+            Column(modifier = Modifier.padding(start = ControlInset, end = ControlInset, top = 6.dp, bottom = ControlInset)) {
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerField ->
@@ -141,8 +144,8 @@ fun InputPill(
 /** The resident model's name, bottom-left of the pill: a tap opens Models, like the top bar pill used to (TEN-129). */
 @Composable
 private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(onClick = onClick, shape = TensaiShapes.small, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.height(ControlHeight).padding(horizontal = 10.dp)) {
+    Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.height(ControlHeight).padding(horizontal = 12.dp)) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = TensaiMono),
@@ -156,6 +159,9 @@ private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = M
 
 /** Shared by the model chip and the send button so the pill's bottom row lines up (TEN-129). */
 private val ControlHeight = 32.dp
+
+/** Pill corner radius (28dp) minus the controls' radius (16dp): what keeps them concentric. */
+private val ControlInset = 12.dp
 
 /**
  * Send (an up arrow) or stop, in a tonal violet circle as tall as the model chip: the circle in a
