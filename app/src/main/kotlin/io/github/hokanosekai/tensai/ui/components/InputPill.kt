@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.semantics.Role
@@ -104,6 +105,9 @@ fun InputPill(
         Surface(
             shape = TensaiShapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceVariant.let { if (translucent) it.copy(alpha = TranslucentAlpha) else it },
+            // Code blocks share surfaceVariant: without an edge the pill melted into one scrolling
+            // under it. Same hairline as the unselected chips.
+            border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outlineStrong),
             modifier = Modifier.fillMaxWidth().padding(3.dp),
         ) {
             // The bottom row sits ControlInset from the pill's side and bottom edges, so the chip and
