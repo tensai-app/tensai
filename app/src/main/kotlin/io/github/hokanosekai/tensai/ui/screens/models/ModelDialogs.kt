@@ -1,27 +1,20 @@
 package io.github.hokanosekai.tensai.ui.screens.models
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,12 +45,12 @@ internal fun DeleteModelDialog(modelName: String, onCancel: () -> Unit, onConfir
 }
 
 /**
- * "+" sheet: import from this phone (the existing picker), or Hugging Face, shown disabled with a
- * "Coming soon" badge until that exists.
+ * "+" sheet (TEN-138): "From Hugging Face" opens the Discover tab on its search field,
+ * "From this phone" runs the existing GGUF import.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AddModelSheet(onDismiss: () -> Unit, onImportFromPhone: () -> Unit) {
+internal fun AddModelSheet(onDismiss: () -> Unit, onBrowseHuggingFace: () -> Unit, onImportFromPhone: () -> Unit) {
     TensaiBottomSheet(
         onDismissRequest = onDismiss,
         shape = TensaiShapes.extraLarge.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
@@ -74,6 +67,15 @@ internal fun AddModelSheet(onDismiss: () -> Unit, onImportFromPhone: () -> Unit)
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             )
             SettingsRow(
+                icon = Icons.Default.TravelExplore,
+                title = stringResource(R.string.models_add_hf_title),
+                supporting = stringResource(R.string.models_add_hf_body),
+                onClick = {
+                    onDismiss()
+                    onBrowseHuggingFace()
+                },
+            )
+            SettingsRow(
                 icon = Icons.Default.FolderOpen,
                 title = stringResource(R.string.models_add_phone_title),
                 supporting = stringResource(R.string.models_add_phone_body),
@@ -82,28 +84,6 @@ internal fun AddModelSheet(onDismiss: () -> Unit, onImportFromPhone: () -> Unit)
                     onImportFromPhone()
                 },
             )
-            Box(modifier = Modifier.semantics(mergeDescendants = true) { disabled() }) {
-                SettingsRow(
-                    icon = Icons.Default.Download,
-                    title = stringResource(R.string.models_add_hf_title),
-                    supporting = stringResource(R.string.models_add_hf_body),
-                    modifier = Modifier.alpha(0.38f),
-                )
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.models_coming_soon),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                    )
-                }
-            }
         }
     }
 }

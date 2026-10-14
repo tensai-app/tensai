@@ -20,6 +20,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.outlined.SdStorage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -91,8 +92,11 @@ internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
  *   Settings' storage group, which is the only screen that can release space *without* deleting a
  *   model (saved sessions). Deleting a model is already possible right here, so the banner sends
  *   the user at the option this screen doesn't have.
- * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the picker,
- *   exactly as the empty state's button and the failure dialog's "Try again" do.
+ * @param onOpenRepo a Discover card was tapped, with its repo path (`author/name`). The repo screen
+ *   arrives with TEN-140.
+ * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the "Add a model"
+ *   sheet (TEN-138), whose "From this phone" row starts the picker, as the empty state's link and
+ *   the failure dialog's "Try again" do.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -101,6 +105,7 @@ fun ModelsScreen(
     onLoadModelClick: (String) -> Unit,
     onNavigateToStorage: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenRepo: (String) -> Unit = {},
     importRequests: Flow<Unit> = emptyFlow(),
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
@@ -119,6 +124,9 @@ fun ModelsScreen(
     var importProgress by remember { mutableStateOf<Float?>(null) }
     var importTotalBytes by remember { mutableStateOf<Long?>(null) }
     var showAddSheet by remember { mutableStateOf(false) }
+    // TEN-138: survives rotation. The focus request does not: a rotation must not pull the keyboard up again.
+    var tab by rememberSaveable { mutableStateOf(ModelsTab.OnDevice) }
+    var focusSearchPending by remember { mutableStateOf(false) }
     // Bumped after a successful import: a relink can leave the row structurally equal (same id, same
     // path), so nothing else would make the file-existence pass run again.
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -165,7 +173,16 @@ fun ModelsScreen(
         }
     }
 
-    fun launchImport() = importLauncher.launch(GgufMimeTypes)
+    // The import's progress and its failures are On device's business: land there.
+    fun launchImport() {
+        tab = ModelsTab.OnDevice
+        importLauncher.launch(GgufMimeTypes)
+    }
+
+    fun browseHuggingFace(focusSearch: Boolean) {
+        tab = ModelsTab.Discover
+        if (focusSearch) focusSearchPending = true
+    }
 
     LaunchedEffect(importRequests) {
         importRequests.collect { showAddSheet = true }
@@ -221,13 +238,15 @@ fun ModelsScreen(
     val shown = filterModels(currentModels.orEmpty(), verdicts, filter)
 
     Column(modifier = modifier.fillMaxSize()) {
+        ModelTabs(selected = tab, onSelect = { tab = it })
+
         // At the top, right under the bar whose "+" started it (TEN-108), and outside the `when`
         // so it shows whether or not the library was empty when the import began.
         importProgress?.let { progress ->
             ImportProgress(progress, importTotalBytes)
         }
 
-        if (!currentModels.isNullOrEmpty()) {
+        if (tab == ModelsTab.OnDevice && !currentModels.isNullOrEmpty()) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -248,9 +267,21 @@ fun ModelsScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             when {
+                tab == ModelsTab.Discover -> {
+                    DiscoverPane(
+                        focusSearch = focusSearchPending,
+                        onFocusSearchHandled = { focusSearchPending = false },
+                        onOpenRepo = onOpenRepo,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 currentModels == null -> Unit // initial Room query hasn't emitted yet.
                 currentModels.isEmpty() && importProgress == null -> {
-                    EmptyModelsState(onImportClick = ::launchImport, modifier = Modifier.fillMaxSize())
+                    EmptyModelsState(
+                        onBrowseClick = { browseHuggingFace(focusSearch = false) },
+                        onImportClick = ::launchImport,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
                 !existenceReady -> Unit // stat() pass still running, see above.
                 else -> {
@@ -318,7 +349,11 @@ fun ModelsScreen(
             }
 
             if (showAddSheet) {
-                AddModelSheet(onDismiss = { showAddSheet = false }, onImportFromPhone = ::launchImport)
+                AddModelSheet(
+                    onDismiss = { showAddSheet = false },
+                    onBrowseHuggingFace = { browseHuggingFace(focusSearch = true) },
+                    onImportFromPhone = ::launchImport,
+                )
             }
 
             SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
@@ -500,9 +535,9 @@ internal fun importFailureBody(failure: ImportFailure): String = when (failure) 
 }
 
 @Composable
-private fun EmptyModelsState(onImportClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun EmptyModelsState(onBrowseClick: () -> Unit, onImportClick: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.padding(32.dp),
+        modifier = modifier.padding(horizontal = 40.dp).padding(bottom = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -521,12 +556,18 @@ private fun EmptyModelsState(onImportClick: () -> Unit, modifier: Modifier = Mod
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 12.dp),
         )
-        TensaiButton(
-            text = stringResource(R.string.models_import),
-            onClick = onImportClick,
-            variant = TensaiButtonVariant.Outlined,
-            icon = Icons.Default.FolderOpen,
-            modifier = Modifier.padding(top = 20.dp),
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 20.dp)) {
+            TensaiButton(
+                text = stringResource(R.string.models_browse_hf),
+                onClick = onBrowseClick,
+                icon = Icons.Default.TravelExplore,
+            )
+            TensaiButton(
+                text = stringResource(R.string.models_import),
+                onClick = onImportClick,
+                variant = TensaiButtonVariant.Text,
+                icon = Icons.Default.FolderOpen,
+            )
+        }
     }
 }

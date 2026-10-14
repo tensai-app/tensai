@@ -286,7 +286,11 @@
     <!-- Models list, model card and model detail. %1$s in the *_named / *_title / in_use strings is a model's display name. -->
     <string name="models_import">Import a GGUF file</string>
     <string name="models_empty_title">No models yet</string>
-    <string name="models_empty_body">Import a GGUF file from this phone to start chatting offline.</string>
+    <string name="models_empty_body">Find one on Hugging Face, or import a GGUF file from this phone.</string>
+    <string name="models_browse_hf">Browse Hugging Face</string>
+    <!-- Tabs under the Models top bar (TEN-138). -->
+    <string name="models_tab_device">On device</string>
+    <string name="models_tab_discover">Discover</string>
     <string name="model_open_details">Open model details</string>
     <string name="model_options">Model options</string>
     <string name="model_details_menu">Model details</string>
@@ -294,8 +298,7 @@
     <string name="models_add_phone_title">From this phone</string>
     <string name="models_add_phone_body">Import a GGUF file</string>
     <string name="models_add_hf_title">From Hugging Face</string>
-    <string name="models_add_hf_body">Browse and download models</string>
-    <string name="models_coming_soon">Coming soon</string>
+    <string name="models_add_hf_body">Search and download</string>
     <!-- %1$s is the memory the model needs, %2$s what the phone has, both formatted sizes. -->
     <string name="model_compat_needs">Needs %1$s, phone has %2$s</string>
     <!-- %1$s is the bytes copied so far, %2$s the file size, both formatted sizes. -->

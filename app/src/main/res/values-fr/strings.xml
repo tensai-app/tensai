@@ -222,7 +222,11 @@
     <!-- Models list, model card and model detail. -->
     <string name="models_import">Importer un fichier GGUF</string>
     <string name="models_empty_title">Aucun modèle pour l\'instant</string>
-    <string name="models_empty_body">Importer un fichier GGUF depuis ce téléphone pour discuter hors ligne.</string>
+    <string name="models_empty_body">En trouver un sur Hugging Face, ou importer un fichier GGUF depuis ce téléphone.</string>
+    <string name="models_browse_hf">Parcourir Hugging Face</string>
+    <!-- Onglets sous la barre Modèles (TEN-138). -->
+    <string name="models_tab_device">Sur l\'appareil</string>
+    <string name="models_tab_discover">Découvrir</string>
     <string name="model_open_details">Ouvrir les détails du modèle</string>
     <string name="model_options">Options du modèle</string>
     <string name="model_details_menu">Détails du modèle</string>
@@ -230,8 +234,7 @@
     <string name="models_add_phone_title">Depuis ce téléphone</string>
     <string name="models_add_phone_body">Importer un fichier GGUF</string>
     <string name="models_add_hf_title">Depuis Hugging Face</string>
-    <string name="models_add_hf_body">Parcourir et télécharger des modèles</string>
-    <string name="models_coming_soon">Bientôt</string>
+    <string name="models_add_hf_body">Rechercher et télécharger</string>
     <string name="model_compat_needs">Nécessite %1$s, le téléphone dispose de %2$s</string>
     <string name="models_import_progress">Copie du modèle · %1$s / %2$s</string>
     <string name="models_import_progress_unknown">Copie du modèle</string>
