@@ -314,7 +314,7 @@
     <string name="onboarding_try_another">Essayer un autre fichier</string>
     <string name="onboarding_your_model">Le modèle</string>
     <string name="onboarding_imported_badge">Importé</string>
-    <string name="onboarding_download_soon">Télécharger des modèles directement depuis l\'app</string>
+    <string name="onboarding_download_soon">Téléchargement dans l\'app</string>
     <string name="onboarding_coming_soon">Bientôt</string>
     <string name="onboarding_ready_title">%1$s est prêt à être chargé</string>
     <string name="onboarding_ready_body">Le chargement prend quelques secondes. Le modèle reste ensuite en mémoire.</string>

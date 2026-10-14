@@ -664,6 +664,8 @@ private fun ColumnScope.ModelStep(
                 text = stringResource(R.string.onboarding_download_soon),
                 fontSize = 12.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
             TensaiBadge(stringResource(R.string.onboarding_coming_soon))

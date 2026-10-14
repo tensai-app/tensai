@@ -388,7 +388,7 @@
     <string name="onboarding_try_another">Try another file</string>
     <string name="onboarding_your_model">Your model</string>
     <string name="onboarding_imported_badge">Imported</string>
-    <string name="onboarding_download_soon">Download models directly from the app</string>
+    <string name="onboarding_download_soon">In-app model downloads</string>
     <string name="onboarding_coming_soon">Coming soon</string>
     <!-- %1$s is the model's display name. -->
     <string name="onboarding_ready_title">%1$s is ready to load</string>
