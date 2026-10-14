@@ -104,9 +104,11 @@ fun InputPill(
 
         Surface(
             shape = TensaiShapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceVariant.let { if (translucent) it.copy(alpha = TranslucentAlpha) else it },
-            // Code blocks share surfaceVariant: without an edge the pill melted into one scrolling
-            // under it. Same hairline as the unselected chips.
+            // surface, darker than the surfaceVariant of code blocks and bubbles, plus the kit's elev-3
+            // shadow: the pill reads as floating above whatever scrolls under it.
+            color = MaterialTheme.colorScheme.surface.let { if (translucent) it.copy(alpha = TranslucentAlpha) else it },
+            shadowElevation = 8.dp,
+            // The edge, in the same hairline as the unselected chips.
             border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outlineStrong),
             modifier = Modifier.fillMaxWidth().padding(3.dp),
         ) {
@@ -231,7 +233,7 @@ private fun SendButton(canStop: Boolean, onClick: () -> Unit, enabled: Boolean) 
                     imageVector = if (canStop) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
                     contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
                     tint = if (enabled) primary else primary.copy(alpha = 0.38f),
-                    modifier = Modifier.size(if (canStop) 16.dp else 20.dp),
+                    modifier = Modifier.size(if (canStop) 18.dp else 20.dp),
                 )
             }
         }
