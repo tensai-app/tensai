@@ -147,6 +147,8 @@ fun HomeScreen(
                         // see, which is worse than not offering it.
                         onStop = {},
                         isGenerating = false,
+                        modelLabel = state.modelName,
+                        onModelClick = onNavigateToModels,
                     )
                 }
 

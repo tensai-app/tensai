@@ -30,8 +30,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.hokanosekai.tensai.R
-import io.github.hokanosekai.tensai.runtime.QueueState
-import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
@@ -102,10 +100,9 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     val currentRoute = backStackEntry?.destination?.route
     val chrome = chromeForRoute(currentRoute)
 
-    val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
-    val modelPillLabel = queueState.residentModel
-        ?.let { "${it.name} · ${it.nCtxEffective}" }
-        ?: stringResource(R.string.top_bar_no_model)
+    // The top bar's title (TEN-129): the open chat's conversation title, read off the same Room flow
+    // as the drawer's recents so it follows the first message's auto-title. Null until it emits.
+    val conversations by RuntimeGraph.chatRepository.observeConversations().collectAsState(initial = null)
 
     // The top bar's "+" on Models (TEN-108) and the picker it opens live on opposite sides of the
     // NavHost: the launcher and the import it starts belong to ModelsScreen's scope. The bar only
@@ -121,6 +118,18 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     // NavController.currentBackStack, which is restricted to androidx.navigation (lint
     // RestrictedApi). A stale entry is two short strings that no drawer row matches.
     val createdChatIds = remember { mutableStateMapOf<String, String>() }
+
+    val untitledLabel = stringResource(R.string.drawer_new_chat)
+    // A draft's route still says "new" once it has its row, so createdChatIds comes first: the same
+    // resolution as the drawer's active row. No row yet (or still blank) reads as the untitled label.
+    val chatTitle = if (currentRoute?.startsWith("chat/") == true) {
+        val argId = backStackEntry?.arguments?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
+        val chatId = backStackEntry?.id?.let(createdChatIds::get)
+            ?: argId?.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID }
+        conversationLabel(conversations?.firstOrNull { it.id == chatId }?.title.orEmpty(), untitledLabel)
+    } else {
+        null
+    }
 
     val startDestination = when (onboardingEntry) {
         OnboardingEntry.None -> TensaiDestination.Home.route
@@ -168,8 +177,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 when (chrome) {
                     TensaiChrome.Main -> TensaiTopBar(
                         onMenuClick = { scope.launch { drawerState.open() } },
-                        onModelPillClick = { navController.navigate(TensaiDestination.Models.route) },
-                        modelLabel = modelPillLabel,
+                        title = chatTitle,
                         actions = {
                             if (currentRoute?.startsWith("chat/") == true) {
                                 IconButton(onClick = { chatSettingsRequests.tryEmit(Unit) }) {

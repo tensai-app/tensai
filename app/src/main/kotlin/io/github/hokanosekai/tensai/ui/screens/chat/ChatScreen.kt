@@ -60,7 +60,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
  * The chat screen for `chat/{conversationId}` (TEN-32) — replaces `ChatScreenPlaceholder`. Chrome
- * (drawer hamburger, model pill in the top bar) is owned by `TensaiShell`; this composable is body
+ * (drawer hamburger, conversation title in the top bar) is owned by `TensaiShell`; this composable is body
  * content only.
  *
  * @param conversationId an existing conversation, or `null` for a new chat: a draft that gets its
@@ -254,6 +254,8 @@ fun ChatScreen(
             onStop = viewModel::stop,
             isGenerating = isGenerating,
             canStop = canStop,
+            modelLabel = modelInfo?.name ?: stringResource(R.string.top_bar_no_model),
+            onModelClick = onNavigateToModels,
             modifier = Modifier.padding(16.dp),
         )
     }

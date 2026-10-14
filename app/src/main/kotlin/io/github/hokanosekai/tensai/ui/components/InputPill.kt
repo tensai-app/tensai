@@ -8,7 +8,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
@@ -40,13 +42,16 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
+import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
- * The app's single text-entry affordance: a pill holding a plain text
- * field, and a send/stop action. Shared by
+ * The app's single text-entry affordance: a rounded surface with the text
+ * field on top and, below it, a model chip (left) and the send/stop action (right). Shared by
  * [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and, per TEN-37, Home.
  *
  * V1 is deliberately spare (no attach/mic actions, per the design): the trailing button toggles
@@ -54,6 +59,8 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
  * pill while [isGenerating]. The ring respects the system's "remove animations" accessibility
  * toggle the same way [KanjiGlyph] does — reduced motion gets a static ring, not a spinning one.
  *
+ * @param modelLabel the resident model's name, or the "no model" label (TEN-129).
+ * @param onModelClick tap on the model chip: opens the Models screen.
  * @param isGenerating a generation is running — app-wide, not necessarily this screen's. Shows the
  *   ring and blocks sending: the queue runs one generation at a time, and a send issued now would
  *   only be rejected.
@@ -70,6 +77,8 @@ fun InputPill(
     onSend: () -> Unit,
     onStop: () -> Unit,
     isGenerating: Boolean,
+    modelLabel: String,
+    onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
     canStop: Boolean = isGenerating,
 ) {
@@ -83,14 +92,11 @@ fun InputPill(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth().padding(3.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            ) {
+            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerField ->
@@ -105,20 +111,48 @@ fun InputPill(
                     },
                 )
 
-                IconButton(
-                    onClick = { if (canStop) onStop() else onSend() },
-                    // Busy without a stop to offer leaves the button disabled rather than enabled
-                    // on a send the queue would refuse — with the ring still turning to say why.
-                    enabled = canStop || (!isGenerating && value.isNotBlank()),
+                // SpaceBetween rather than a weighted spacer: two weights split the row in half and
+                // cut a model name short with room to spare. The chip takes what the button leaves.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(
-                        imageVector = if (canStop) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
-                        tint = MaterialTheme.colorScheme.primary,
+                    ModelChip(
+                        label = modelLabel,
+                        onClick = onModelClick,
+                        modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
                     )
+                    IconButton(
+                        onClick = { if (canStop) onStop() else onSend() },
+                        // Busy without a stop to offer leaves the button disabled rather than enabled
+                        // on a send the queue would refuse, with the ring still turning to say why.
+                        enabled = canStop || (!isGenerating && value.isNotBlank()),
+                    ) {
+                        Icon(
+                            imageVector = if (canStop) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                            contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/** The resident model's name, bottom-left of the pill: a tap opens Models, like the top bar pill used to (TEN-129). */
+@Composable
+private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(onClick = onClick, shape = TensaiShapes.small, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = TensaiMono),
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        )
     }
 }
 
