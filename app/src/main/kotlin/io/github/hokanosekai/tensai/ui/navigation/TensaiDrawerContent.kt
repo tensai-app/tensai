@@ -157,7 +157,9 @@ fun TensaiDrawerContent(
                     letterSpacing = 0.04.em,
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp),
+                // The bottom gap keeps the label off the first row's pill when that row is the
+                // active one (TEN-130).
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
             )
 
             // Recents is the only part that grows without bound, so it is the only part that
