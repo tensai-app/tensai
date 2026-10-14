@@ -97,6 +97,7 @@ class DownloadNotifier(private val context: Context) {
 
     private fun reason(error: DownloadError): String = when (error) {
         DownloadError.Gated -> context.getString(R.string.download_error_gated)
+        DownloadError.LicenseNotAccepted -> context.getString(R.string.download_error_license)
         DownloadError.InvalidToken -> context.getString(R.string.download_error_invalid_token)
         DownloadError.NotFound -> context.getString(R.string.download_error_not_found)
         DownloadError.ChecksumMismatch -> context.getString(R.string.download_error_checksum)

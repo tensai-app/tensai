@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+. Only the Hugging Face token file is excluded (TEN-144); everything else keeps the
+     default backup behaviour. The token is encrypted with a Keystore key that never leaves the
+     device, so a restored copy could not be opened anyway. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb" />
+        <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb.tmp" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb" />
+        <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb.tmp" />
+    </device-transfer>
+</data-extraction-rules>

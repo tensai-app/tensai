@@ -286,34 +286,94 @@ class DownloadEngineTest {
         assertFalse("nothing was written for any of them", part.exists() && part.length() > 0)
     }
 
-    @Test
-    fun a401WithATokenThatWorksAnonymouslyIsInvalidToken() {
-        token = "hf_bad"
+    /**
+     * A gated file: anonymous requests get [anonymous], requests with [goodToken] get the file,
+     * any other bearer gets [other]. Records every request.
+     */
+    private fun gatedServer(anonymous: Int, other: Int, goodToken: String? = null): RangeServer {
+        val range = RangeServer()
         server.dispatcher = object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest) =
-                if (request.getHeader("Authorization") != null) MockResponse().setResponseCode(401)
-                else MockResponse().setResponseCode(206).addHeader("Content-Range", "bytes 0-0/1").setBody("x")
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val auth = request.getHeader("Authorization")
+                return when {
+                    auth == null -> {
+                        range.requests += request
+                        MockResponse().setResponseCode(anonymous)
+                    }
+                    goodToken != null && auth == "Bearer $goodToken" -> range.dispatch(request)
+                    else -> {
+                        range.requests += request
+                        MockResponse().setResponseCode(other)
+                    }
+                }
+            }
         }
+        return range
+    }
 
-        assertEquals(DownloadError.InvalidToken, (failure { run() } as DownloadException).error)
+    private fun gatedError(): DownloadError = (failure { run() } as DownloadException).error
+
+    @Test
+    fun gatedWithoutATokenIsGatedOnEither401Or403AndMakesOneRequest() {
+        for (code in listOf(401, 403)) {
+            val range = gatedServer(anonymous = code, other = 500)
+            assertEquals(DownloadError.Gated, gatedError())
+            assertEquals(1, range.requests.size)
+            assertNull(range.requests.single().getHeader("Authorization"))
+        }
     }
 
     @Test
-    fun a401WithATokenThatAlsoFailsAnonymouslyIsGated() {
-        token = "hf_ok_but_no_licence"
-        answer(401)
+    fun a401ToAValidTokenIsInvalidTokenNeverTheLicense() {
+        token = "hf_badbadbad"
+        val range = gatedServer(anonymous = 401, other = 401)
 
-        assertEquals(DownloadError.Gated, (failure { run() } as DownloadException).error)
+        assertEquals(DownloadError.InvalidToken, gatedError())
+        assertEquals(listOf(null, "Bearer hf_badbadbad"), range.requests.map { it.getHeader("Authorization") })
     }
 
     @Test
-    fun theTokenIsSentAsBearer() {
-        token = "hf_abc"
+    fun a403ToATokenIsTheLicenseNotAcceptedAndAnonymous403AlsoTriesTheToken() {
+        token = "hf_validvalid"
+        for (anonymous in listOf(401, 403)) {
+            val range = gatedServer(anonymous = anonymous, other = 403)
+            assertEquals(DownloadError.LicenseNotAccepted, gatedError())
+            assertEquals(2, range.requests.size)
+        }
+    }
+
+    @Test
+    fun aGatedFileWithAGoodTokenIsFetchedAfterAnAnonymousRefusal() {
+        token = "hf_goodgood1"
+        val range = gatedServer(anonymous = 401, other = 401, goodToken = "hf_goodgood1")
+
+        run()
+
+        assertEquals(listOf(null, "Bearer hf_goodgood1"), range.requests.map { it.getHeader("Authorization") })
+        assertArrayEquals(content, part.readBytes())
+    }
+
+    @Test
+    fun aPublicFileNeverCarriesTheToken() {
+        token = "hf_publicpub"
         val range = RangeServer().also { server.dispatcher = it }
 
         run()
 
-        assertEquals("Bearer hf_abc", range.requests.single().getHeader("Authorization"))
+        assertNull(range.requests.single().getHeader("Authorization"))
+    }
+
+    @Test
+    fun aMalformedStoredTokenIsIgnoredWithoutCrashing() {
+        for (bad in listOf("hf bad token", "hf_éééééé", "hf_line\nbreak1", "short")) {
+            token = bad
+            val range = gatedServer(anonymous = 401, other = 401)
+            // No usable token: the same outcome as having none, one request, no header, no exception text with the value.
+            val error = failure { run() }
+            assertEquals(DownloadError.Gated, (error as DownloadException).error)
+            assertFalse((error.message ?: "").contains(bad))
+            assertEquals(1, range.requests.size)
+        }
     }
 
     // ---- disk ----

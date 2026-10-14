@@ -29,6 +29,9 @@ import okhttp3.Response
 /** One page of search results; [nextCursor] feeds [HfClient.searchNext], null on the last page. */
 data class HfPage(val items: List<HfRepoSummary>, val nextCursor: String?)
 
+/** What [HfClient.checkToken] found out about a token. */
+enum class HfTokenCheck { Accepted, Rejected, Unavailable }
+
 /**
  * Hugging Face Hub client: search, repo details, README, file URLs. Data layer only.
  *
@@ -48,10 +51,12 @@ data class HfPage(val items: List<HfRepoSummary>, val nextCursor: String?)
  * - Repo screen: 1 [detail] (cache hit when the card was already shown), 1 [readme] on expand.
  * - Download: [fileUrl] builds the URL, no call here.
  *
- * **Invalid token.** An invalid token makes the Hub answer 401 even on public endpoints. On a 401
- * sent with a token the call is retried once without it: if that works the error is
- * [HfError.InvalidToken] (the token is the problem), otherwise the anonymous 401/403 stands and is
- * [HfError.Gated] (the repo is). That costs one extra request only in the failure case.
+ * **Token, least privilege.** Every call starts anonymously, so public browsing (search, pages, public
+ * repos) never depends on the token and a bad token cannot break it. Only [detail] and [readme] retry
+ * with the token, and only after an anonymous 401/403: the Hub then answers 401 for a token it does
+ * not accept ([HfError.InvalidToken]) and 403 for a valid token without access to the repo
+ * ([HfError.Gated], the licence is not accepted). Without a token the anonymous 401/403 is
+ * [HfError.Gated]. A malformed token ([TokenFormat]) counts as no token.
  *
  * @param tokenProvider the user's Hugging Face token or null, read on every call so a change in
  *   Settings applies at once. Sent as `Authorization: Bearer` to [baseUrl] only.
@@ -114,7 +119,7 @@ class HfClient(
             inFlight.getOrPut(repo) {
                 scope.async {
                     try {
-                        val parsed = fetch(url) { parse { HfParser.parseDetail(readBody(it, MAX_JSON_BYTES)) } }
+                        val parsed = fetch(url, authRetry = true) { parse { HfParser.parseDetail(readBody(it, MAX_JSON_BYTES)) } }
                         synchronized(cache) { cache[repo] = parsed }
                         parsed
                     } finally {
@@ -129,7 +134,7 @@ class HfClient(
 
     /** `README.md` of [repo] as text, capped at [README_MAX_BYTES]. */
     suspend fun readme(repo: String): String =
-        fetch(repoUrl(repo, "raw/main/README.md", api = false)) { readBody(it, README_MAX_BYTES) }
+        fetch(repoUrl(repo, "raw/main/README.md", api = false), authRetry = true) { readBody(it, README_MAX_BYTES) }
 
     /** Direct download URL of [fileName] in [repo] at [revision] (a commit sha to pin it, `main` otherwise; honours `Range`). Same origin, no call made. */
     fun fileUrl(repo: String, fileName: String, revision: String = "main"): String =
@@ -139,6 +144,30 @@ class HfClient(
     fun repoPageUrl(repo: String): String = repoUrl(repo, "", api = false).toString()
 
     fun clearCache() = synchronized(cache) { cache.clear() }
+
+    /**
+     * One cheap authenticated call (`GET /api/whoami-v2`) to tell whether [token] is accepted, used
+     * when the user saves it in Settings. Goes to [baseUrl] only; the token is sent as given (not
+     * [tokenProvider]'s) and never logged. 401 is [HfTokenCheck.Rejected]; anything that does not
+     * settle it (offline, 5xx, 429) is [HfTokenCheck.Unavailable].
+     */
+    suspend fun checkToken(token: String): HfTokenCheck = withContext(Dispatchers.IO) {
+        if (!TokenFormat.isValid(token.trim())) return@withContext HfTokenCheck.Rejected
+        val url = origin.newBuilder().addPathSegments("api/whoami-v2").build()
+        val live = AtomicReference<Call?>(null)
+        try {
+            send(url, token.trim(), live).use {
+                when {
+                    it.isSuccessful -> HfTokenCheck.Accepted
+                    it.code == 401 -> HfTokenCheck.Rejected
+                    else -> HfTokenCheck.Unavailable
+                }
+            }
+        } catch (e: IOException) {
+            coroutineContext.ensureActive()
+            HfTokenCheck.Unavailable
+        }
+    }
 
     private suspend fun page(url: HttpUrl): HfPage = fetch(url) {
         val next = it.headers("Link").firstNotNullOfOrNull { h -> NEXT_LINK.find(h)?.groupValues?.get(1) }
@@ -169,9 +198,9 @@ class HfClient(
      * is cancelled at any point: while connecting (via the continuation) or while [read] blocks on
      * the body (via a watcher child that fires when the scope is cancelled).
      */
-    private suspend fun <T> fetch(url: HttpUrl, read: (Response) -> T): T = withContext(Dispatchers.IO) {
+    private suspend fun <T> fetch(url: HttpUrl, authRetry: Boolean = false, read: (Response) -> T): T = withContext(Dispatchers.IO) {
         coroutineScope {
-            val token = tokenProvider()?.takeIf { it.isNotBlank() }
+            val token = TokenFormat.usable(tokenProvider())
             val live = AtomicReference<Call?>(null)
             val watcher = launch {
                 try {
@@ -181,15 +210,16 @@ class HfClient(
                 }
             }
             try {
-                var response = send(url, token, live)
-                if (response.code == 401 && token != null) {
+                var response = send(url, null, live)
+                if ((response.code == 401 || response.code == 403) && authRetry && token != null) {
+                    // Refused anonymously: only now does the token leave the phone. 401 again means the
+                    // Hub does not accept it, 403 means it does but the account lacks access (licence).
                     response.close()
-                    val anonymous = send(url, null, live)
-                    if (anonymous.isSuccessful) {
-                        anonymous.close()
+                    response = send(url, token, live)
+                    if (response.code == 401) {
+                        response.close()
                         throw HfException(HfError.InvalidToken)
                     }
-                    response = anonymous
                 }
                 response.use {
                     if (!it.isSuccessful) {
@@ -210,7 +240,7 @@ class HfClient(
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun send(url: HttpUrl, token: String?, live: AtomicReference<Call?>): Response {
         val request = Request.Builder().url(url).header("Accept", "application/json, text/plain")
-            .apply { token?.let { header("Authorization", "Bearer $it") } }
+            .bearer(token)
             .build()
         return suspendCancellableCoroutine { cont ->
             val call = http.newCall(request)

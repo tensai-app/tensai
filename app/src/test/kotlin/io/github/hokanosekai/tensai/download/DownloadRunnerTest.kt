@@ -477,7 +477,7 @@ class DownloadRunnerTest {
     @Test
     fun errorCodesRoundTrip() {
         val all = listOf(
-            DownloadError.Gated, DownloadError.InvalidToken, DownloadError.NotFound, DownloadError.ChecksumMismatch,
+            DownloadError.Gated, DownloadError.LicenseNotAccepted, DownloadError.InvalidToken, DownloadError.NotFound, DownloadError.ChecksumMismatch,
             DownloadError.SizeMismatch, DownloadError.DiskFull, DownloadError.Network, DownloadError.AlreadyImported,
             DownloadError.InvalidModel, DownloadError.Unknown, DownloadError.Http(418),
         )

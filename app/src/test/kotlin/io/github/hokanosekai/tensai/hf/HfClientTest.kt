@@ -117,17 +117,20 @@ class HfClientTest {
 
     @Test
     fun `readme and token header`() = runBlocking {
-        token = "hf_secret"
+        token = "hf_secret_token"
+        // Public README: anonymous, the token stays home.
         server.enqueue(ok("# Hello"))
         assertEquals("# Hello", client.readme("a/b"))
         val req = server.takeRequest()
         assertEquals("/a/b/raw/main/README.md", req.requestUrl!!.encodedPath)
-        assertEquals("Bearer hf_secret", req.getHeader("Authorization"))
+        assertNull(req.getHeader("Authorization"))
 
-        token = null
-        server.enqueue(ok("# Hello"))
-        client.readme("a/b")
+        // Gated README: refused anonymously, then the token is sent as a bearer.
+        server.enqueue(status(401))
+        server.enqueue(ok("# Gated"))
+        assertEquals("# Gated", client.readme("a/b"))
         assertNull(server.takeRequest().getHeader("Authorization"))
+        assertEquals("Bearer hf_secret_token", server.takeRequest().getHeader("Authorization"))
     }
 
     @Test
@@ -180,23 +183,73 @@ class HfClientTest {
     }
 
     @Test
-    fun `a refused token on a public call is InvalidToken, a real gated repo stays Gated`() {
-        token = "hf_bad"
-        // Token refused, anonymous retry works: the token is the problem.
-        server.enqueue(status(401))
-        server.enqueue(ok("[]"))
-        assertEquals(HfError.InvalidToken, errorOf { client.search("x") })
-        assertEquals("Bearer hf_bad", server.takeRequest().getHeader("Authorization"))
+    fun `public calls are anonymous, so a bad token cannot break browsing`() {
+        token = "hf_badbadbad"
+        server.enqueue(ok(fixture("search_page.json")))
+        runBlocking { client.search("x") }
         assertNull(server.takeRequest().getHeader("Authorization"))
-        // Both refused: the repo is gated.
+
+        // A refused search (whatever the reason) is Gated at most, never InvalidToken, and sends no token.
+        server.enqueue(status(401))
+        assertEquals(HfError.Gated(401), errorOf { client.search("x") })
+        assertNull(server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun `gated repo, 401 and 403, with and without a token`() {
+        // No token: the anonymous answer stands, one request each.
+        token = null
+        server.enqueue(status(401))
+        assertEquals(HfError.Gated(401), errorOf { client.detail("a/b", forceRefresh = true) })
+        server.enqueue(status(403))
+        assertEquals(HfError.Gated(403), errorOf { client.readme("a/b") })
+        assertEquals(2, server.requestCount)
+
+        // A token the Hub refuses (401 again): InvalidToken.
+        token = "hf_badbadbad"
+        server.enqueue(status(401))
+        server.enqueue(status(401))
+        assertEquals(HfError.InvalidToken, errorOf { client.detail("a/b", forceRefresh = true) })
+        server.enqueue(status(403))
+        server.enqueue(status(401))
+        assertEquals(HfError.InvalidToken, errorOf { client.readme("a/b") })
+
+        // A valid token without access (403): Gated(403), the licence.
+        token = "hf_validvalid"
         server.enqueue(status(401))
         server.enqueue(status(403))
         assertEquals(HfError.Gated(403), errorOf { client.readme("a/b") })
-        // Without a token there is no retry.
-        token = null
+        server.enqueue(status(403))
+        server.enqueue(status(403))
+        assertEquals(HfError.Gated(403), errorOf { client.detail("a/b", forceRefresh = true) })
+        assertEquals(10, server.requestCount)
+    }
+
+    @Test
+    fun `a malformed token is never sent and never thrown`() {
+        for (bad in listOf("hf bad token", "hf_\u00e9\u00e9\u00e9\u00e9\u00e9", "hf_line\nbreak1", "short")) {
+            token = bad
+            server.enqueue(status(401))
+            val error = errorOf { client.readme("a/b") }
+            assertEquals(HfError.Gated(401), error)
+            assertEquals(null, server.takeRequest().getHeader("Authorization"))
+        }
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun `checkToken tells accepted from rejected and unreachable`() = runBlocking {
+        server.enqueue(ok("{}"))
+        assertEquals(HfTokenCheck.Accepted, client.checkToken("hf_validvalid"))
+        val req = server.takeRequest()
+        assertEquals("/api/whoami-v2", req.requestUrl!!.encodedPath)
+        assertEquals("Bearer hf_validvalid", req.getHeader("Authorization"))
         server.enqueue(status(401))
-        assertEquals(HfError.Gated(401), errorOf { client.readme("a/b") })
-        assertEquals(5, server.requestCount)
+        assertEquals(HfTokenCheck.Rejected, client.checkToken("hf_validvalid"))
+        server.enqueue(status(503))
+        assertEquals(HfTokenCheck.Unavailable, client.checkToken("hf_validvalid"))
+        assertEquals(HfTokenCheck.Rejected, client.checkToken("bad token"))
+        assertEquals(3, server.requestCount)
     }
 
     @Test

@@ -49,6 +49,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     route?.startsWith("chat/") == true -> TensaiChrome.Main
     route == TensaiDestination.Models.route -> TensaiChrome.Detail
     route?.startsWith("model/") == true -> TensaiChrome.Detail
+    route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> TensaiChrome.Detail
     route == TensaiDestination.Settings.route -> TensaiChrome.Detail
     route == TensaiDestination.Licenses.route -> TensaiChrome.Detail
     route == TensaiDestination.Server.route -> TensaiChrome.Detail
@@ -59,6 +60,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
 private fun detailTitleForRoute(route: String?): Int? = when {
     route == TensaiDestination.Models.route -> R.string.nav_models
     route?.startsWith("model/") == true -> R.string.nav_model_details
+    route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> R.string.nav_hugging_face
     route == TensaiDestination.Settings.route -> R.string.nav_settings
     route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Server.route -> R.string.nav_server

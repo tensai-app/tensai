@@ -394,8 +394,13 @@ private fun AnnotatedString.Builder.appendInlineNodes(
             is Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlineNodes(node.firstChild, codeBackground, linkColor) }
             is StrongEmphasis -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendInlineNodes(node.firstChild, codeBackground, linkColor) }
             is Link -> {
-                val linkStyle = TextLinkStyles(style = SpanStyle(color = linkColor, fontWeight = FontWeight.SemiBold))
-                withLink(LinkAnnotation.Url(node.destination, linkStyle)) { appendInlineNodes(node.firstChild, codeBackground, linkColor) }
+                // Only web links are live: `javascript:`, `intent:`, `file:` and the rest render as plain text.
+                if (!isWebLink(node.destination)) {
+                    appendInlineNodes(node.firstChild, codeBackground, linkColor)
+                } else {
+                    val linkStyle = TextLinkStyles(style = SpanStyle(color = linkColor, fontWeight = FontWeight.SemiBold))
+                    withLink(LinkAnnotation.Url(node.destination, linkStyle)) { appendInlineNodes(node.firstChild, codeBackground, linkColor) }
+                }
             }
             // Any other inline node (e.g. an image) — fall through to its children, if any.
             else -> appendInlineNodes(node.firstChild, codeBackground, linkColor)
@@ -438,4 +443,10 @@ private fun Node.children(): List<Node> {
         child = child.next
     }
     return result
+}
+
+/** True for an `http://` or `https://` destination (any case), the only schemes a Markdown link may open. */
+internal fun isWebLink(destination: String?): Boolean {
+    val d = destination?.trim() ?: return false
+    return d.startsWith("http://", ignoreCase = true) || d.startsWith("https://", ignoreCase = true)
 }

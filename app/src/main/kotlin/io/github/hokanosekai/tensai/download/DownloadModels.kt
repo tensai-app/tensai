@@ -30,10 +30,13 @@ enum class DownloadStatus(val code: String) {
 sealed interface DownloadError {
     val code: String
 
-    /** 401/403 on a repo that needs an accepted licence and/or a token. */
+    /** Refused anonymously and no token set: the repo needs a token (and an accepted licence). */
     data object Gated : DownloadError { override val code = "gated" }
 
-    /** The configured token was refused but the file is reachable anonymously. */
+    /** A valid token, still 403: the licence is not accepted on that account. */
+    data object LicenseNotAccepted : DownloadError { override val code = "license" }
+
+    /** The configured token was refused (401 to a request that carried it). */
     data object InvalidToken : DownloadError { override val code = "invalid_token" }
 
     data object NotFound : DownloadError { override val code = "not_found" }
@@ -64,7 +67,7 @@ sealed interface DownloadError {
 
     companion object {
         private val simple = listOf(
-            Gated, InvalidToken, NotFound, ChecksumMismatch, SizeMismatch, DiskFull, Network, AlreadyImported, InvalidModel, Unknown,
+            Gated, LicenseNotAccepted, InvalidToken, NotFound, ChecksumMismatch, SizeMismatch, DiskFull, Network, AlreadyImported, InvalidModel, Unknown,
         )
 
         fun fromCode(code: String?): DownloadError? = when {

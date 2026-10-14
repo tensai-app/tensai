@@ -44,6 +44,20 @@ sealed class TensaiDestination(val route: String) {
         fun route(modelId: String) = "model/$modelId"
     }
 
+    /**
+     * A Hugging Face repo (TEN-140), opened from a Discover card or a pasted link. Both arguments are
+     * query parameters: the repo id holds a slash (`author/name`) and travels encoded.
+     * [ARG_FILE] is the file a link pointed at, selected on open, absent otherwise.
+     */
+    data object Repo : TensaiDestination("repo?id={id}&file={file}") {
+        const val ARG_ID = "id"
+        const val ARG_FILE = "file"
+        const val PREFIX = "repo?"
+
+        fun route(repoId: String, file: String? = null) =
+            "repo?id=${Uri.encode(repoId)}" + (file?.let { "&file=${Uri.encode(it)}" } ?: "")
+    }
+
     /** Drives [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel] for [ARG_MODEL_ID]. */
     data object Loading : TensaiDestination("loading/{modelId}") {
         const val ARG_MODEL_ID = "modelId"

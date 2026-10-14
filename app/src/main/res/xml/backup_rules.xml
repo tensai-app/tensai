@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 29-30 (before dataExtractionRules). Same single exclusion, see data_extraction_rules.xml. -->
+<full-backup-content>
+    <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb" />
+    <exclude domain="file" path="datastore/tensai_hf_token.preferences_pb.tmp" />
+</full-backup-content>

@@ -24,6 +24,7 @@ import io.github.hokanosekai.tensai.download.DownloadPreferences
 import io.github.hokanosekai.tensai.download.DownloadRunner
 import io.github.hokanosekai.tensai.download.WorkManagerScheduler
 import io.github.hokanosekai.tensai.hf.HfClient
+import io.github.hokanosekai.tensai.hf.TokenStore
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -128,6 +129,9 @@ object RuntimeGraph {
 
         // TEN-141: stuck rows, orphan parts, and a drainer if anything is waiting.
         applicationScope.launch { runCatching { downloadManager.reconcile() } }
+
+        // TEN-144: decrypt the Hugging Face token once, off Main, so the HTTP clients' provider is a cache hit.
+        applicationScope.launch(Dispatchers.IO) { runCatching { tokenStore.get() } }
     }
 
     /**
@@ -207,10 +211,12 @@ object RuntimeGraph {
 
     /**
      * Hugging Face Hub client (TEN-136), the app's only network access: huggingface.co and nothing
-     * else, see the privacy contract in the `hf` package. The token provider returns null until the
-     * encrypted token setting exists (TEN-144), which is when it gets wired here.
+     * else, see the privacy contract in the `hf` package. Its token provider reads [tokenStore]'s cache.
      */
-    val hfClient: HfClient by lazy { HfClient(tokenProvider = { null }) }
+    val hfClient: HfClient by lazy { HfClient(tokenProvider = tokenStore::peek) }
+
+    /** The Hugging Face token, encrypted with the Android Keystore (TEN-144). */
+    val tokenStore: TokenStore by lazy { TokenStore(appContext) }
 
     private val database: TensaiDb by lazy { TensaiDb.build(appContext) }
 
@@ -231,8 +237,7 @@ object RuntimeGraph {
 
     /**
      * Streams model files for the download queue (TEN-141). Not [HfClient]'s OkHttp: that one has a
-     * 30 s call timeout, which no multi-GB download survives. Same host rules, no token yet (the
-     * Settings field comes with TEN-140, it will feed both providers).
+     * 30 s call timeout, which no multi-GB download survives. Same host rules, same token as [hfClient].
      */
     private val downloadHttp by lazy {
         HfClient.defaultHttp().newBuilder()
@@ -252,7 +257,7 @@ object RuntimeGraph {
     val downloadRunner: DownloadRunner by lazy {
         DownloadRunner(
             dao = downloadDao,
-            engine = DownloadEngine(downloadHttp, freeBytes = modelRepository::freeBytes, tokenProvider = { null }),
+            engine = DownloadEngine(downloadHttp, freeBytes = modelRepository::freeBytes, tokenProvider = tokenStore::peek),
             urlFor = { repo, sha, file -> hfClient.fileUrl(repo, file, sha ?: "main") },
             partFor = modelRepository::downloadPartFile,
             finalize = { part, row -> modelRepository.registerDownload(part, row.fileName) },

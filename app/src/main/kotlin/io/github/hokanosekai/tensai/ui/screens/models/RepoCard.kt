@@ -126,10 +126,14 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun FlowRowScope.RepoBadges(card: RepoCardModel) {
-    if (card.tools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
-    if (card.vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
-    if (card.gated) TensaiBadge(stringResource(R.string.discover_badge_gated), icon = Icons.Default.Lock, warning = true)
+internal fun FlowRowScope.RepoBadges(card: RepoCardModel) = RepoBadges(card.tools, card.vision, card.gated)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun FlowRowScope.RepoBadges(tools: Boolean, vision: Boolean, gated: Boolean) {
+    if (tools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
+    if (vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
+    if (gated) TensaiBadge(stringResource(R.string.discover_badge_gated), icon = Icons.Default.Lock, warning = true)
 }
 
 /** Downloads and likes, mono 12sp, each with its 15dp icon. Read as "182400 downloads", not as a glyph and a number. */

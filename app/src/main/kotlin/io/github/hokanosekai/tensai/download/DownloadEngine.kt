@@ -1,5 +1,7 @@
 package io.github.hokanosekai.tensai.download
 
+import io.github.hokanosekai.tensai.hf.TokenFormat
+import io.github.hokanosekai.tensai.hf.bearer
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -31,14 +33,15 @@ import okhttp3.Response
  *   re-hash: the one-pass cost is paid once, before the file is registered.
  * - **Disk.** Every [DISK_CHECK_EVERY] bytes the free space is compared to what is still to come,
  *   so a disk that fills (this app or another) stops the download with [DownloadError.DiskFull].
- * - **Errors.** 401/403 and 404 and other non-retryable codes throw [DownloadException]; network
+ * - **Errors.** 401/403 (see [DownloadError.Gated], [DownloadError.InvalidToken], [DownloadError.LicenseNotAccepted]) and 404 and other non-retryable codes throw [DownloadException]; network
  *   failures, 429, 5xx and a short body throw [IOException] and leave the part for the next try.
  *
  * Cancelling the coroutine cancels the HTTP call, including mid-body.
  *
  * @param freeBytes free space on the volume holding the part file.
- * @param tokenProvider the user's HF token or null. OkHttp drops `Authorization` on a redirect to
- *   another host, so it never reaches the CDN.
+ * @param tokenProvider the user's HF token or null. Sent only after an anonymous 401/403, so public
+ *   files never carry it; a malformed value counts as none. OkHttp drops `Authorization` on a
+ *   redirect to another host, so it never reaches the CDN.
  */
 class DownloadEngine(
     private val http: OkHttpClient,
@@ -70,14 +73,17 @@ class DownloadEngine(
         }
 
         var restarted = false
+        // Every request starts anonymously: public files never see the token. Only after a 401/403 is
+        // the same request repeated with it (see [handle]), and then it stays on for this call.
+        val token = TokenFormat.usable(tokenProvider())
+        var authed = false
         while (true) {
             val request = Request.Builder().url(url)
-                .apply {
-                    if (done > 0) header("Range", "bytes=$done-")
-                    tokenProvider()?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
-                }
+                .apply { if (done > 0) header("Range", "bytes=$done-") }
+                .apply { if (authed) bearer(token) }
                 .build()
-            when (val step = execute(request, done, totalBytes, part, onProgress)) {
+            when (val step = execute(request, authed, token != null, done, totalBytes, part, onProgress)) {
+                is Step.NeedsToken -> authed = true
                 is Step.Finished -> {
                     if (step.bytes < totalBytes) throw IOException("body ended at ${step.bytes} of $totalBytes")
                     return@withContext step.bytes
@@ -124,10 +130,15 @@ class DownloadEngine(
     private sealed interface Step {
         data class Finished(val bytes: Long) : Step
         data object Restart : Step
+
+        /** Refused anonymously and a token exists: repeat the request with it. */
+        data object NeedsToken : Step
     }
 
     private suspend fun execute(
         request: Request,
+        authed: Boolean,
+        hasToken: Boolean,
         startAt: Long,
         totalBytes: Long,
         part: File,
@@ -145,7 +156,7 @@ class DownloadEngine(
         }
         try {
             val response = call.execute()
-            response.use { handle(it, request, startAt, totalBytes, part, onProgress) }
+            response.use { handle(it, authed, hasToken, startAt, totalBytes, part, onProgress) }
         } catch (e: IOException) {
             // A cancelled call surfaces as an IOException: that is a cancellation, not "offline".
             coroutineContext.ensureActive()
@@ -157,7 +168,8 @@ class DownloadEngine(
 
     private suspend fun handle(
         response: Response,
-        request: Request,
+        authed: Boolean,
+        hasToken: Boolean,
         startAt: Long,
         totalBytes: Long,
         part: File,
@@ -178,10 +190,13 @@ class DownloadEngine(
                 // Asked past the end: either the part is already whole, or it is junk.
                 return if (startAt == totalBytes) Step.Finished(startAt) else Step.Restart
             }
-            401 -> throw DownloadException(
-                if (tokenProvider().isNullOrBlank() || !anonymousWorks(request)) DownloadError.Gated else DownloadError.InvalidToken,
-            )
-            403 -> throw DownloadException(DownloadError.Gated)
+            // The Hub answers 401 to a token it does not accept and 403 to a valid token without access.
+            401, 403 -> return when {
+                !authed && hasToken -> Step.NeedsToken
+                !authed -> throw DownloadException(DownloadError.Gated)
+                code == 401 -> throw DownloadException(DownloadError.InvalidToken)
+                else -> throw DownloadException(DownloadError.LicenseNotAccepted)
+            }
             404 -> throw DownloadException(DownloadError.NotFound)
             408, 425, 429 -> throw IOException("HTTP $code")
             in 500..599 -> throw IOException("HTTP $code")
@@ -235,14 +250,6 @@ class DownloadEngine(
 
     private fun checkDisk(remaining: Long) {
         if (freeBytes() < remaining + diskMarginBytes) throw DownloadException(DownloadError.DiskFull)
-    }
-
-    /** On a 401 with a token: does the same URL work without it? Then the token is the problem. */
-    private fun anonymousWorks(request: Request): Boolean = try {
-        val probe = request.newBuilder().removeHeader("Authorization").header("Range", "bytes=0-0").build()
-        http.newCall(probe).execute().use { it.isSuccessful }
-    } catch (_: IOException) {
-        false
     }
 
     companion object {

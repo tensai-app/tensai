@@ -1,6 +1,8 @@
 package io.github.hokanosekai.tensai.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,7 +35,8 @@ data class TensaiDialogAction(
  * The kit's dialog: radius 28 on the surface, a leading [icon] tinted [iconTint] (the severity),
  * centered 20/600 [title], centered 14/20 secondary [body], and right-aligned text pill
  * [actions] (they wrap onto a second line rather than clip, under large fonts or three actions).
- * Each action keeps the 48dp touch target [TensaiButton] gives it.
+ * Each action keeps the 48dp touch target [TensaiButton] gives it. [content] goes under the body (a
+ * checkbox, a pair of figures), 12dp below it.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -44,6 +47,7 @@ fun TensaiDialog(
     title: String,
     body: String,
     actions: List<TensaiDialogAction>,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
@@ -62,14 +66,17 @@ fun TensaiDialog(
             )
         },
         text = {
-            Text(
-                text = body,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = body,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                content?.invoke(this)
+            }
         },
         confirmButton = {
             FlowRow(

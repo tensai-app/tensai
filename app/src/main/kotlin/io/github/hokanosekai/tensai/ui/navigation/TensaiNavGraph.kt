@@ -1,6 +1,10 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -15,6 +19,7 @@ import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
+import io.github.hokanosekai.tensai.ui.screens.models.RepoScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
@@ -43,6 +48,8 @@ fun TensaiNavGraph(
     chatSettingsRequests: Flow<Unit> = emptyFlow(),
     onChatConversationCreated: (entryId: String, conversationId: String) -> Unit = { _, _ -> },
 ) {
+    // Set by "Open Settings" on the repo screen: Settings opens with the token sheet up, once.
+    var openTokenSheet by remember { mutableStateOf(false) }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -113,10 +120,39 @@ fun TensaiNavGraph(
             ModelsScreen(
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
                 onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                // singleTop: a double tap on a card must not stack two copies of the screen.
+                onOpenRepo = { repoId, file ->
+                    navController.navigate(TensaiDestination.Repo.route(repoId, file)) { launchSingleTop = true }
+                },
                 // Pushed, not popped-to, mirroring how Settings pushes Models: back from Settings
                 // returns to the list the user was looking at when the banner sent them there.
                 onNavigateToStorage = { navController.navigate(TensaiDestination.Settings.route) },
                 importRequests = modelsImportRequests,
+            )
+        }
+
+        composable(
+            route = TensaiDestination.Repo.route,
+            arguments = listOf(
+                navArgument(TensaiDestination.Repo.ARG_ID) { type = NavType.StringType },
+                navArgument(TensaiDestination.Repo.ARG_FILE) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
+            val repoId = backStackEntry.arguments?.getString(TensaiDestination.Repo.ARG_ID).orEmpty()
+            RepoScreen(
+                repoId = repoId,
+                preselectFile = backStackEntry.arguments?.getString(TensaiDestination.Repo.ARG_FILE),
+                onLoadModel = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                // A fresh Models entry opens on "On device", where the downloads and the free space are.
+                onManageModels = { navController.navigate(TensaiDestination.Models.route) },
+                onOpenSettings = {
+                    openTokenSheet = true
+                    navController.navigate(TensaiDestination.Settings.route)
+                },
             )
         }
 
@@ -163,6 +199,8 @@ fun TensaiNavGraph(
                 // from.
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
+                openTokenSheet = openTokenSheet,
+                onTokenSheetOpened = { openTokenSheet = false },
             )
         }
 

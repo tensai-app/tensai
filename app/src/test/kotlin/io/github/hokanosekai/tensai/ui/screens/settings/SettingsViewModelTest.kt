@@ -16,6 +16,10 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.data.session.SessionModelKey
 import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
+import io.github.hokanosekai.tensai.download.DownloadPreferences
+import io.github.hokanosekai.tensai.hf.FakeTokenCipher
+import io.github.hokanosekai.tensai.hf.HfTokenCheck
+import io.github.hokanosekai.tensai.hf.TokenStore
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.runtime.QueueState
@@ -62,6 +66,9 @@ class SettingsViewModelTest {
     private lateinit var themeStore: DataStore<Preferences>
     private lateinit var languageStore: DataStore<Preferences>
     private lateinit var backendStore: DataStore<Preferences>
+    private lateinit var downloadStore: DataStore<Preferences>
+    private lateinit var tokenDataStore: DataStore<Preferences>
+    private lateinit var tokenStore: TokenStore
 
     private lateinit var sessionDao: FakeSessionDao
     private lateinit var sessionRepository: SessionRepository
@@ -81,6 +88,9 @@ class SettingsViewModelTest {
         themeStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "theme.preferences_pb") }
         languageStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "language.preferences_pb") }
         backendStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "backend.preferences_pb") }
+        downloadStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "downloads.preferences_pb") }
+        tokenDataStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "token.preferences_pb") }
+        tokenStore = TokenStore(tokenDataStore, FakeTokenCipher(), Dispatchers.IO)
         sessionDao = FakeSessionDao()
         sessionRepository = SessionRepository(
             dao = sessionDao,
@@ -127,6 +137,89 @@ class SettingsViewModelTest {
         assertEquals(ThemeMode.System, viewModel.themeMode.first())
         assertEquals(AppLanguage.System, viewModel.language.first())
         assertEquals(BackendPreference.Auto, viewModel.backend.first())
+    }
+
+    // ---- downloads group (TEN-144) ----
+
+    @Test
+    fun anUntouchedInstallHasNoTokenAndAsksBeforeUsingMobileData() = runBlocking {
+        val viewModel = newViewModel()
+
+        assertNull(viewModel.tokenMask.first())
+        assertEquals(false, viewModel.allowMobileData.first())
+    }
+
+    @Test
+    fun theTokenRowShowsTheMaskAndNeverTheToken() = runBlocking {
+        tokenStore.set("hf_x8Tq2LmN3kQzAbCd")
+
+        assertEquals("hf_••••AbCd", newViewModel().tokenMask.first())
+    }
+
+    @Test
+    fun mobileDataFollowsTheDownloadPreferenceTheDownloadsReadFrom() = runBlocking {
+        newViewModel().setAllowMobileData(true)
+        awaitWrites()
+
+        assertTrue(DownloadPreferences(downloadStore).isMobileDataAllowed())
+        assertEquals(true, newViewModel().allowMobileData.first())
+    }
+
+    private suspend fun SettingsViewModel.save(raw: String): TokenSaveResult? {
+        var result: TokenSaveResult? = null
+        saveToken(raw) { result = it }
+        awaitWrites()
+        return result
+    }
+
+    @Test
+    fun anAcceptedTokenIsStoredAndReportedSaved() = runBlocking {
+        val viewModel = newViewModel(checkToken = { HfTokenCheck.Accepted })
+
+        assertEquals(TokenSaveResult.Saved, viewModel.save("  hf_x8Tq2LmN3kQzAbCd "))
+        assertEquals("hf_x8Tq2LmN3kQzAbCd", tokenStore.get())
+    }
+
+    @Test
+    fun aRejectedTokenIsNotStored() = runBlocking {
+        val viewModel = newViewModel(checkToken = { HfTokenCheck.Rejected })
+
+        assertEquals(TokenSaveResult.Rejected, viewModel.save("hf_badtoken1"))
+        assertNull(tokenStore.get())
+    }
+
+    @Test
+    fun aTokenThatCouldNotBeCheckedIsStoredAndSaidSo() = runBlocking {
+        val viewModel = newViewModel(checkToken = { HfTokenCheck.Unavailable })
+
+        assertEquals(TokenSaveResult.SavedUnchecked, viewModel.save("hf_offline"))
+        assertEquals("hf_offline", tokenStore.get())
+    }
+
+    @Test
+    fun aTokenThatDoesNotLookLikeOneIsRefusedWithoutAnyCall() = runBlocking {
+        var calls = 0
+        val viewModel = newViewModel(checkToken = { calls++; HfTokenCheck.Accepted })
+
+        for (bad in listOf("short", "has a space", "hf_\u00e9\u00e9\u00e9\u00e9\u00e9")) {
+            var result: TokenSaveResult? = null
+            viewModel.saveToken(bad) { result = it }
+            assertEquals(TokenSaveResult.Malformed, result)
+        }
+        assertEquals(0, calls)
+        assertNull(tokenStore.get())
+    }
+
+    @Test
+    fun aBlankTokenDoesNothingAndRemoveClears() = runBlocking {
+        val viewModel = newViewModel()
+        assertNull(viewModel.save("   "))
+
+        viewModel.save("hf_keepthis1")
+        viewModel.removeToken()
+        awaitWrites()
+        assertNull(tokenStore.get())
+        assertNull(viewModel.tokenMask.first())
     }
 
     // ---- a change lands where the rest of the app reads it ----
@@ -263,8 +356,12 @@ class SettingsViewModelTest {
         volumeTotalBytes: Flow<Long> = flowOf(1_000L),
         queueState: Flow<QueueState> = flowOf(QueueState.Idle),
         fileSize: (String) -> Long? = { 100L },
+        checkToken: suspend (String) -> HfTokenCheck = { HfTokenCheck.Accepted },
     ) = SettingsViewModel(
         scope = viewModelScope,
+        downloadPreferences = DownloadPreferences(downloadStore),
+        tokenStore = tokenStore,
+        checkToken = checkToken,
         themeRepository = ThemeRepository(themeStore),
         languageRepository = LanguageRepository(languageStore),
         backendRepository = BackendRepository(backendStore),

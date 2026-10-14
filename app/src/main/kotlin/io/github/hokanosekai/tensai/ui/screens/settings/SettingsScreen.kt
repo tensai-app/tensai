@@ -26,6 +26,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.CellTower
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -47,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,12 +94,16 @@ import kotlinx.coroutines.launch
  *
  * @param onNavigateToModels where "Manage models" goes.
  * @param onNavigateToLicenses where the open-source licenses row goes.
+ * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
+ *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  */
 @Composable
 fun SettingsScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToLicenses: () -> Unit,
     modifier: Modifier = Modifier,
+    openTokenSheet: Boolean = false,
+    onTokenSheetOpened: () -> Unit = {},
     viewModel: SettingsViewModel = remember { SettingsViewModel() },
 ) {
     val theme by viewModel.themeMode.collectAsState(initial = ThemeMode.System)
@@ -105,11 +112,20 @@ fun SettingsScreen(
     val storage by viewModel.storage.collectAsState(initial = null)
     val inferenceState by viewModel.inference.collectAsState(initial = InferenceFacts.Unknown)
     val inference = inferenceState
+    val tokenMask by viewModel.tokenMask.collectAsState(initial = null)
+    val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
 
     val snackbarHostState = remember { SnackbarHostState() }
     val uiScope = rememberCoroutineScope()
     var confirmingClear by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<Picker?>(null) }
+    var tokenSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(openTokenSheet) {
+        if (openTokenSheet) {
+            tokenSheet = true
+            onTokenSheetOpened()
+        }
+    }
 
     // Resolved here, not in the callback below: the purge's continuation is not a composition, so
     // it has no `stringResource` to call, and building the message by pasting a size onto a
@@ -158,6 +174,33 @@ fun SettingsScreen(
                         ValueText(
                             stringResource(
                                 if (notificationsEnabled) R.string.notifications_allowed else R.string.settings_notifications_off,
+                            ),
+                        )
+                        Chevron()
+                    },
+                )
+            }
+
+            SectionLabel(stringResource(R.string.settings_group_downloads))
+            SectionCard {
+                SettingsRow(
+                    icon = Icons.Rounded.Key,
+                    title = stringResource(R.string.settings_hf_token),
+                    onClick = { tokenSheet = true },
+                    trailing = {
+                        MonoText(tokenMask ?: stringResource(R.string.settings_hf_token_not_set))
+                        Chevron()
+                    },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.CellTower,
+                    title = stringResource(R.string.settings_mobile_data),
+                    onClick = { picker = Picker.MobileData },
+                    trailing = {
+                        ValueText(
+                            stringResource(
+                                if (allowMobileData) R.string.settings_mobile_data_allow else R.string.settings_mobile_data_ask,
                             ),
                         )
                         Chevron()
@@ -266,11 +309,44 @@ fun SettingsScreen(
                         onSelect = { viewModel.setBackend(preference) },
                     )
                 }
+                Picker.MobileData -> listOf(false, true).map { allow ->
+                    PickerOption(
+                        title = stringResource(if (allow) R.string.settings_mobile_data_allow else R.string.settings_mobile_data_ask),
+                        subtitle = null,
+                        selected = allowMobileData == allow,
+                        onSelect = { viewModel.setAllowMobileData(allow) },
+                    )
+                }
             }
             PickerDialog(
                 title = stringResource(current.titleRes),
                 options = options,
                 onDismiss = { picker = null },
+            )
+        }
+
+        if (tokenSheet) {
+            val saved = stringResource(R.string.hf_token_saved)
+            val savedUnchecked = stringResource(R.string.hf_token_saved_unchecked)
+            HfTokenSheet(
+                currentMask = tokenMask,
+                onSave = { raw, done ->
+                    // The write runs on the application scope; the answer comes back to this screen.
+                    viewModel.saveToken(raw) { result ->
+                        uiScope.launch {
+                            done(result)
+                            when (result) {
+                                TokenSaveResult.Saved, TokenSaveResult.SavedUnchecked -> {
+                                    tokenSheet = false
+                                    snackbarHostState.showSnackbar(if (result == TokenSaveResult.Saved) saved else savedUnchecked)
+                                }
+                                TokenSaveResult.Rejected, TokenSaveResult.Malformed, TokenSaveResult.StoreFailed -> Unit
+                            }
+                        }
+                    }
+                },
+                onRemove = viewModel::removeToken,
+                onDismiss = { tokenSheet = false },
             )
         }
 
@@ -340,6 +416,7 @@ private enum class Picker(val titleRes: Int) {
     Theme(R.string.settings_theme),
     Language(R.string.settings_language),
     Backend(R.string.settings_backend),
+    MobileData(R.string.settings_mobile_data),
 }
 
 private data class PickerOption(
