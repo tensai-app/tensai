@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -174,7 +174,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                             if (currentRoute?.startsWith("chat/") == true) {
                                 IconButton(onClick = { chatSettingsRequests.tryEmit(Unit) }) {
                                     Icon(
-                                        imageVector = Icons.Default.Tune,
+                                        imageVector = Icons.Default.MoreVert,
                                         contentDescription = stringResource(R.string.chat_settings_title),
                                     )
                                 }
