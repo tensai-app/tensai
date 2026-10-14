@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
+import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
@@ -90,11 +91,14 @@ fun TensaiChip(
 
 /**
  * Primary-tone badge from the kit (`Badge tone="primary"`): 22dp pill, primary-16 fill, primary
- * 12sp semibold text, optional 13dp [icon] with a 5dp gap.
+ * 12sp semibold text, optional 13dp [icon] with a 5dp gap. [warning] is the kit's
+ * `tone="warning"`: warning-12 fill and warning text (the "Gated" badge).
  */
 @Composable
-fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null) {
-    Surface(shape = CircleShape, color = MaterialTheme.tensaiTints.primary16, modifier = modifier.defaultMinSize(minHeight = 22.dp)) {
+fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, warning: Boolean = false) {
+    val tone = if (warning) MaterialTheme.tensaiColors.warning else MaterialTheme.colorScheme.primary
+    val fill = if (warning) MaterialTheme.tensaiTints.warning12 else MaterialTheme.tensaiTints.primary16
+    Surface(shape = CircleShape, color = fill, modifier = modifier.defaultMinSize(minHeight = 22.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -104,7 +108,7 @@ fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? 
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = tone,
                     modifier = Modifier.size(13.dp),
                 )
             }
@@ -112,7 +116,7 @@ fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? 
                 text = text,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
+                color = tone,
                 maxLines = 1,
             )
         }

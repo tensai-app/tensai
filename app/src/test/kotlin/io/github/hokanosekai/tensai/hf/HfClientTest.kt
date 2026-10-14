@@ -56,6 +56,7 @@ class HfClientTest {
         assertEquals("/api/models", req.encodedPath)
         assertEquals("qwen3", req.queryParameter("search"))
         assertEquals("gguf", req.queryParameter("filter"))
+        assertEquals("text-generation", req.queryParameter("pipeline_tag"))
         assertEquals("likes", req.queryParameter("sort"))
         assertEquals("-1", req.queryParameter("direction"))
         assertEquals("20", req.queryParameter("limit"))

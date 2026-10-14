@@ -133,6 +133,8 @@ fun ModelsScreen(
     var importFailure by remember { mutableStateOf<ImportFailure?>(null) }
     var pendingDelete by remember { mutableStateOf<ModelEntity?>(null) }
     val scope = rememberCoroutineScope()
+    // Held here, not in the pane: a tab switch must not throw the loaded cards away.
+    val discover = remember { DiscoverViewModel(scope = scope) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -269,6 +271,7 @@ fun ModelsScreen(
             when {
                 tab == ModelsTab.Discover -> {
                     DiscoverPane(
+                        viewModel = discover,
                         focusSearch = focusSearchPending,
                         onFocusSearchHandled = { focusSearchPending = false },
                         onOpenRepo = onOpenRepo,

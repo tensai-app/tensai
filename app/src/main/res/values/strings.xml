@@ -294,6 +294,27 @@
     <string name="model_open_details">Open model details</string>
     <string name="model_options">Model options</string>
     <string name="model_details_menu">Model details</string>
+    <!-- Discover tab (TEN-137). %1$s in discover_ram_badge is the phone's memory, a formatted size. -->
+    <string name="discover_search_hint">Search Hugging Face…</string>
+    <string name="discover_search_clear">Clear search</string>
+    <string name="discover_section_recommended">Recommended for your device</string>
+    <string name="discover_ram_badge">%1$s RAM</string>
+    <string name="discover_section_popular">Popular on Hugging Face</string>
+    <string name="discover_author_params" translatable="false">%1$s · %2$s</string>
+    <string name="discover_badge_tools">Tools</string>
+    <string name="discover_badge_vision">Vision</string>
+    <string name="discover_badge_gated">Gated</string>
+    <!-- %1$s is a formatted count (1.5k). -->
+    <string name="discover_downloads_count">%1$s downloads</string>
+    <string name="discover_likes_count">%1$s likes</string>
+    <string name="discover_loading">Loading</string>
+    <string name="discover_offline_title">You\'re offline</string>
+    <string name="discover_offline_body">Connect to the internet to search Hugging Face. Models on this phone still work.</string>
+    <string name="discover_error_title">Something went wrong</string>
+    <string name="discover_error_body">Hugging Face did not answer as expected. Try again in a moment.</string>
+    <string name="discover_try_again">Try again</string>
+    <string name="discover_none_title">Nothing to show</string>
+    <string name="discover_none_body">No popular model fits this phone right now.</string>
     <string name="models_add">Add a model</string>
     <string name="models_add_phone_title">From this phone</string>
     <string name="models_add_phone_body">Import a GGUF file</string>

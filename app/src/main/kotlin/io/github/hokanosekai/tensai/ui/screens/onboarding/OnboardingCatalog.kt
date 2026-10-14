@@ -8,17 +8,24 @@ import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 
 /**
- * A model worth pointing a new user at: downloaded on a computer and imported, since V1 has no
- * in-app download (TEN-45). Everything here is a fact about the Q4_K_M build, so the same
+ * A model worth pointing a new user at, from the embedded catalog (`catalog.json`, see
+ * [CatalogParser]). Everything here is a fact about the [quantLabel] build, so the same
  * [CompatibilityChecker] that judges imported files can judge it before any file exists.
  *
  * @param hfPath repository path under huggingface.co, shown as `hf.co/<hfPath>` and opened as a link.
+ * @param fileName the GGUF file of that quant in the repo.
+ * @param supportsTools its chat template takes tools (checked against the Hub when the entry was added).
+ * @param onboarding offered by the first-run onboarding (the three it has always offered); the rest
+ *   only shows in Discover's "Recommended for your device".
  */
 internal data class CatalogModel(
     val name: String,
     val hfPath: String,
     val quantLabel: String,
     val facts: ModelFacts,
+    val fileName: String = "",
+    val supportsTools: Boolean = false,
+    val onboarding: Boolean = false,
 ) {
     val linkLabel: String get() = "hf.co/$hfPath"
     val linkUrl: String get() = "https://huggingface.co/$hfPath"
@@ -51,58 +58,18 @@ internal data class RatedModel(val model: CatalogModel, val compatibility: Compa
 internal data class Recommendation(val recommended: RatedModel, val others: List<RatedModel>)
 
 /**
- * The static list and the rule that picks from it. No network: sizes are the real bartowski
- * Q4_K_M files, attention shapes are each model's published config (2 x layers x kv heads x
- * head dim elements per token), all dense so there is no windowed cache.
+ * The embedded catalog and the rule that picks from it. No network: `catalog.json` ships in the
+ * APK, sizes are the real bartowski Q4_K_M files, attention shapes are each model's published
+ * config (2 x layers x kv heads x head dim elements per token), all dense so there is no windowed
+ * cache.
  */
 internal object OnboardingCatalog {
 
-    private const val QUANT = "Q4_K_M"
+    /** Every entry of `catalog.json`, in file order. Discover's "Recommended for your device" reads this. */
+    val all: List<CatalogModel> by lazy { CatalogParser.loadEmbedded() }
 
-    val models: List<CatalogModel> = listOf(
-        CatalogModel(
-            name = "Llama 3.2 1B Instruct",
-            hfPath = "bartowski/Llama-3.2-1B-Instruct-GGUF",
-            quantLabel = QUANT,
-            facts = ModelFacts(
-                sizeBytes = 807_694_464,
-                paramCount = 1_240_000_000,
-                architecture = "llama",
-                contextLength = 131_072,
-                embeddingLength = 2048,
-                blockCount = 16,
-                kvFullElementsPerToken = 2L * 16 * 8 * 64,
-            ),
-        ),
-        CatalogModel(
-            name = "Qwen3 1.7B Instruct",
-            hfPath = "bartowski/Qwen_Qwen3-1.7B-GGUF",
-            quantLabel = QUANT,
-            facts = ModelFacts(
-                sizeBytes = 1_282_439_584,
-                paramCount = 1_720_000_000,
-                architecture = "qwen3",
-                contextLength = 40_960,
-                embeddingLength = 2048,
-                blockCount = 28,
-                kvFullElementsPerToken = 2L * 28 * 8 * 128,
-            ),
-        ),
-        CatalogModel(
-            name = "Qwen3 4B Instruct",
-            hfPath = "bartowski/Qwen_Qwen3-4B-GGUF",
-            quantLabel = QUANT,
-            facts = ModelFacts(
-                sizeBytes = 2_497_280_960,
-                paramCount = 4_020_000_000,
-                architecture = "qwen3",
-                contextLength = 40_960,
-                embeddingLength = 2560,
-                blockCount = 36,
-                kvFullElementsPerToken = 2L * 36 * 8 * 128,
-            ),
-        ),
-    )
+    /** The entries the first-run onboarding offers (flagged `onboarding` in the file). */
+    val models: List<CatalogModel> by lazy { all.filter { it.onboarding } }
 
     /**
      * [profile] judged on the device class, see [recommend]. Shared with the Hugging Face

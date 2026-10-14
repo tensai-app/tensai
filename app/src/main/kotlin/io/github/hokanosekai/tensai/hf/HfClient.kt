@@ -79,6 +79,8 @@ class HfClient(
         val url = origin.newBuilder().addPathSegments("api/models").apply {
             if (query.isNotBlank()) addQueryParameter("search", query.trim())
             addQueryParameter("filter", "gguf")
+            // Chat models only: no audio, embedding or image GGUF repos.
+            addQueryParameter("pipeline_tag", "text-generation")
             addQueryParameter("sort", sort.apiValue)
             addQueryParameter("direction", "-1")
             addQueryParameter("limit", limit.toString())

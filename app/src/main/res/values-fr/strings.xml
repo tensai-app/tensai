@@ -230,6 +230,26 @@
     <string name="model_open_details">Ouvrir les détails du modèle</string>
     <string name="model_options">Options du modèle</string>
     <string name="model_details_menu">Détails du modèle</string>
+    <!-- Onglet Découvrir (TEN-137). %1$s dans discover_ram_badge est la mémoire du téléphone, une taille formatée. -->
+    <string name="discover_search_hint">Rechercher sur Hugging Face…</string>
+    <string name="discover_search_clear">Effacer la recherche</string>
+    <string name="discover_section_recommended">Recommandés pour cet appareil</string>
+    <string name="discover_ram_badge">%1$s de RAM</string>
+    <string name="discover_section_popular">Populaires sur Hugging Face</string>
+    <string name="discover_badge_tools">Outils</string>
+    <string name="discover_badge_vision">Vision</string>
+    <string name="discover_badge_gated">Restreint</string>
+    <!-- %1$s est un compteur formaté (1.5k). -->
+    <string name="discover_downloads_count">%1$s téléchargements</string>
+    <string name="discover_likes_count">%1$s favoris</string>
+    <string name="discover_loading">Chargement</string>
+    <string name="discover_offline_title">Hors ligne</string>
+    <string name="discover_offline_body">Une connexion à Internet est nécessaire pour chercher sur Hugging Face. Les modèles de ce téléphone restent disponibles.</string>
+    <string name="discover_error_title">Un problème est survenu</string>
+    <string name="discover_error_body">Réponse inattendue de Hugging Face. Réessayer dans un instant.</string>
+    <string name="discover_try_again">Réessayer</string>
+    <string name="discover_none_title">Rien à afficher</string>
+    <string name="discover_none_body">Aucun modèle populaire ne tient sur ce téléphone pour l\'instant.</string>
     <string name="models_add">Ajouter un modèle</string>
     <string name="models_add_phone_title">Depuis ce téléphone</string>
     <string name="models_add_phone_body">Importer un fichier GGUF</string>

@@ -101,6 +101,17 @@ internal object HfParser {
 
     private val COMMIT_SHA = Regex("[0-9a-f]{40}")
 
+    /**
+     * Drops the files that cannot be the model's weights: smaller than 1.5 bits per parameter (an
+     * auxiliary file such as a 13 MB `.gguf` in a 27B repo; the lowest real quants are above 1.6),
+     * only when the parameter count is known. Then, when some files carry a quant label, the
+     * unlabelled ones go too: they are the odd files out, not the weights.
+     */
+    internal fun plausibleQuants(files: List<HfQuantFile>, paramCount: Long): List<HfQuantFile> {
+        val sized = if (paramCount > 0) files.filter { it.sizeBytes * 8 >= paramCount * 3 / 2 } else files
+        return if (sized.any { it.quant != QuantLabel.UNKNOWN }) sized.filter { it.quant != QuantLabel.UNKNOWN } else sized
+    }
+
     private fun DetailDto.toDetail(): HfRepoDetail {
         // One malformed sibling must not kill the whole repo: it is skipped.
         val parsed = siblings.mapNotNull { runCatching { json.decodeFromJsonElement<SiblingDto>(it) }.getOrNull() }
@@ -110,6 +121,7 @@ internal object HfParser {
             .filter { !QuantLabel.isMmproj(it.rfilename) && !QuantLabel.isSplit(it.rfilename) }
             .filter { (it.size ?: 0) > 0 }
             .map { HfQuantFile(it.rfilename, QuantLabel.parse(it.rfilename), it.size ?: 0, it.lfs?.sha256) }
+            .let { plausibleQuants(it, gguf?.total ?: 0) }
             .sortedBy { it.sizeBytes }
         val template = gguf?.chat_template.orEmpty()
         return HfRepoDetail(
