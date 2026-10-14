@@ -22,6 +22,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -550,6 +551,70 @@ class ModelImporterTest {
 
         assertEquals(emptyList<String>(), filesOnDisk())
         assertTrue(dao.rows.isEmpty())
+    }
+
+    // ---- the origin of a downloaded model (TEN-142) ----
+
+    private val origin = ModelOrigin(
+        repo = "bartowski/Qwen3-GGUF",
+        file = "sub/Qwen3-Q4_K_M.gguf",
+        quant = "Q4_K_M",
+        sha256 = "ab".repeat(32),
+        commit = "c".repeat(40),
+        downloadedAt = 1_700_000_000_000,
+    )
+
+    @Test
+    fun adoptStoresTheOriginOnTheRow() = runBlocking {
+        val stored = importer.adopt(partFile(), "model.gguf", origin).model
+
+        assertEquals(origin, stored.origin)
+        assertEquals("bartowski/Qwen3-GGUF", stored.sourceRepo)
+        assertEquals("sub/Qwen3-Q4_K_M.gguf", stored.sourceFile)
+        assertEquals("Q4_K_M", stored.sourceQuant)
+        assertEquals("ab".repeat(32), stored.sourceSha256)
+        assertEquals("c".repeat(40), stored.sourceCommit)
+        assertEquals(1_700_000_000_000, stored.downloadedAt)
+        assertEquals(listOf(stored), dao.rows)
+    }
+
+    @Test
+    fun anImportHasNoOrigin() = runBlocking {
+        val stored = importMine()
+
+        assertNull(stored.origin)
+        assertNull(stored.sourceRepo)
+        assertNull(stored.downloadedAt)
+    }
+
+    @Test
+    fun adoptWithoutAnOriginStoresNone() = runBlocking {
+        assertNull(importer.adopt(partFile(), "model.gguf").model.origin)
+    }
+
+    @Test
+    fun relinkingAMissingModelThroughADownloadKeepsItsIdAndWritesTheOrigin() = runBlocking {
+        val first = importer.adopt(partFile("a.part"), "model.gguf", origin).model
+        File(first.filePath).delete()
+        val newer = origin.copy(commit = "d".repeat(40), downloadedAt = 1_800_000_000_000)
+
+        val registered = importer.adopt(partFile("b.part"), "model.gguf", newer)
+
+        assertEquals("same id, so saved sessions stay attached", first.id, registered.model.id)
+        assertEquals(first, registered.previous)
+        assertEquals(newer, registered.model.origin)
+        assertEquals(listOf(registered.model), dao.rows)
+    }
+
+    @Test
+    fun relinkingAnOriginRowWithAPlainImportKeepsItsOrigin() = runBlocking {
+        val first = importer.adopt(partFile("a.part"), "model.gguf", origin).model
+        File(first.filePath).delete()
+
+        val again = importer.import("model.gguf", 10, plentyOfSpace, { ByteArrayInputStream(ByteArray(10)) }) {}
+
+        assertEquals(first.id, again.id)
+        assertEquals(origin, again.origin)
     }
 
     /** In-memory stand-in for Room, same idea as `SessionRepositoryTest`'s `FakeSessionDao`. */

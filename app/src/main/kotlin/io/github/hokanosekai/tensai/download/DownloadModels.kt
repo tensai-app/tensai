@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import io.github.hokanosekai.tensai.data.models.ModelOrigin
 import kotlinx.coroutines.flow.Flow
 
 /** Where a download is in its life. Stored by [code] so renaming a constant never rewrites rows. */
@@ -144,6 +145,16 @@ internal fun DownloadEntity.toItem() = DownloadItem(
     modelId = modelId,
 )
 
+/** What a model downloaded from this row remembers of it (TEN-142). */
+internal fun DownloadEntity.toOrigin(downloadedAt: Long) = ModelOrigin(
+    repo = repo,
+    file = fileName,
+    quant = quant,
+    sha256 = sha256,
+    commit = commitSha,
+    downloadedAt = downloadedAt,
+)
+
 /**
  * Every state change is a conditional `UPDATE ... WHERE status IN (...)` returning the row count,
  * so a pause pressed while the worker is finishing cannot be overwritten by a stale write.
@@ -226,4 +237,8 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun delete(id: String): Int
+
+    /** Drops the finished rows: the model they produced is the record, a done row is only clutter (TEN-142). */
+    @Query("DELETE FROM downloads WHERE status = 'done'")
+    suspend fun deleteDone(): Int
 }

@@ -39,6 +39,26 @@
     <string name="settings_group_system">System</string>
     <string name="settings_notifications">Notifications</string>
     <string name="settings_notifications_off">Off</string>
+    <string name="settings_group_downloads">Downloads</string>
+    <string name="settings_hf_token">Hugging Face token</string>
+    <string name="settings_hf_token_not_set">Not set</string>
+    <string name="settings_mobile_data">Download on mobile data</string>
+    <string name="settings_mobile_data_ask">Ask first</string>
+    <string name="settings_mobile_data_allow">Allow</string>
+    <string name="hf_token_title">Hugging Face token</string>
+    <string name="hf_token_body">Create a read token at huggingface.co/settings/tokens and paste it here. It stays on this phone.</string>
+    <string name="hf_token_hint">hf_…</string>
+    <string name="hf_token_field">Token</string>
+    <string name="hf_token_show">Show token</string>
+    <string name="hf_token_hide">Hide token</string>
+    <string name="hf_token_save">Save</string>
+    <string name="hf_token_remove">Remove</string>
+    <string name="hf_token_checking">Checking…</string>
+    <string name="hf_token_saved">Token saved</string>
+    <string name="hf_token_saved_unchecked">Token saved, but it could not be checked (no connection)</string>
+    <string name="hf_token_rejected">This token was not accepted</string>
+    <string name="hf_token_malformed">This doesn\'t look like a Hugging Face token</string>
+    <string name="hf_token_store_failed">Could not store the token on this phone</string>
     <!-- Shared by Settings (value) and the onboarding notifications card. -->
     <string name="notifications_allowed">Allowed</string>
     <string name="notifications_allow">Allow</string>
@@ -471,6 +491,7 @@
     <string name="download_ready_text">Downloaded and added to your models</string>
     <string name="download_failed_title">Download failed · %1$s</string>
     <string name="download_error_gated">needs an accepted licence or token</string>
+    <string name="download_error_license">license not accepted yet</string>
     <string name="download_error_invalid_token">token refused</string>
     <string name="download_error_not_found">file not found</string>
     <string name="download_error_checksum">checksum mismatch</string>
@@ -482,4 +503,57 @@
     <string name="download_error_http">server error %1$d</string>
     <string name="download_error_unknown">unexpected error</string>
 
+    <!-- Download cards of On device and model origin (TEN-142) -->
+    <string name="model_source_repo">hf.co/%1$s</string>
+    <string name="download_card_open_repo">Open repo</string>
+    <string name="download_card_open">Open</string>
+    <string name="download_card_waiting">Waiting</string>
+    <string name="download_card_waiting_ahead">Waiting · %1$d ahead</string>
+    <string name="download_card_status_downloading">Downloading</string>
+    <string name="download_card_status_paused">Paused</string>
+    <string name="download_card_status_queued">Queued</string>
+    <string name="download_card_status_failed">Failed</string>
+
+    <!-- Repo screen (TEN-140). The chrome title is nav_hugging_face. -->
+    <string name="nav_hugging_face" translatable="false">Hugging Face</string>
+    <string name="repo_choose_file">Choose a file</string>
+    <string name="repo_no_files">No GGUF file in this repo that a phone can load.</string>
+    <!-- %1$s is a token count (32K). -->
+    <string name="repo_context">%1$s context</string>
+    <string name="repo_badge_recommended">Recommended</string>
+    <string name="repo_badge_on_device">On device</string>
+    <string name="repo_readme">Readme</string>
+    <string name="repo_show_more">Show more</string>
+    <string name="repo_show_less">Show less</string>
+    <string name="repo_open_on_hf">Open on Hugging Face</string>
+    <string name="repo_download">Download · %1$s</string>
+    <string name="repo_load">Load model</string>
+    <string name="repo_resume">Resume</string>
+    <string name="repo_retry">Retry</string>
+    <string name="repo_queued">Queued</string>
+    <string name="repo_queued_ahead">Queued · %1$d ahead</string>
+    <!-- %1$s of %2$s are sizes; %1$s of the speed line is a speed, %2$s a time left. -->
+    <string name="repo_paused_of">Paused · %1$s of %2$s</string>
+    <string name="repo_speed_eta">%1$s/s · %2$s left</string>
+    <string name="repo_not_allowed">Only Hugging Face files can be downloaded.</string>
+    <string name="repo_not_found_title">Repo not found</string>
+    <string name="repo_not_found_body">This repo does not exist on Hugging Face, or it is private.</string>
+    <string name="repo_offline_body">Connect to the internet to load this repo. Models on this phone still work.</string>
+    <string name="repo_token_gated_title">This model is gated</string>
+    <string name="repo_token_gated_body">Accept its licence on huggingface.co with your account, then add a token in Settings so tensai can download it.</string>
+    <string name="repo_token_invalid_title">Your Hugging Face token is invalid</string>
+    <string name="repo_token_invalid_body">Hugging Face refused it. Replace it in Settings, or remove it to download public models.</string>
+    <string name="repo_token_button">Open Settings</string>
+    <string name="repo_license_title">License not accepted yet</string>
+    <string name="repo_license_body">Accept the license on huggingface.co with your account, then try again.</string>
+    <string name="repo_mobile_title">Download %1$s on mobile data?</string>
+    <string name="repo_mobile_body">You\'re not on Wi-Fi. Large downloads can use a lot of your data plan.</string>
+    <string name="repo_mobile_always">Always allow</string>
+    <string name="repo_mobile_cancel">Not now</string>
+    <string name="repo_mobile_confirm">Download</string>
+    <string name="repo_storage_title">Not enough storage</string>
+    <string name="repo_storage_body">Free up space or pick a smaller file.</string>
+    <string name="repo_storage_needed">Needed</string>
+    <string name="repo_storage_free">Free</string>
+    <string name="repo_storage_manage">Manage models</string>
 </resources>

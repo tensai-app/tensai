@@ -23,6 +23,7 @@ import io.github.hokanosekai.tensai.download.DownloadManager
 import io.github.hokanosekai.tensai.download.DownloadPreferences
 import io.github.hokanosekai.tensai.download.DownloadRunner
 import io.github.hokanosekai.tensai.download.WorkManagerScheduler
+import io.github.hokanosekai.tensai.download.toOrigin
 import io.github.hokanosekai.tensai.hf.HfClient
 import io.github.hokanosekai.tensai.hf.TokenStore
 import java.io.File
@@ -260,7 +261,7 @@ object RuntimeGraph {
             engine = DownloadEngine(downloadHttp, freeBytes = modelRepository::freeBytes, tokenProvider = tokenStore::peek),
             urlFor = { repo, sha, file -> hfClient.fileUrl(repo, file, sha ?: "main") },
             partFor = modelRepository::downloadPartFile,
-            finalize = { part, row -> modelRepository.registerDownload(part, row.fileName) },
+            finalize = { part, row -> modelRepository.registerDownload(part, row.fileName, row.toOrigin(System.currentTimeMillis())) },
             unregister = { registered -> runCatching { modelRepository.unregisterDownload(registered) } },
         )
     }

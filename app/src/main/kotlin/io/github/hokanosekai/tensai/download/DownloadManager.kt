@@ -238,6 +238,8 @@ class DownloadManager(
      */
     suspend fun reconcile() = withContext(io) {
         val files = listParts()
+        // A done row has handed its job to the model it produced; it only has to be gone from the list.
+        dao.deleteDone()
         val ids = dao.getAll().map { it.id }.toSet()
         if (!registry.isRunning) dao.resetStuck()
         files.filter { it.name.endsWith(PART_SUFFIX) && it.name.removeSuffix(PART_SUFFIX) !in ids }

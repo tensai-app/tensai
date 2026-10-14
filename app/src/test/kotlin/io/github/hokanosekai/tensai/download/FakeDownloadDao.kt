@@ -90,4 +90,10 @@ class FakeDownloadDao : DownloadDao {
         state.value = state.value - id
         return 1
     }
+
+    override suspend fun deleteDone(): Int {
+        val done = state.value.filterValues { it.status == "done" }.keys
+        state.value = state.value - done
+        return done.size
+    }
 }

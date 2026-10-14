@@ -49,6 +49,10 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
  * Version 11 added [DownloadEntity] (TEN-141): the model download queue, see
  * [io.github.hokanosekai.tensai.download.DownloadManager]. A new table only, nothing to backfill.
  *
+ * Version 12 added [ModelEntity]'s origin columns (TEN-142): `sourceRepo`, `sourceFile`, `sourceQuant`,
+ * `sourceSha256`, `sourceCommit` and `downloadedAt`, all nullable. Rows imported from the phone, and
+ * every row from before, keep them null: only a finished download has an origin.
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -62,7 +66,7 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         SessionEntity::class,
         DownloadEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

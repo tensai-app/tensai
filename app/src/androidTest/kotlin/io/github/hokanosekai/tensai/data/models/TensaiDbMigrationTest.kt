@@ -327,6 +327,43 @@ class TensaiDbMigrationTest {
         }
     }
 
+    /**
+     * v11 -> v12 (TEN-142) adds the nullable origin columns: an existing model keeps every value and
+     * reads null for the new ones, and a row written afterwards can carry an origin.
+     */
+    @Test
+    fun originColumnsAppearInV12AndOldRowsReadNull() {
+        helper.createDatabase(testDbName, 11).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, quantLabel, " +
+                    "paramCount, contextLength, supportsThinking, importedAt, embeddingLength, blockCount, " +
+                    "kvFullElementsPerToken, kvSwaElementsPerToken, slidingWindow, kvShapeVersion) VALUES " +
+                    "('m1', 'Model One', 'm1.gguf', '/x/m1.gguf', 1, 'llama', 'Q4_K_M', 1, 1, 0, 1, 1, 1, 0, 0, 0, 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 12, true, TensaiDbMigrations.MIGRATION_11_12)
+
+        migrated.query(
+            "SELECT displayName, sourceRepo, sourceFile, sourceQuant, sourceSha256, sourceCommit, downloadedAt " +
+                "FROM models WHERE id = 'm1'",
+        ).use {
+            assertTrue(it.moveToFirst())
+            assertEquals("Model One", it.getString(0))
+            for (column in 1..6) assertTrue("column $column must read null", it.isNull(column))
+        }
+        migrated.execSQL(
+            "UPDATE models SET sourceRepo = 'org/repo', sourceFile = 'f.gguf', sourceQuant = 'Q4_K_M', " +
+                "sourceSha256 = 'ab', sourceCommit = 'cd', downloadedAt = 5 WHERE id = 'm1'",
+        )
+        migrated.query("SELECT sourceRepo, downloadedAt FROM models WHERE id = 'm1'").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("org/repo", it.getString(0))
+            assertEquals(5L, it.getLong(1))
+        }
+    }
+
     /** The full chain still lands a v1 row on v8 intact, not just the single hop above. */
     @Test
     fun modelRowSurvivesV1ToV8() {

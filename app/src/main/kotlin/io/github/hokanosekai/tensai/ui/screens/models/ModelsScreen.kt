@@ -137,6 +137,11 @@ fun ModelsScreen(
     val discover = remember { DiscoverViewModel(scope = scope) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    // TEN-142: the queue, as cards above the installed models.
+    val downloads = remember { ModelDownloads(scope) }
+    LaunchedEffect(downloads) { downloads.start() }
+    val downloadsState by downloads.state.collectAsState()
+    val downloadCards = downloadsState.cards
 
     fun deleteModel(model: ModelEntity) {
         scope.launch {
@@ -279,7 +284,7 @@ fun ModelsScreen(
                     )
                 }
                 currentModels == null -> Unit // initial Room query hasn't emitted yet.
-                currentModels.isEmpty() && importProgress == null -> {
+                currentModels.isEmpty() && importProgress == null && downloadCards.isEmpty() -> {
                     EmptyModelsState(
                         onBrowseClick = { browseHuggingFace(focusSearch = false) },
                         onImportClick = ::launchImport,
@@ -297,6 +302,16 @@ fun ModelsScreen(
                             item(key = "storage") {
                                 StorageLowBanner(state = low, onFreeUpSpace = onNavigateToStorage)
                             }
+                        }
+                        items(downloadCards, key = { "download-${it.id}" }) { card ->
+                            DownloadCard(
+                                card = card,
+                                onOpen = { onOpenRepo(card.repo, card.fileName) },
+                                onPause = { downloads.pause(card.id) },
+                                onResume = { downloads.resume(card.id) },
+                                onCancel = { downloads.cancel(card.id) },
+                                onRetry = { downloads.retry(card.id) },
+                            )
                         }
                         if (shown.isEmpty() && currentModels.isNotEmpty()) {
                             item(key = "filter-empty") {
@@ -348,6 +363,22 @@ fun ModelsScreen(
                         pendingDelete = null
                         deleteModel(model)
                     },
+                )
+            }
+
+            when (val dialog = downloadsState.dialog) {
+                null -> Unit
+                is DownloadsDialog.MobileData -> MobileDataDialog(
+                    sizeBytes = dialog.sizeBytes,
+                    onCancel = downloads::dismissDialog,
+                    onConfirm = downloads::confirmMobileData,
+                )
+                // The library is where "Manage models" leads: nothing to navigate to, the dialog just closes.
+                is DownloadsDialog.Storage -> StorageDialog(
+                    neededBytes = dialog.neededBytes,
+                    freeBytes = dialog.freeBytes,
+                    onCancel = downloads::dismissDialog,
+                    onManage = downloads::dismissDialog,
                 )
             }
 

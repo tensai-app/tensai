@@ -381,6 +381,19 @@ class DownloadManagerTest {
     }
 
     @Test
+    fun reconcileDropsFinishedRowsAndKeepsTheOthers() = runBlocking {
+        val m = manager()
+        enqueue(m, "a.gguf")
+        enqueue(m, "b.gguf")
+        dao.markDone("id1", 1, "model-1")
+
+        m.reconcile()
+
+        assertEquals("a finished row is not kept around", null, dao.row("id1"))
+        assertEquals("queued", status("id2"))
+    }
+
+    @Test
     fun reconcileLeavesRowsOfARunningDrainerAlone() = runBlocking {
         val m = manager()
         enqueue(m)

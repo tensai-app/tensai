@@ -204,6 +204,29 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v11 -> v12 (TEN-142): the origin of a downloaded model, six nullable columns on `models`. A
+     * plain `ADD COLUMN` with no default, so every existing row reads null: they were all imported
+     * from the phone or downloaded before the origin was recorded. Nothing can be backfilled.
+     * [ORIGIN_COLUMNS_11_12] is what [TensaiDbMigrationSqlTest] checks against the exported v12 schema.
+     */
+    internal val ORIGIN_COLUMNS_11_12 = listOf(
+        "sourceRepo" to "TEXT",
+        "sourceFile" to "TEXT",
+        "sourceQuant" to "TEXT",
+        "sourceSha256" to "TEXT",
+        "sourceCommit" to "TEXT",
+        "downloadedAt" to "INTEGER",
+    )
+
+    val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ORIGIN_COLUMNS_11_12.forEach { (name, type) ->
+                db.execSQL("ALTER TABLE `models` ADD COLUMN `$name` $type")
+            }
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -216,5 +239,6 @@ object TensaiDbMigrations {
         MIGRATION_8_9,
         MIGRATION_9_10,
         MIGRATION_10_11,
+        MIGRATION_11_12,
     )
 }

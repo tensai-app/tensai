@@ -36,6 +36,26 @@
     <string name="settings_group_system">Système</string>
     <string name="settings_notifications">Notifications</string>
     <string name="settings_notifications_off">Désactivées</string>
+    <string name="settings_group_downloads">Téléchargements</string>
+    <string name="settings_hf_token">Jeton Hugging Face</string>
+    <string name="settings_hf_token_not_set">Non défini</string>
+    <string name="settings_mobile_data">Télécharger en données mobiles</string>
+    <string name="settings_mobile_data_ask">Demander d\'abord</string>
+    <string name="settings_mobile_data_allow">Autoriser</string>
+    <string name="hf_token_title">Jeton Hugging Face</string>
+    <string name="hf_token_body">Créer un jeton en lecture sur huggingface.co/settings/tokens et le coller ici. Il reste sur ce téléphone.</string>
+    <string name="hf_token_hint">hf_…</string>
+    <string name="hf_token_field">Jeton</string>
+    <string name="hf_token_show">Afficher le jeton</string>
+    <string name="hf_token_hide">Masquer le jeton</string>
+    <string name="hf_token_save">Enregistrer</string>
+    <string name="hf_token_remove">Retirer</string>
+    <string name="hf_token_checking">Vérification…</string>
+    <string name="hf_token_saved">Jeton enregistré</string>
+    <string name="hf_token_saved_unchecked">Jeton enregistré, mais il n\'a pas pu être vérifié (pas de connexion)</string>
+    <string name="hf_token_rejected">Ce jeton n\'a pas été accepté</string>
+    <string name="hf_token_malformed">Cela ne ressemble pas à un jeton Hugging Face</string>
+    <string name="hf_token_store_failed">Impossible de stocker le jeton sur ce téléphone</string>
     <string name="notifications_allowed">Autorisées</string>
     <string name="notifications_allow">Autoriser</string>
 
@@ -393,6 +413,7 @@
     <string name="download_ready_text">Téléchargé et ajouté aux modèles</string>
     <string name="download_failed_title">Échec du téléchargement · %1$s</string>
     <string name="download_error_gated">licence ou jeton requis</string>
+    <string name="download_error_license">licence pas encore acceptée</string>
     <string name="download_error_invalid_token">jeton refusé</string>
     <string name="download_error_not_found">fichier introuvable</string>
     <string name="download_error_checksum">somme de contrôle invalide</string>
@@ -404,4 +425,54 @@
     <string name="download_error_http">erreur serveur %1$d</string>
     <string name="download_error_unknown">erreur inattendue</string>
 
+    <!-- Cartes de téléchargement de Sur l'appareil et origine d'un modèle (TEN-142) -->
+    <string name="model_source_repo">hf.co/%1$s</string>
+    <string name="download_card_open_repo">Ouvrir le repo</string>
+    <string name="download_card_open">Ouvrir</string>
+    <string name="download_card_waiting">En attente</string>
+    <string name="download_card_waiting_ahead">En attente · %1$d devant</string>
+    <string name="download_card_status_downloading">Téléchargement</string>
+    <string name="download_card_status_paused">En pause</string>
+    <string name="download_card_status_queued">En file</string>
+    <string name="download_card_status_failed">Échec</string>
+
+    <!-- Écran d'un repo (TEN-140). Le titre de la barre est nav_hugging_face. -->
+    <string name="repo_choose_file">Choisir un fichier</string>
+    <string name="repo_no_files">Aucun fichier GGUF de ce repo qu\'un téléphone puisse charger.</string>
+    <string name="repo_context">%1$s de contexte</string>
+    <string name="repo_badge_recommended">Recommandé</string>
+    <string name="repo_badge_on_device">Sur l\'appareil</string>
+    <string name="repo_readme">Readme</string>
+    <string name="repo_show_more">Afficher plus</string>
+    <string name="repo_show_less">Afficher moins</string>
+    <string name="repo_open_on_hf">Ouvrir sur Hugging Face</string>
+    <string name="repo_download">Télécharger · %1$s</string>
+    <string name="repo_load">Charger le modèle</string>
+    <string name="repo_resume">Reprendre</string>
+    <string name="repo_retry">Réessayer</string>
+    <string name="repo_queued">En attente</string>
+    <string name="repo_queued_ahead">En attente · %1$d devant</string>
+    <string name="repo_paused_of">En pause · %1$s sur %2$s</string>
+    <string name="repo_speed_eta">%1$s/s · %2$s restantes</string>
+    <string name="repo_not_allowed">Seuls les fichiers Hugging Face peuvent être téléchargés.</string>
+    <string name="repo_not_found_title">Repo introuvable</string>
+    <string name="repo_not_found_body">Ce repo n\'existe pas sur Hugging Face, ou il est privé.</string>
+    <string name="repo_offline_body">Une connexion à Internet est nécessaire pour charger ce repo. Les modèles de ce téléphone restent disponibles.</string>
+    <string name="repo_token_gated_title">Ce modèle est restreint</string>
+    <string name="repo_token_gated_body">Accepter sa licence sur huggingface.co avec son compte, puis ajouter un jeton dans les réglages pour que tensai puisse le télécharger.</string>
+    <string name="repo_token_invalid_title">Le jeton Hugging Face est invalide</string>
+    <string name="repo_token_invalid_body">Hugging Face l\'a refusé. Le remplacer dans les réglages, ou le retirer pour télécharger les modèles publics.</string>
+    <string name="repo_token_button">Ouvrir les réglages</string>
+    <string name="repo_license_title">Licence pas encore acceptée</string>
+    <string name="repo_license_body">Accepter la licence sur huggingface.co avec son compte, puis réessayer.</string>
+    <string name="repo_mobile_title">Télécharger %1$s en données mobiles ?</string>
+    <string name="repo_mobile_body">Pas de Wi-Fi. Un gros téléchargement peut peser lourd sur le forfait data.</string>
+    <string name="repo_mobile_always">Toujours autoriser</string>
+    <string name="repo_mobile_cancel">Pas maintenant</string>
+    <string name="repo_mobile_confirm">Télécharger</string>
+    <string name="repo_storage_title">Stockage insuffisant</string>
+    <string name="repo_storage_body">Libérer de l\'espace ou choisir un fichier plus petit.</string>
+    <string name="repo_storage_needed">Nécessaire</string>
+    <string name="repo_storage_free">Libre</string>
+    <string name="repo_storage_manage">Gérer les modèles</string>
 </resources>

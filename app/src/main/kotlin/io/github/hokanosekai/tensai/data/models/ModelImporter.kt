@@ -117,7 +117,7 @@ internal class ModelImporter(
                 }
             }
 
-            return commit(sourceName, destFile, copiedBytes, relink) { committed = true }.model
+            return commit(sourceName, destFile, copiedBytes, relink, origin = null) { committed = true }.model
         } catch (e: Throwable) {
             if (!committed) destFile.delete()
             throw e
@@ -137,8 +137,10 @@ internal class ModelImporter(
      * a "File missing" model keeps its id and its sessions.
      *
      * @param sourceName the name to give it (the Hub's file name without directories).
+     * @param origin where it came from (TEN-142), stored on the row; a relinked row has its origin
+     *   overwritten by it.
      */
-    suspend fun adopt(partFile: File, sourceName: String): RegisteredModel {
+    suspend fun adopt(partFile: File, sourceName: String, origin: ModelOrigin? = null): RegisteredModel {
         val size = partFile.length()
         var relink: ModelEntity? = null
         when (val match = match(sourceName, size)) {
@@ -164,7 +166,7 @@ internal class ModelImporter(
             } catch (e: IOException) {
                 throw ModelImportException(sourceName, e)
             }
-            return commit(sourceName, destFile, size, relink) { committed = true }
+            return commit(sourceName, destFile, size, relink, origin) { committed = true }
         } catch (e: Throwable) {
             if (!committed) restorePartOrDelete(e, destFile, partFile)
             throw e
@@ -194,6 +196,7 @@ internal class ModelImporter(
         destFile: File,
         copiedBytes: Long,
         relink: ModelEntity?,
+        origin: ModelOrigin?,
         markCommitted: () -> Unit,
     ): RegisteredModel {
         val info = try {
@@ -245,7 +248,7 @@ internal class ModelImporter(
             // numbers above it. Omitting this would default to 0 and hand every new import
             // straight back to the backfill on the next start.
             kvShapeVersion = info.kvShapeVersion,
-        )
+        ).withOrigin(origin)
         // The commit. NonCancellable so that leaving the screen cannot land between "the row
         // is written" and "the copy is kept": once this block starts it runs to the end, and
         // [committed] stops the catch below from deleting a file a row now points at.
@@ -264,6 +267,8 @@ internal class ModelImporter(
                     entity
                 } else {
                     entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt)
+                        // A re-import of the same file keeps where it was first downloaded from.
+                        .let { if (origin == null) it.withOrigin(target.origin) else it }
                 }
                 // One statement: REPLACE on the primary key (see ModelDao.insert). A failure
                 // leaves the old row exactly as it was.

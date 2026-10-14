@@ -570,7 +570,7 @@ private fun ActionBar(
 
 /** Bar, "123 MB of 1.2 GB", speed and time left, then Pause (Resume when [paused]) and Cancel. */
 @Composable
-private fun DownloadProgress(
+internal fun DownloadProgress(
     done: Long,
     total: Long,
     bytesPerSecond: Long,
@@ -624,14 +624,14 @@ private fun DownloadProgress(
 }
 
 @Composable
-private fun etaText(seconds: Long): String = when {
+internal fun etaText(seconds: Long): String = when {
     seconds >= 3600 -> stringResource(R.string.download_eta_hours, seconds / 3600, (seconds % 3600) / 60)
     seconds >= 60 -> stringResource(R.string.download_eta_minutes, (seconds + 30) / 60)
     else -> stringResource(R.string.download_eta_seconds, seconds.coerceAtLeast(1))
 }
 
 @StringRes
-private fun downloadErrorRes(error: DownloadError?): Int = when (error) {
+internal fun downloadErrorRes(error: DownloadError?): Int = when (error) {
     DownloadError.Gated -> R.string.download_error_gated
     DownloadError.LicenseNotAccepted -> R.string.download_error_license
     DownloadError.InvalidToken -> R.string.download_error_invalid_token
@@ -748,7 +748,7 @@ private fun LicenseCard(onOpenPage: () -> Unit, onRetry: () -> Unit) {
 
 /** "Download 1.2 GB on mobile data?" with the "Always allow" box (it sets the Settings preference). */
 @Composable
-private fun MobileDataDialog(sizeBytes: Long, onCancel: () -> Unit, onConfirm: (always: Boolean) -> Unit) {
+internal fun MobileDataDialog(sizeBytes: Long, onCancel: () -> Unit, onConfirm: (always: Boolean) -> Unit) {
     var always by remember { mutableStateOf(false) }
     TensaiDialog(
         onDismissRequest = onCancel,
@@ -776,7 +776,7 @@ private fun MobileDataDialog(sizeBytes: Long, onCancel: () -> Unit, onConfirm: (
 
 /** "Not enough storage": what the download needs and what is free, and the way to the library. */
 @Composable
-private fun StorageDialog(neededBytes: Long, freeBytes: Long, onCancel: () -> Unit, onManage: () -> Unit) {
+internal fun StorageDialog(neededBytes: Long, freeBytes: Long, onCancel: () -> Unit, onManage: () -> Unit) {
     TensaiDialog(
         onDismissRequest = onCancel,
         icon = Icons.Default.Storage,

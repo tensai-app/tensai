@@ -154,10 +154,13 @@ class ModelRepository(
      * [ModelImporter.adopt] for what it refuses and what it cleans up.
      *
      * @param fileName the Hub's file name; any directory part is dropped.
+     * @param origin repo, file, quant, hash and commit the download came from (TEN-142), stored on the
+     *   row (a relinked row has them overwritten), null stores none.
      */
-    suspend fun registerDownload(part: File, fileName: String): RegisteredModel = withContext(Dispatchers.IO) {
-        importer.adopt(part, fileName.substringAfterLast('/'))
-    }
+    suspend fun registerDownload(part: File, fileName: String, origin: ModelOrigin? = null): RegisteredModel =
+        withContext(Dispatchers.IO) {
+            importer.adopt(part, fileName.substringAfterLast('/'), origin)
+        }
 
     /**
      * Undoes [registerDownload] for a download that was cancelled while it was being registered. A
