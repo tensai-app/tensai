@@ -323,6 +323,9 @@
     <string name="model_delete_in_use">Impossible de supprimer « %1$s » tant qu\'il est chargé.</string>
     <string name="model_param_count">%1$s paramètres</string>
     <string name="model_detail_file_missing">Fichier manquant : le réimporter pour utiliser ce modèle.</string>
+    <string name="model_detail_file_missing_origin">Fichier manquant : le télécharger à nouveau ou le réimporter pour utiliser ce modèle.</string>
+    <string name="model_detail_download_again">Télécharger à nouveau</string>
+    <string name="model_detail_source">Source</string>
     <string name="model_detail_architecture">Architecture</string>
     <string name="model_detail_parameters">Paramètres</string>
     <string name="model_detail_quantization">Quantification</string>

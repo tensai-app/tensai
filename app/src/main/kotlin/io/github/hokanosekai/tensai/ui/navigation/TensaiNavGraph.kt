@@ -167,6 +167,11 @@ fun TensaiNavGraph(
                 modelId = modelId,
                 onLoadClick = { navController.navigate(TensaiDestination.Loading.route(it)) },
                 onDeleted = { navController.popBackStack() },
+                // "Download again" refused for lack of space: the library is where models are removed.
+                onManageModels = { navController.navigate(TensaiDestination.Models.route) },
+                onOpenRepo = { repoId, file ->
+                    navController.navigate(TensaiDestination.Repo.route(repoId, file)) { launchSingleTop = true }
+                },
             )
         }
 

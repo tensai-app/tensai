@@ -395,6 +395,9 @@
     <!-- %1$s is an already formatted parameter count such as 1.5B. -->
     <string name="model_param_count">%1$s params</string>
     <string name="model_detail_file_missing">File missing: re-import it to use this model.</string>
+    <string name="model_detail_file_missing_origin">File missing: download it again or re-import it to use this model.</string>
+    <string name="model_detail_download_again">Download again</string>
+    <string name="model_detail_source">Source</string>
     <string name="model_detail_architecture">Architecture</string>
     <string name="model_detail_parameters">Parameters</string>
     <string name="model_detail_quantization">Quantization</string>

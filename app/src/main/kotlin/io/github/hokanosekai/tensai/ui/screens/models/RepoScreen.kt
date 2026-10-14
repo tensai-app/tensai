@@ -541,7 +541,7 @@ private fun ActionBar(
                                 modifier = Modifier.size(22.dp),
                             )
                             Text(
-                                text = stringResource(R.string.download_failed_title, stringResource(downloadErrorRes(action.error))),
+                                text = stringResource(R.string.download_failed_title, downloadErrorText(action.error)),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                             )

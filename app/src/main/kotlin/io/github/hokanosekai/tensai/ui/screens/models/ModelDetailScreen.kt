@@ -14,17 +14,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Eject
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
@@ -65,6 +68,7 @@ import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
+import io.github.hokanosekai.tensai.data.models.ModelOrigin
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
@@ -81,6 +85,7 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SectionCard
 import io.github.hokanosekai.tensai.ui.screens.settings.SectionLabel
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsRow
 import io.github.hokanosekai.tensai.ui.screens.settings.ValueText
+import io.github.hokanosekai.tensai.ui.screens.settings.openLink
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -106,6 +111,8 @@ fun ModelDetailScreen(
     onLoadClick: (String) -> Unit,
     onDeleted: () -> Unit,
     modifier: Modifier = Modifier,
+    onManageModels: () -> Unit = {},
+    onOpenRepo: (String, String?) -> Unit = { _, _ -> },
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
     val models by repository.models.collectAsState(initial = null)
@@ -126,6 +133,12 @@ fun ModelDetailScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val clearDescription = stringResource(R.string.model_detail_sessions_clear_desc)
+    // TEN-143: "Download again" goes through the same queue and the same dialogs as the repo screen.
+    val downloads = remember { ModelDownloads(scope) }
+    LaunchedEffect(downloads) { downloads.start() }
+    val downloadsState by downloads.state.collectAsState()
+    val origin = model?.origin
+    val activeDownload = origin?.let { ModelSource.activeDownload(it, downloadsState.cards) }
 
     // Null until the stat() has answered: nothing is drawn before then, so a model never shows
     // "Load model" for a frame and then flips to "File missing".
@@ -135,6 +148,13 @@ fun ModelDetailScreen(
     LaunchedEffect(model?.filePath, refreshTick) {
         val path = model?.filePath ?: return@LaunchedEffect
         fileExists = withContext(Dispatchers.IO) { File(path).exists() }
+    }
+    // The download that was running is over (done, or cancelled): look at the file again. A relink keeps
+    // the id and usually the path, so the row can come back equal and nothing else would re-stat it.
+    var wasDownloading by remember { mutableStateOf(false) }
+    LaunchedEffect(activeDownload != null) {
+        if (wasDownloading && activeDownload == null) refreshTick++
+        wasDownloading = activeDownload != null
     }
 
     suspend fun removeModel(name: String): Boolean = try {
@@ -201,7 +221,18 @@ fun ModelDetailScreen(
                             .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
                     ) {
                         if (!exists) {
-                            MissingFileCard(onReimport = { importLauncher.launch(GgufMimeTypes) })
+                            MissingFileCard(
+                                canDownloadAgain = origin != null,
+                                download = activeDownload,
+                                notAllowed = downloadsState.notAllowed,
+                                onDownloadAgain = { ModelSource.again(model)?.let(downloads::again) },
+                                onReimport = { importLauncher.launch(GgufMimeTypes) },
+                                onPause = downloads::pause,
+                                onResume = downloads::resume,
+                                onCancel = downloads::cancel,
+                                onRetry = downloads::retry,
+                                onOpenRepo = { origin?.let { onOpenRepo(it.repo, it.file) } },
+                            )
                         }
 
                         Column(modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp)) {
@@ -260,6 +291,10 @@ fun ModelDetailScreen(
                                     )
                                 },
                             )
+                            if (origin != null) {
+                                RowDivider()
+                                SourceRow(origin = origin)
+                            }
                         }
 
                         SectionLabel(stringResource(R.string.model_detail_section_device))
@@ -408,13 +443,81 @@ fun ModelDetailScreen(
             )
         }
 
+        when (val dialog = downloadsState.dialog) {
+            null -> Unit
+            is DownloadsDialog.MobileData -> MobileDataDialog(
+                sizeBytes = dialog.sizeBytes,
+                onCancel = downloads::dismissDialog,
+                onConfirm = downloads::confirmMobileData,
+            )
+            is DownloadsDialog.Storage -> StorageDialog(
+                neededBytes = dialog.neededBytes,
+                freeBytes = dialog.freeBytes,
+                onCancel = downloads::dismissDialog,
+                onManage = {
+                    downloads.dismissDialog()
+                    onManageModels()
+                },
+            )
+        }
+
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
-/** Error card at the top of a model whose file is gone: text and a tonal "Re-import". */
+/**
+ * "Source" row (TEN-143): `hf.co/<repo> · <quant>` in mono, an open-in-new icon, and a tap that opens
+ * the repo page. Without a usable page URL (a repo id the client refuses) it is a plain fact.
+ */
 @Composable
-private fun MissingFileCard(onReimport: () -> Unit) {
+private fun SourceRow(origin: ModelOrigin) {
+    val context = LocalContext.current
+    val label = ModelSource.label(origin)
+    val url = remember(origin.repo) { runCatching { RuntimeGraph.hfClient.repoPageUrl(origin.repo) }.getOrNull() }
+    val description = stringResource(R.string.licenses_open_url, label)
+    SettingsRow(
+        icon = Icons.Default.Link,
+        title = stringResource(R.string.model_detail_source),
+        supportingAnnotated = buildAnnotatedString {
+            pushStyle(SpanStyle(fontFamily = TensaiMono))
+            append(label)
+            pop()
+        },
+        onClick = url?.let { page -> { openLink(context, page) } },
+        modifier = if (url != null) Modifier.semantics { contentDescription = description } else Modifier,
+        trailing = if (url != null) {
+            {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        } else {
+            null
+        },
+    )
+}
+
+/**
+ * Error card at the top of a model whose file is gone. Without an origin: the text and a tonal
+ * "Re-import". With one (TEN-143): "Download again" next to "Re-import", and while that download is in
+ * the queue its progress instead of the buttons ([download], the same states as a card of On device).
+ */
+@Composable
+private fun MissingFileCard(
+    canDownloadAgain: Boolean,
+    download: DownloadCardModel?,
+    notAllowed: Boolean,
+    onDownloadAgain: () -> Unit,
+    onReimport: () -> Unit,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onOpenRepo: () -> Unit,
+) {
     val error = MaterialTheme.colorScheme.error
     Surface(
         shape = TensaiShapes.large,
@@ -430,18 +533,50 @@ private fun MissingFileCard(onReimport: () -> Unit) {
             Icon(Icons.Default.Error, contentDescription = null, tint = error, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.model_detail_file_missing),
+                    text = stringResource(
+                        if (canDownloadAgain) R.string.model_detail_file_missing_origin else R.string.model_detail_file_missing,
+                    ),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                 )
-                TensaiButton(
-                    text = stringResource(R.string.model_detail_reimport),
-                    onClick = onReimport,
-                    variant = TensaiButtonVariant.Tonal,
-                    size = TensaiButtonSize.Sm,
-                    icon = Icons.Default.FolderOpen,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
+                if (notAllowed) {
+                    Text(
+                        text = stringResource(R.string.repo_not_allowed),
+                        fontSize = 12.5.sp,
+                        color = error,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                if (download != null) {
+                    DownloadStateBody(
+                        state = download.state,
+                        onOpen = onOpenRepo,
+                        onPause = { onPause(download.id) },
+                        onResume = { onResume(download.id) },
+                        onCancel = { onCancel(download.id) },
+                        onRetry = { onRetry(download.id) },
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                        if (canDownloadAgain) {
+                            TensaiButton(
+                                text = stringResource(R.string.model_detail_download_again),
+                                onClick = onDownloadAgain,
+                                variant = TensaiButtonVariant.Tonal,
+                                size = TensaiButtonSize.Sm,
+                                icon = Icons.Default.Download,
+                            )
+                        }
+                        TensaiButton(
+                            text = stringResource(R.string.model_detail_reimport),
+                            onClick = onReimport,
+                            variant = if (canDownloadAgain) TensaiButtonVariant.Outlined else TensaiButtonVariant.Tonal,
+                            size = TensaiButtonSize.Sm,
+                            icon = Icons.Default.FolderOpen,
+                        )
+                    }
+                }
             }
         }
     }

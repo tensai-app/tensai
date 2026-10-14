@@ -104,6 +104,10 @@ class ModelDownloadsTest {
         clock = 0
         fake.queue.value = listOf(item("a", DownloadStatus.Downloading, 0))
         c.await("first reading") { it.queue.isNotEmpty() }
+        // The first jump only re-bases the meter (a first reading can be stale).
+        clock = 500
+        fake.queue.value = listOf(item("a", DownloadStatus.Downloading, 250))
+        c.await("second reading") { (it.queue.singleOrNull()?.bytesDone ?: 0) == 250L }
         clock = 1_000
         fake.queue.value = listOf(item("a", DownloadStatus.Downloading, 500))
 
@@ -187,5 +191,120 @@ class ModelDownloadsTest {
         delay(50)
 
         assertNull(c.state.value.dialog)
+    }
+
+    // ---- Download again (TEN-143) ----
+
+    private val commit = "c".repeat(40)
+
+    private val again = DownloadAgainRequest(
+        repo = "bartowski/Qwen3-GGUF",
+        quant = HfQuantFile("sub/Qwen3-Q4_K_M.gguf", "Q4_K_M", sizeBytes = 1_234_567, sha256 = "ab".repeat(32)),
+        displayName = "Qwen3",
+        commitSha = commit,
+    )
+
+    @Test
+    fun downloadAgainEnqueuesTheSameRepoFileAndCommit() = runBlocking {
+        val c = controller()
+
+        c.again(again)
+
+        until { fake.calls.size == 1 }
+        assertEquals(listOf("enqueue:bartowski/Qwen3-GGUF:sub/Qwen3-Q4_K_M.gguf:false:$commit"), fake.calls.toList())
+        assertNull(c.state.value.dialog)
+        assertEquals(false, c.state.value.notAllowed)
+    }
+
+    @Test
+    fun downloadAgainOnMobileDataAsksThenEnqueuesTheSameFileWithTheConfirmation() = runBlocking {
+        fake.answer = { confirmed -> if (confirmed) EnqueueResult.Enqueued("d1") else EnqueueResult.NeedsMobileDataConfirmation(1_234_567) }
+        val c = controller()
+
+        c.again(again)
+        val asked = c.await("the dialog") { it.dialog != null }
+        assertEquals(DownloadsDialog.MobileData(1_234_567, DownloadOp.Again(again)), asked.dialog)
+
+        c.confirmMobileData(always = false)
+        until { fake.calls.size == 2 }
+        assertEquals("enqueue:bartowski/Qwen3-GGUF:sub/Qwen3-Q4_K_M.gguf:true:$commit", fake.calls.last())
+        assertNull(c.state.value.dialog)
+    }
+
+    @Test
+    fun downloadAgainWithoutRoomRaisesTheStorageDialog() = runBlocking {
+        fake.answer = { EnqueueResult.NotEnoughStorage(neededBytes = 2_000_000_000, freeBytes = 500_000_000) }
+        val c = controller()
+
+        c.again(again)
+
+        assertEquals(DownloadsDialog.Storage(2_000_000_000, 500_000_000), c.await("the dialog") { it.dialog != null }.dialog)
+    }
+
+    @Test
+    fun downloadAgainOnAFileAlreadyQueuedOrOnDeviceStartsNothingAndAsksNothing() = runBlocking {
+        val c = controller()
+        listOf(EnqueueResult.AlreadyQueued("d1"), EnqueueResult.AlreadyOnDevice("m2")).forEach { answer ->
+            fake.calls.clear()
+            fake.answer = { answer }
+            c.again(again)
+            until { fake.calls.size == 1 }
+            delay(30)
+
+            assertNull(answer.toString(), c.state.value.dialog)
+            assertEquals(false, c.state.value.notAllowed)
+        }
+    }
+
+    @Test
+    fun aRefusedFileIsFlaggedAndTheFlagClearsOnTheNextTry() = runBlocking {
+        fake.answer = { EnqueueResult.NotAllowed }
+        val c = controller()
+
+        c.again(again)
+        c.await("the flag") { it.notAllowed }
+
+        fake.answer = { EnqueueResult.Enqueued("d1") }
+        c.again(again)
+        assertEquals(false, c.await("the flag cleared") { !it.notAllowed }.notAllowed)
+    }
+
+    /** End to end with the real [io.github.hokanosekai.tensai.download.DownloadManager]: what lands in the queue row. */
+    @Test
+    fun downloadAgainThroughTheRealManagerQueuesTheRowOfTheOriginalFile() = runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("tensai-again-test").toFile()
+        try {
+            val dao = io.github.hokanosekai.tensai.download.FakeDownloadDao()
+            val manager = io.github.hokanosekai.tensai.download.DownloadManager(
+                dao = dao,
+                scheduler = object : io.github.hokanosekai.tensai.download.DownloadScheduler {
+                    override fun ensureDrainer() = Unit
+                    override fun restDrainer(wakeAfterMs: Long?, wakeOnUnmetered: Boolean) = Unit
+                },
+                urlFor = { repo, sha, name -> "https://huggingface.co/$repo/resolve/${sha ?: "main"}/$name" },
+                partFor = { java.io.File(dir, "$it.part") },
+                listParts = { emptyList() },
+                freeBytes = { Long.MAX_VALUE / 2 },
+                isMetered = { false },
+                allowMobileData = { false },
+                newId = { "row1" },
+            )
+            val c = ModelDownloads(scope, downloads = ManagerDownloads(manager), setAllowMobileData = {}, now = { 0 })
+            c.start()
+
+            c.again(again)
+            c.await("the row") { it.queue.isNotEmpty() }
+
+            val row = dao.row("row1")!!
+            assertEquals("bartowski/Qwen3-GGUF", row.repo)
+            assertEquals("sub/Qwen3-Q4_K_M.gguf", row.fileName)
+            assertEquals(commit, row.commitSha)
+            assertEquals(1_234_567L, row.sizeBytes)
+            assertEquals("ab".repeat(32), row.sha256)
+            assertEquals("Q4_K_M", row.quant)
+            assertEquals("queued", row.status)
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 }

@@ -332,6 +332,10 @@ class RepoViewModelTest {
         e.clock = 0
         e.downloads.queue.value = listOf(item(DownloadStatus.Downloading, done = 0))
         vm.await { it.queue.isNotEmpty() }
+        // The first jump only re-bases the meter (a first reading can be stale).
+        e.clock = 500
+        e.downloads.queue.value = listOf(item(DownloadStatus.Downloading, done = 50 * mib))
+        vm.await { (it.queue.singleOrNull()?.bytesDone ?: 0) == 50 * mib }
         e.clock = 1_000
         e.downloads.queue.value = listOf(item(DownloadStatus.Downloading, done = 100 * mib))
         val s = vm.await { it.bytesPerSecond > 0 }

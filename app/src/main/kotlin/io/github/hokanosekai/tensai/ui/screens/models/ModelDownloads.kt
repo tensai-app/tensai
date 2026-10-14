@@ -15,6 +15,9 @@ import kotlinx.coroutines.launch
 internal sealed interface DownloadOp {
     data class Resume(val id: String) : DownloadOp
     data class Retry(val id: String) : DownloadOp
+
+    /** "Download again" on the detail screen of a model whose file is missing. */
+    data class Again(val request: DownloadAgainRequest) : DownloadOp
 }
 
 internal sealed interface DownloadsDialog {
@@ -28,11 +31,13 @@ internal sealed interface DownloadsDialog {
 /**
  * @param queue every download of the app, oldest first, finished ones included (they are not cards).
  * @param bytesPerSecond smoothed speed of the running download, 0 until it has two readings.
+ * @param notAllowed the manager refused the file (not a huggingface.co file): nothing was started.
  */
 internal data class DownloadsState(
     val queue: List<DownloadItem> = emptyList(),
     val bytesPerSecond: Long = 0,
     val dialog: DownloadsDialog? = null,
+    val notAllowed: Boolean = false,
 ) {
     /** The cards "On device" lists above the installed models. */
     val cards: List<DownloadCardModel> get() = DownloadCards.from(queue, bytesPerSecond)
@@ -81,6 +86,9 @@ internal class ModelDownloads(
 
     fun retry(id: String) = run(DownloadOp.Retry(id), confirmMobileData = false)
 
+    /** "Download again": enqueues [request], answers are handled like the repo screen's Download button. */
+    fun again(request: DownloadAgainRequest) = run(DownloadOp.Again(request), confirmMobileData = false)
+
     /** "Download" in the mobile data dialog; [always] is its "Always allow" box (sets the Settings preference). */
     fun confirmMobileData(always: Boolean) {
         val dialog = _state.value.dialog as? DownloadsDialog.MobileData ?: return
@@ -94,6 +102,7 @@ internal class ModelDownloads(
     fun dismissDialog() = _state.update { it.copy(dialog = null) }
 
     private fun run(op: DownloadOp, confirmMobileData: Boolean) {
+        _state.update { it.copy(notAllowed = false) }
         scope.launch { perform(op, confirmMobileData) }
     }
 
@@ -101,6 +110,13 @@ internal class ModelDownloads(
         val result = when (op) {
             is DownloadOp.Resume -> downloads.resume(op.id, confirmMobileData)
             is DownloadOp.Retry -> downloads.retry(op.id, confirmMobileData)
+            is DownloadOp.Again -> downloads.enqueue(
+                repo = op.request.repo,
+                quant = op.request.quant,
+                displayName = op.request.displayName,
+                confirmMobileData = confirmMobileData,
+                commitSha = op.request.commitSha,
+            )
         }
         handle(op, result)
     }
@@ -111,7 +127,9 @@ internal class ModelDownloads(
             when (result) {
                 is EnqueueResult.NeedsMobileDataConfirmation -> s.copy(dialog = DownloadsDialog.MobileData(result.sizeBytes, op))
                 is EnqueueResult.NotEnoughStorage -> s.copy(dialog = DownloadsDialog.Storage(result.neededBytes, result.freeBytes))
-                // The queue flow shows everything else: a new state, or a row that is gone.
+                EnqueueResult.NotAllowed -> s.copy(notAllowed = true)
+                // The queue flow shows everything else: a new state, a row that is gone, or the file already queued.
+                // AlreadyOnDevice needs nothing here: the library flow turns the screen to the file that is there.
                 else -> s
             }
         }

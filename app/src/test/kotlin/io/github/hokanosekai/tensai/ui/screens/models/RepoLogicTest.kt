@@ -284,15 +284,18 @@ class RepoLogicTest {
         val meter = SpeedMeter(weight = 0.5)
 
         assertEquals(0L, meter.sample("d1", 0, 0))
-        assertEquals(1000L, meter.sample("d1", 1000, 1000))
+        // The first jump only re-bases: a first reading can be a stale snapshot.
+        assertEquals(0L, meter.sample("d1", 90_000, 500))
+        assertEquals(1000L, meter.sample("d1", 91_000, 1500))
         // 3000 B/s now, half of it blended with the 1000 before.
-        assertEquals(2000L, meter.sample("d1", 4000, 2000))
+        assertEquals(2000L, meter.sample("d1", 94_000, 2500))
     }
 
     @Test
     fun speedStartsOverForAnotherDownloadAndAfterNoneRuns() {
         val meter = SpeedMeter()
         meter.sample("d1", 0, 0)
+        meter.sample("d1", 1000, 500)
         assertTrue(meter.sample("d1", 5000, 1000) > 0)
 
         assertEquals(0L, meter.sample("d2", 100, 2000))

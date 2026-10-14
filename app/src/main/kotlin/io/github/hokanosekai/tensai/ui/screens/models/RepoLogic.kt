@@ -245,6 +245,7 @@ internal class SpeedMeter(private val weight: Double = 0.3) {
     private var lastBytes = 0L
     private var lastAt = 0L
     private var speed = 0.0
+    private var primed = false
 
     /**
      * Bytes per second of the download [id] now at [bytes] ([nowMs] on any monotonic-enough clock),
@@ -262,6 +263,7 @@ internal class SpeedMeter(private val weight: Double = 0.3) {
             lastBytes = bytes
             lastAt = nowMs
             speed = 0.0
+            primed = false
             return 0
         }
         if (bytes == lastBytes) {
@@ -270,6 +272,15 @@ internal class SpeedMeter(private val weight: Double = 0.3) {
         }
         val dt = nowMs - lastAt
         if (dt <= 0) return speed.toLong()
+        // The first reading a screen gets can be a stale snapshot (the last progress persisted before a
+        // pause, or before the screen opened), so the first jump spans more time than `dt` says: seen
+        // on device as "103 MB/s · 3 s left". It only re-bases; speeds start from the second jump.
+        if (!primed) {
+            primed = true
+            lastBytes = bytes
+            lastAt = nowMs
+            return 0
+        }
         val instant = (bytes - lastBytes) * 1000.0 / dt
         speed = if (speed == 0.0) instant else weight * instant + (1 - weight) * speed
         lastBytes = bytes
