@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -355,7 +356,17 @@ internal fun ModelActionButton(
 @Composable
 private fun ModelOverflowMenu(modelName: String, onDetails: () -> Unit, onDelete: () -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
+    // Takes only the icon's 24dp in the header row, so the dots sit on the status line and against
+    // the card's padding instead of a 48dp box pushing them down and in (TEN-132). The 48dp touch
+    // target still overhangs that slot by 12dp on each side.
+    Box(
+        modifier = Modifier.layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val slot = 24.dp.roundToPx()
+            val overhang = (placeable.width - slot) / 2
+            layout(slot, slot) { placeable.place(-overhang, -overhang) }
+        },
+    ) {
         IconButton(onClick = { open = true }, modifier = Modifier.size(48.dp)) {
             Icon(
                 imageVector = Icons.Default.MoreVert,
