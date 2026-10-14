@@ -14,6 +14,7 @@ import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
+import io.github.hokanosekai.tensai.hf.HfClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -185,6 +186,13 @@ object RuntimeGraph {
     val notificationPermissionRepository: NotificationPermissionRepository by lazy {
         NotificationPermissionRepository(appContext)
     }
+
+    /**
+     * Hugging Face Hub client (TEN-136), the app's only network access: huggingface.co and nothing
+     * else, see the privacy contract in the `hf` package. The token provider returns null until the
+     * encrypted token setting exists (TEN-144), which is when it gets wired here.
+     */
+    val hfClient: HfClient by lazy { HfClient(tokenProvider = { null }) }
 
     private val database: TensaiDb by lazy { TensaiDb.build(appContext) }
 

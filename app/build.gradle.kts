@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.aboutlibraries)
 }
@@ -129,9 +130,12 @@ dependencies {
     implementation(libs.commonmark)
     implementation(libs.commonmark.ext.gfm.tables)
     implementation(libs.aboutlibraries.core)
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
     // SamplingJson uses org.json, which lives in the Android framework and is therefore a stub
     // that throws in JVM unit tests. This is the real implementation, test-only: it puts a
     // working org.json ahead of the mockable android.jar on the unit-test classpath, so the

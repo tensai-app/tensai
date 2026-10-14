@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
+         listings and files from huggingface.co and nothing else: no telemetry, no other host.
+         "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".TensaiApp"
         android:label="tensai"

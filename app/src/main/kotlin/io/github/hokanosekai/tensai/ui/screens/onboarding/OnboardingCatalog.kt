@@ -105,6 +105,12 @@ internal object OnboardingCatalog {
     )
 
     /**
+     * [profile] judged on the device class, see [recommend]. Shared with the Hugging Face
+     * quant ratings so every "does it fit" answer in the app uses the same basis.
+     */
+    fun steadyProfile(profile: DeviceProfile): DeviceProfile = profile.copy(availableRamBytes = profile.usableRamBytes)
+
+    /**
      * The biggest model that [Verdict.RunsWell] on [profile] (parameter count is the size proxy,
      * as in [CompatibilityChecker]), or the smallest one when none does. The others are the rest
      * of the catalog, smallest first, each with its own verdict.
@@ -117,7 +123,7 @@ internal object OnboardingCatalog {
      */
     fun recommend(profile: DeviceProfile, catalog: List<CatalogModel> = models): Recommendation {
         require(catalog.isNotEmpty()) { "empty catalog" }
-        val steady = profile.copy(availableRamBytes = profile.usableRamBytes)
+        val steady = steadyProfile(profile)
         val rated = catalog.sortedBy { it.facts.paramCount }
             .map { RatedModel(it, CompatibilityChecker.check(it.facts, steady)) }
         val pick = rated.lastOrNull { it.compatibility.verdict == Verdict.RunsWell } ?: rated.first()
