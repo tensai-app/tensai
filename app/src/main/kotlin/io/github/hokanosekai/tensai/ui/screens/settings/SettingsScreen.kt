@@ -1,5 +1,11 @@
 package io.github.hokanosekai.tensai.ui.screens.settings
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +32,7 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
@@ -61,9 +68,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.runtime.rememberResumeCount
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
@@ -109,6 +118,12 @@ fun SettingsScreen(
     val nothingToClear = stringResource(R.string.settings_storage_cleared_nothing)
     val unknown = stringResource(R.string.settings_inference_unknown)
 
+    // Read from the system rather than the permission: it also covers API < 33 (always on unless
+    // switched off) and the channel-less "turned off in system settings" case. The user changes it
+    // in another screen, so it is re-read on every resume.
+    val resumes = rememberResumeCount()
+    val notificationsEnabled = remember(resumes) { NotificationManagerCompat.from(context).areNotificationsEnabled() }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -130,6 +145,23 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_language),
                     onClick = { picker = Picker.Language },
                     trailing = { ValueText(stringResource(language.titleRes)); Chevron() },
+                )
+            }
+
+            SectionLabel(stringResource(R.string.settings_group_system))
+            SectionCard {
+                SettingsRow(
+                    icon = Icons.Rounded.Notifications,
+                    title = stringResource(R.string.settings_notifications),
+                    onClick = { openAppNotificationSettings(context) },
+                    trailing = {
+                        ValueText(
+                            stringResource(
+                                if (notificationsEnabled) R.string.notifications_allowed else R.string.settings_notifications_off,
+                            ),
+                        )
+                        Chevron()
+                    },
                 )
             }
 
@@ -283,6 +315,23 @@ fun SettingsScreen(
         }
 
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+/** Opens this app's page in the system notification settings, where it can be turned on or off. */
+private fun openAppNotificationSettings(context: Context) {
+    val notifications = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+    val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    // A non-activity context needs a new task; the composition's context is normally an activity.
+    for (intent in listOf(notifications, details)) {
+        if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+            return
+        } catch (_: ActivityNotFoundException) {
+            // Fall through to the app details page.
+        }
     }
 }
 

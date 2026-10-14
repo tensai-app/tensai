@@ -33,6 +33,11 @@
     <string name="settings_group_inference">Inférence</string>
     <string name="settings_group_storage">Stockage</string>
     <string name="settings_group_about">À propos</string>
+    <string name="settings_group_system">Système</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notifications_off">Désactivées</string>
+    <string name="notifications_allowed">Autorisées</string>
+    <string name="notifications_allow">Autoriser</string>
 
     <string name="settings_theme">Thème</string>
     <string name="settings_theme_system">Système</string>
@@ -313,6 +318,7 @@
     <string name="onboarding_coming_soon">Bientôt</string>
     <string name="onboarding_ready_title">%1$s est prêt à être chargé</string>
     <string name="onboarding_ready_body">Le chargement prend quelques secondes. Le modèle reste ensuite en mémoire.</string>
+    <string name="onboarding_notifications_body">Suivre la progression du chargement et garder tensai actif quand l\'app est quittée.</string>
     <string name="onboarding_summary_model">Modèle</string>
     <string name="onboarding_summary_size">Taille</string>
     <string name="onboarding_summary_compatibility">Compatibilité</string>

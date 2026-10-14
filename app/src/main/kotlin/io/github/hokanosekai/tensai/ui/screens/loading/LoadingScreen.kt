@@ -58,7 +58,8 @@ import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
-import io.github.hokanosekai.tensai.runtime.rememberNotificationPermissionRequester
+import io.github.hokanosekai.tensai.runtime.rememberNotificationAskLauncher
+import io.github.hokanosekai.tensai.runtime.rememberNotificationAskState
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.screens.models.compatExplanation
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
@@ -85,27 +86,27 @@ fun LoadingScreen(
     viewModel: LoadModelViewModel = remember(modelId) { LoadModelViewModel(modelId) },
 ) {
     val uiState by viewModel.state.collectAsState()
-    val requestNotificationPermission = rememberNotificationPermissionRequester()
+    val askState = rememberNotificationAskState()
+    val launchNotificationAsk = rememberNotificationAskLauncher()
 
-    LaunchedEffect(modelId) {
-        // Per the ticket: at the moment the user triggers a load rather than at app startup, where
-        // a prompt is much more likely to get a hard "deny, don't ask again". Since TEN-75 it is
-        // at most one dialog per install — this effect re-fires on every entry to this screen and
-        // the screen is re-entrable (its own back action is "continue in the background"), so the
-        // latch has to be persisted rather than remembered; see [NotificationPermissionGate].
-        //
-        // The load starts *first*, and the order is load-bearing. Asking now suspends on a
-        // DataStore read, and this effect is cancelled the moment the user leaves the screen — so
-        // asking first would mean a back press during that read leaves the load never started.
-        // Starting first costs nothing: start() is not a suspend function and runs the attempt on
-        // RuntimeGraph.applicationScope (see [LoadModelViewModel]), so nothing here can cancel it.
-        //
-        // The consequence is a window where the service posts notifications while the permission
-        // is still pending, which is deliberate — see [InferenceService] for what is lost in it
-        // and why waiting for the answer would be worse.
-        viewModel.start()
-        requestNotificationPermission()
+    // The ask used to fire here on every load, a bare dialog over the loading screen (TEN-127). It
+    // now rides on "Continue in background", the moment the notification starts to matter. At most
+    // one dialog per install: see [NotificationPermissionGate]. The state was read on entry so the
+    // tap does no I/O: the dialog launches synchronously, the claim persists on the application
+    // scope, and navigation follows at once. An unread state (null) just navigates. The guard makes
+    // a second tap a no-op, so a double tap can't navigate twice either.
+    var continued by remember { mutableStateOf(false) }
+    val continueInBackground: () -> Unit = {
+        if (!continued) {
+            continued = true
+            runCatching { launchNotificationAsk(askState) }
+            onBack()
+        }
     }
+
+    // start() is not a suspend function and runs the attempt on RuntimeGraph.applicationScope (see
+    // [LoadModelViewModel]), so leaving the screen can't cancel the load.
+    LaunchedEffect(modelId) { viewModel.start() }
 
     LaunchedEffect(uiState) {
         if (uiState is LoadUiState.Success) onLoaded()
@@ -138,7 +139,7 @@ fun LoadingScreen(
 
             is LoadUiState.InProgress -> LoadingContent(
                 state = state,
-                onContinueInBackground = onBack,
+                onContinueInBackground = continueInBackground,
             )
 
             is LoadUiState.Success -> Unit // LaunchedEffect above navigates away immediately.

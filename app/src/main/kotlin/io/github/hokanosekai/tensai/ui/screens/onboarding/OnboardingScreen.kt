@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.BrightnessAuto
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
@@ -40,7 +41,10 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -89,6 +94,8 @@ import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import io.github.hokanosekai.tensai.runtime.rememberNotificationAskState
+import io.github.hokanosekai.tensai.runtime.rememberNotificationPermissionRequester
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.TensaiBadge
 import io.github.hokanosekai.tensai.ui.components.TensaiButton
@@ -867,6 +874,7 @@ private fun ColumnScope.ReadyStep(model: ModelEntity, onStart: () -> Unit) {
                     )
                 }
             }
+            NotificationsCard()
         }
     }
     TensaiButton(
@@ -876,6 +884,94 @@ private fun ColumnScope.ReadyStep(model: ModelEntity, onStart: () -> Unit) {
         icon = Icons.Rounded.PlayArrow,
         modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 24.dp),
     )
+}
+
+/**
+ * Optional "Notifications" offer under the summary (TEN-127): the one place the permission dialog
+ * is explained before it appears. Non-blocking, "Start chatting" works either way. Shown only
+ * while [rememberNotificationAskState] says an ask is still possible, and kept on screen as
+ * "Allowed" once the user grants; a refusal (or an install that already asked) leaves nothing.
+ */
+@Composable
+private fun NotificationsCard() {
+    val askState = rememberNotificationAskState()
+    val requestPermission = rememberNotificationPermissionRequester()
+    val scope = rememberCoroutineScope()
+    // The state flips to "can't ask" the moment the ask is spent, so remember the offer was made
+    // for the "Allowed" confirmation to have a card to appear on after the dialog closes.
+    var offered by rememberSaveable { mutableStateOf(false) }
+    // Spent on the tap and cleared when the state re-reads (the dialog closing resumes the host).
+    var tapped by remember { mutableStateOf(false) }
+    LaunchedEffect(askState) { tapped = false }
+    LaunchedEffect(askState?.canAsk) { if (askState?.canAsk == true) offered = true }
+    val granted = askState?.granted == true
+    if (askState == null || !(askState.canAsk || (offered && granted))) return
+    CardSurface {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Notifications,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.settings_notifications),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.onboarding_notifications_body),
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (granted) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.notifications_allowed),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            } else {
+                // Tonal pill, the same primary-16 button Settings uses for "Manage models".
+                Button(
+                    onClick = {
+                        tapped = true
+                        // An exception here must not turn an optional card into a crash.
+                        scope.launch { runCatching { requestPermission() } }
+                    },
+                    enabled = !tapped,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.tensaiTints.primary16,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ),
+                    modifier = Modifier.height(36.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.notifications_allow),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

@@ -140,19 +140,19 @@ class InferenceService : Service() {
 
     /**
      * Without `POST_NOTIFICATIONS` granted (API 33+, requested from
-     * `LoadingScreen` via [rememberNotificationPermissionRequester], and
+     * the onboarding Ready step or `LoadingScreen`'s "Continue in
+     * background" via [rememberNotificationPermissionRequester], and
      * refusable, so this stays a case that happens),
      * this call is a documented no-op: no `SecurityException`, the
      * notification is simply not shown while the foreground service keeps
      * running regardless. Safe to call unconditionally.
      *
      * **The commonest form of "not granted" is "not answered yet."**
-     * `LoadingScreen` starts the load and then puts the dialog up without
-     * waiting for the answer (see that screen for why waiting would risk
-     * never starting the load at all), so on the one install where the
-     * dialog is ever shown, this service starts and posts into the pending
-     * window. Every post inside it is silently dropped, including for a
-     * user who is about to grant.
+     * `LoadingScreen` starts the load without waiting on any dialog, and
+     * the ask from "Continue in background" lands in the middle of it, so
+     * on the one install where that dialog is shown, this service starts
+     * and posts into the pending window. Every post inside it is silently
+     * dropped, including for a user who is about to grant.
      *
      * That is bounded rather than permanent: the observer in [onCreate]
      * re-posts on every [QueueState] emission and [QueueState.Loading]

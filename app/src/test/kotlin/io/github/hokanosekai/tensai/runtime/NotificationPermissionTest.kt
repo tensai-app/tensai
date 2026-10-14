@@ -9,6 +9,8 @@ import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -86,9 +88,10 @@ class NotificationPermissionTest {
             sdkInt = 33,
             isGranted = { false },
             wasAsked = { asked },
-            markAsked = {
+            claimAsk = {
                 asked = true
                 order += "mark"
+                true
             },
             launchRequest = { order += "launch" },
         )
@@ -174,7 +177,7 @@ class NotificationPermissionTest {
                     sdkInt = 33,
                     isGranted = { false },
                     wasAsked = repository::wasRequested,
-                    markAsked = repository::markRequested,
+                    claimAsk = repository::claimRequest,
                     launchRequest = { dialogsShown++ },
                 )
             }
@@ -201,8 +204,8 @@ class NotificationPermissionTest {
     fun theFlagOnlyEverGoesOneWay() = runBlocking {
         val file = File(dir, "one_way.preferences_pb")
 
-        withStore(file) { NotificationPermissionRepository(it).markRequested() }
-        withStore(file) { NotificationPermissionRepository(it).markRequested() }
+        withStore(file) { NotificationPermissionRepository(it).claimRequest() }
+        withStore(file) { NotificationPermissionRepository(it).claimRequest() }
 
         assertTrue(withStore(file) { NotificationPermissionRepository(it).wasRequested() })
     }
@@ -222,9 +225,59 @@ class NotificationPermissionTest {
             sdkInt = sdkInt,
             isGranted = { granted },
             wasAsked = { asked },
-            markAsked = { asked = true },
+            claimAsk = { !asked.also { asked = true } },
             launchRequest = { dialogsShown++ },
         )
+    }
+
+    /** A double tap: both calls pass the stale check, only the one that wins the claim launches. */
+    @Test
+    fun twoConcurrentAsksLaunchOnce() = runBlocking {
+        val repo = withStore(File(dir, "race.preferences_pb")) { store ->
+            val repository = NotificationPermissionRepository(store)
+            var launched = 0
+            List(2) {
+                async(Dispatchers.Default) {
+                    requestNotificationPermissionOnce(
+                        sdkInt = 33,
+                        isGranted = { false },
+                        wasAsked = { false },
+                        claimAsk = repository::claimRequest,
+                        launchRequest = { synchronized(this@NotificationPermissionTest) { launched++ } },
+                    )
+                }
+            }.awaitAll()
+            launched
+        }
+        assertEquals(1, repo)
+    }
+
+    @Test
+    fun theSynchronousAskLaunchesOnceAndOnlyWithAKnownState() {
+        val latch = java.util.concurrent.atomic.AtomicBoolean(false)
+        var launched = 0
+        var persisted = 0
+        fun tap(state: NotificationAskState?) = requestNotificationPermissionNow(
+            state = state,
+            inFlight = latch,
+            persistClaim = { persisted++ },
+            launchRequest = { launched++ },
+        )
+
+        assertEquals(false, tap(null))
+        assertEquals(false, tap(NotificationAskState(granted = false, canAsk = false)))
+        assertEquals(true, tap(NotificationAskState(granted = false, canAsk = true)))
+        assertEquals(false, tap(NotificationAskState(granted = false, canAsk = true)))
+        assertEquals(1, launched)
+        assertEquals(1, persisted)
+    }
+
+    @Test
+    fun `ask state offers the ask only where the gate would spend it`() {
+        assertEquals(NotificationAskState(granted = false, canAsk = true), notificationAskState(33, granted = false, askedBefore = false))
+        assertEquals(NotificationAskState(granted = true, canAsk = false), notificationAskState(34, granted = true, askedBefore = true))
+        assertEquals(NotificationAskState(granted = false, canAsk = false), notificationAskState(34, granted = false, askedBefore = true))
+        assertEquals(NotificationAskState(granted = false, canAsk = false), notificationAskState(32, granted = false, askedBefore = false))
     }
 
     /** See `PreferencesPersistenceTest.withStore` — DataStore refuses two live instances per file. */
