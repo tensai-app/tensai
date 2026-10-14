@@ -63,6 +63,8 @@ internal fun AddModelSheet(onDismiss: () -> Unit, onImportFromPhone: () -> Unit)
         shape = TensaiShapes.extraLarge.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
         containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = MaterialTheme.tensaiTints.scrim,
+        // A two-row action sheet: full height would leave it floating on an empty screen.
+        fullHeight = false,
     ) {
         Column(modifier = Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 24.dp)) {
             Text(
