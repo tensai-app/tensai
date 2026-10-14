@@ -8,6 +8,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
@@ -15,10 +17,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -123,18 +125,13 @@ fun InputPill(
                         onClick = onModelClick,
                         modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
                     )
-                    IconButton(
+                    SendButton(
+                        canStop = canStop,
                         onClick = { if (canStop) onStop() else onSend() },
                         // Busy without a stop to offer leaves the button disabled rather than enabled
                         // on a send the queue would refuse, with the ring still turning to say why.
                         enabled = canStop || (!isGenerating && value.isNotBlank()),
-                    ) {
-                        Icon(
-                            imageVector = if (canStop) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                            contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -145,14 +142,45 @@ fun InputPill(
 @Composable
 private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(onClick = onClick, shape = TensaiShapes.small, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = TensaiMono),
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-        )
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.height(ControlHeight).padding(horizontal = 10.dp)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = TensaiMono),
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Shared by the model chip and the send button so the pill's bottom row lines up (TEN-129). */
+private val ControlHeight = 32.dp
+
+/**
+ * Send (an up arrow) or stop, in a tonal violet circle as tall as the model chip: the circle in a
+ * stronger primary tint, the glyph in full primary, lighter than its ground in Calm Night. Disabled
+ * fades both rather than greying them out, so the button stays part of the pill.
+ */
+@Composable
+private fun SendButton(canStop: Boolean, onClick: () -> Unit, enabled: Boolean) {
+    val tints = MaterialTheme.tensaiTints
+    val primary = MaterialTheme.colorScheme.primary
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = if (enabled) tints.primary24 else tints.primary08,
+        modifier = Modifier.size(ControlHeight),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (canStop) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
+                contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
+                tint = if (enabled) primary else primary.copy(alpha = 0.38f),
+                modifier = Modifier.size(if (canStop) 16.dp else 20.dp),
+            )
+        }
     }
 }
 
