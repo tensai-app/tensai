@@ -65,12 +65,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -201,13 +200,10 @@ fun ChatSettingsSheet(
     onReset: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    TensaiBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
         shape = SheetShape,
         containerColor = MaterialTheme.colorScheme.background,
-        tonalElevation = 0.dp,
         scrimColor = MaterialTheme.tensaiTints.scrim,
         dragHandle = {
             val hairline = MaterialTheme.tensaiTints.outline

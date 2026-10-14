@@ -35,10 +35,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -228,13 +227,10 @@ private fun LicenseItem(row: LicenseRow, onClick: () -> Unit) {
 @Composable
 private fun LicenseSheet(row: LicenseRow, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    TensaiBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
         shape = SheetShape,
         containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
         scrimColor = MaterialTheme.tensaiTints.scrim,
         dragHandle = {
             val hairline = MaterialTheme.tensaiTints.outline

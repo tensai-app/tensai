@@ -12,10 +12,9 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,12 +58,10 @@ internal fun DeleteModelDialog(modelName: String, onCancel: () -> Unit, onConfir
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AddModelSheet(onDismiss: () -> Unit, onImportFromPhone: () -> Unit) {
-    ModalBottomSheet(
+    TensaiBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = TensaiShapes.extraLarge.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
         containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
         scrimColor = MaterialTheme.tensaiTints.scrim,
     ) {
         Column(modifier = Modifier.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 24.dp)) {
