@@ -1,5 +1,14 @@
 package io.github.hokanosekai.tensai.ui.components
 
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.layout.layout
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.ripple
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import android.provider.Settings
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -71,6 +80,8 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *   conversation in play; [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] passes the
  *   narrower answer, so a reply streaming in *another* conversation shows as busy rather than
  *   offering a stop that would cut off something the user cannot see.
+ * @param translucent lets the content scrolling under the pill show faintly through it (TEN-133).
+ *   Chat overlays the pill on its message list; Home keeps the opaque default.
  */
 @Composable
 fun InputPill(
@@ -83,6 +94,7 @@ fun InputPill(
     onModelClick: () -> Unit,
     modifier: Modifier = Modifier,
     canStop: Boolean = isGenerating,
+    translucent: Boolean = false,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         if (isGenerating) {
@@ -91,7 +103,7 @@ fun InputPill(
 
         Surface(
             shape = TensaiShapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            color = MaterialTheme.colorScheme.surfaceVariant.let { if (translucent) it.copy(alpha = TranslucentAlpha) else it },
             modifier = Modifier.fillMaxWidth().padding(3.dp),
         ) {
             // The bottom row sits ControlInset from the pill's side and bottom edges, so the chip and
@@ -144,6 +156,15 @@ fun InputPill(
 /** The resident model's name, bottom-left of the pill: a tap opens Models, like the top bar pill used to (TEN-129). */
 @Composable
 private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // No 48dp minimum here: it would make the row taller than the chip (TEN-134). The chip is wide,
+    // a 32dp tall target is still easy to hit.
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+        ModelChipSurface(label, onClick, modifier)
+    }
+}
+
+@Composable
+private fun ModelChipSurface(label: String, onClick: () -> Unit, modifier: Modifier) {
     Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.tensaiTints.primary12, modifier = modifier) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.height(ControlHeight).padding(horizontal = 12.dp)) {
             Text(
@@ -156,6 +177,9 @@ private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = M
         }
     }
 }
+
+/** Pill ground opacity when [InputPill]'s `translucent`: text beneath stays a faint shadow, never readable. */
+private const val TranslucentAlpha = 0.92f
 
 /** Shared by the model chip and the send button so the pill's bottom row lines up (TEN-129). */
 private val ControlHeight = 32.dp
@@ -172,23 +196,45 @@ private val ControlInset = 12.dp
 private fun SendButton(canStop: Boolean, onClick: () -> Unit, enabled: Boolean) {
     val tints = MaterialTheme.tensaiTints
     val primary = MaterialTheme.colorScheme.primary
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        shape = CircleShape,
-        color = if (enabled) tints.primary24 else tints.primary08,
-        modifier = Modifier.size(ControlHeight),
+    // Lays out as the 32dp circle only, so the row is as tall as its controls and the gap under
+    // them matches the gap beside them (TEN-134); the 48dp touch target overhangs that slot.
+    Box(
+        modifier = Modifier.layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = Constraints.Infinity, maxHeight = Constraints.Infinity))
+            val slot = ControlHeight.roundToPx()
+            layout(slot, slot) { placeable.place((slot - placeable.width) / 2, (slot - placeable.height) / 2) }
+        },
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = if (canStop) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
-                contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
-                tint = if (enabled) primary else primary.copy(alpha = 0.38f),
-                modifier = Modifier.size(if (canStop) 16.dp else 20.dp),
-            )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(TouchTarget)
+                .clickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    interactionSource = null,
+                    indication = ripple(bounded = false, radius = ControlHeight / 2),
+                    onClick = onClick,
+                ),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(ControlHeight)
+                    .background(if (enabled) tints.primary24 else tints.primary08, CircleShape),
+            ) {
+                Icon(
+                    imageVector = if (canStop) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
+                    contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
+                    tint = if (enabled) primary else primary.copy(alpha = 0.38f),
+                    modifier = Modifier.size(if (canStop) 16.dp else 20.dp),
+                )
+            }
         }
     }
 }
+
+private val TouchTarget = 48.dp
 
 /**
  * The animated (or, under reduced motion, static) ring drawn behind the pill while generating.

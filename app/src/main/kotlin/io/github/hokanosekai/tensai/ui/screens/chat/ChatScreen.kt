@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -41,6 +42,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.lifecycle.Lifecycle
@@ -165,7 +173,14 @@ fun ChatScreen(
         if (isDragged || isAtBottom) followStream = isAtBottom
     }
 
-    LaunchedEffect(messages, followStream) {
+    // Height of the overlay (starters + pill) floating over the list, measured: the list pads its
+    // bottom by it so the last message rests above the pill while scrolling under it (TEN-133).
+    var overlayHeightPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+
+    // Keyed on the overlay height too: a growing input (several lines) grows the bottom padding, and
+    // a reader following the stream must stay glued to the end rather than be left above it.
+    LaunchedEffect(messages, followStream, overlayHeightPx) {
         if (!followStream) return@LaunchedEffect
         val count = messages?.size ?: return@LaunchedEffect
         if (count == 0) return@LaunchedEffect
@@ -196,14 +211,20 @@ fun ChatScreen(
         }
         val currentMessages = messages
         Box(modifier = Modifier.weight(1f)) {
+            val overlayHeight = with(density) { overlayHeightPx.toDp() }
             when {
                 currentMessages == null -> Unit // initial Room query hasn't emitted yet.
-                currentMessages.isEmpty() -> EmptyConversationState()
+                currentMessages.isEmpty() -> EmptyConversationState(modifier = Modifier.padding(bottom = overlayHeight))
                 else -> {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = 16.dp,
+                            bottom = overlayHeight + 8.dp,
+                        ),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
                         itemsIndexed(currentMessages, key = { _, message -> message.id }) { index, message ->
@@ -225,39 +246,69 @@ fun ChatScreen(
                 // Re-arming the follow is the whole action: the effect above owns the scrolling,
                 // so the button never races it with a second one of its own.
                 onClick = { followStream = true },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = overlayHeight + 12.dp),
             )
-        }
 
-        // Starters for a conversation with no message yet; the same chips as Home, and they fill the
-        // pill the same way. Gone as soon as there is a message.
-        if (currentMessages != null && currentMessages.isEmpty()) {
-            SuggestionChips(
-                onPick = { input = it },
-                wrap = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            )
-        }
-
-        InputPill(
-            value = input,
-            onValueChange = { input = it },
-            onSend = {
-                if (input.isNotBlank()) {
-                    viewModel.send(input)
-                    input = ""
-                    // The reply starts streaming right away — leaving the keyboard up would cover
-                    // most of it (TEN-56).
-                    keyboardController?.hide()
+            // Floats over the list (TEN-133) instead of stacking under it, so the reply scrolls
+            // beneath the translucent pill.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .onSizeChanged { overlayHeightPx = it.height },
+            ) {
+                // Starters for a conversation with no message yet; the same chips as Home, and they fill the
+                // pill the same way. Gone as soon as there is a message.
+                if (currentMessages != null && currentMessages.isEmpty()) {
+                    SuggestionChips(
+                        onPick = { input = it },
+                        wrap = true,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    )
                 }
-            },
-            onStop = viewModel::stop,
-            isGenerating = isGenerating,
-            canStop = canStop,
-            modelLabel = modelInfo?.name ?: stringResource(R.string.top_bar_no_model),
-            onModelClick = onNavigateToModels,
-            modifier = Modifier.padding(16.dp),
-        )
+
+                val background = MaterialTheme.colorScheme.background
+                val pillMargin = 16.dp
+                InputPill(
+                    value = input,
+                    onValueChange = { input = it },
+                    onSend = {
+                        if (input.isNotBlank()) {
+                            viewModel.send(input)
+                            input = ""
+                            // The reply starts streaming right away, leaving the keyboard up would cover
+                            // most of it (TEN-56).
+                            keyboardController?.hide()
+                        }
+                    },
+                    onStop = viewModel::stop,
+                    isGenerating = isGenerating,
+                    canStop = canStop,
+                    modelLabel = modelInfo?.name ?: stringResource(R.string.top_bar_no_model),
+                    onModelClick = onNavigateToModels,
+                    translucent = true,
+                    // Scrim: transparent at the pill's vertical center, fully background by its bottom
+                    // edge and solid below, so text fades out under the pill's lower half and never
+                    // slides crisply through the margin beneath it. Drawn behind the pill (and its ring).
+                    modifier = Modifier
+                        .drawBehind {
+                            val margin = pillMargin.toPx()
+                            val start = margin + (size.height - 2 * margin) / 2f
+                            val end = size.height - margin
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, background),
+                                    startY = start,
+                                    endY = end,
+                                ),
+                                topLeft = Offset(0f, start),
+                                size = Size(size.width, size.height - start),
+                            )
+                        }
+                        .padding(pillMargin),
+                )
+            }
+        }
     }
 
     val currentSampling = sampling
