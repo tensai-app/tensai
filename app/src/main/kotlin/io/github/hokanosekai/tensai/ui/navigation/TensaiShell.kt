@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
@@ -96,6 +97,10 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 keyboardController?.hide()
             }
     }
+
+    // TEN-126: Back closes an open drawer first, as anywhere else on Android, instead of falling
+    // through to the NavHost under it.
+    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
