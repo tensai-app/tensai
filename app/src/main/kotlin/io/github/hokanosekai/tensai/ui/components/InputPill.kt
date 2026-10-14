@@ -179,7 +179,7 @@ private fun ModelChipSurface(label: String, onClick: () -> Unit, modifier: Modif
 }
 
 /** Pill ground opacity when [InputPill]'s `translucent`: text beneath stays a faint shadow, never readable. */
-private const val TranslucentAlpha = 0.92f
+private const val TranslucentAlpha = 0.95f
 
 /** Shared by the model chip and the send button so the pill's bottom row lines up (TEN-129). */
 private val ControlHeight = 32.dp
