@@ -1,6 +1,8 @@
 package io.github.hokanosekai.tensai.runtime
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.util.Log
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
@@ -14,10 +16,20 @@ import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.data.session.SessionRepository
 import io.github.hokanosekai.tensai.data.session.SessionSaveOutcome
 import io.github.hokanosekai.tensai.engine.LlamaKtEngineImpl
+import io.github.hokanosekai.tensai.download.DownloadDrainer
+import io.github.hokanosekai.tensai.download.DownloadEngine
+import io.github.hokanosekai.tensai.download.DrainerRegistry
+import io.github.hokanosekai.tensai.download.DownloadManager
+import io.github.hokanosekai.tensai.download.DownloadPreferences
+import io.github.hokanosekai.tensai.download.DownloadRunner
+import io.github.hokanosekai.tensai.download.WorkManagerScheduler
 import io.github.hokanosekai.tensai.hf.HfClient
+import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +43,9 @@ import kotlinx.coroutines.launch
 object RuntimeGraph {
 
     private lateinit var appContext: Context
+
+    /** False until `TensaiApp.onCreate` ran [init]; a WorkManager worker can start before that. */
+    val isInitialized: Boolean get() = ::appContext.isInitialized
 
     /** Must be called once, before any other member is touched — see `TensaiApp.onCreate`. */
     fun init(context: Context) {
@@ -110,6 +125,9 @@ object RuntimeGraph {
         // `init` waits on it, and a model whose file has gone missing simply keeps the estimate it
         // already had (see [ModelRepository.backfillKvCacheShape]).
         applicationScope.launch { runCatching { modelRepository.backfillKvCacheShape() } }
+
+        // TEN-141: stuck rows, orphan parts, and a drainer if anything is waiting.
+        applicationScope.launch { runCatching { downloadManager.reconcile() } }
     }
 
     /**
@@ -203,6 +221,72 @@ object RuntimeGraph {
             readMetadata = llamaEngine::readMetadata,
             kvShapeVersion = llamaEngine::kvShapeVersion,
             currentLoadedModelId = { inferenceQueue.residentModelId },
+        )
+    }
+
+    /** Whether a download may use mobile data without asking, see [DownloadPreferences]. */
+    val downloadPreferences: DownloadPreferences by lazy { DownloadPreferences(appContext) }
+
+    private val downloadDao by lazy { database.downloadDao() }
+
+    /**
+     * Streams model files for the download queue (TEN-141). Not [HfClient]'s OkHttp: that one has a
+     * 30 s call timeout, which no multi-GB download survives. Same host rules, no token yet (the
+     * Settings field comes with TEN-140, it will feed both providers).
+     */
+    private val downloadHttp by lazy {
+        HfClient.defaultHttp().newBuilder()
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+    /** True while a drainer loop is active in this process: shared by the scheduler, manager and drainer. */
+    private val drainerRegistry = DrainerRegistry()
+
+    private val connectivity by lazy { appContext.getSystemService(ConnectivityManager::class.java) }
+
+    /** Keeps the one `tensai-model-downloads` drainer alive, see [WorkManagerScheduler]. */
+    val downloadScheduler: WorkManagerScheduler by lazy { WorkManagerScheduler(appContext, drainerRegistry) }
+
+    /** Moves the bytes of one download: resume, one-pass sha256, registration as a model. */
+    val downloadRunner: DownloadRunner by lazy {
+        DownloadRunner(
+            dao = downloadDao,
+            engine = DownloadEngine(downloadHttp, freeBytes = modelRepository::freeBytes, tokenProvider = { null }),
+            urlFor = { repo, sha, file -> hfClient.fileUrl(repo, file, sha ?: "main") },
+            partFor = modelRepository::downloadPartFile,
+            finalize = { part, row -> modelRepository.registerDownload(part, row.fileName) },
+            unregister = { registered -> runCatching { modelRepository.unregisterDownload(registered) } },
+        )
+    }
+
+    /** Runs the queue, see [DownloadDrainer]. Used by `DownloadWorker`. */
+    val downloadDrainer: DownloadDrainer by lazy {
+        DownloadDrainer(
+            dao = downloadDao,
+            runOne = { id, progress -> downloadRunner.run(id, progress) },
+            isMetered = { connectivity.isActiveNetworkMetered },
+            registry = drainerRegistry,
+            log = { message, error -> Log.e("tensai.download", message, error) },
+        )
+    }
+
+    /** The model download queue, see [DownloadManager]. */
+    val downloadManager: DownloadManager by lazy {
+        DownloadManager(
+            dao = downloadDao,
+            scheduler = downloadScheduler,
+            urlFor = { repo, sha, file -> hfClient.fileUrl(repo, file, sha ?: "main") },
+            partFor = modelRepository::downloadPartFile,
+            listParts = modelRepository::downloadPartFiles,
+            freeBytes = modelRepository::freeBytes,
+            isMetered = { connectivity.isActiveNetworkMetered },
+            allowMobileData = downloadPreferences::isMobileDataAllowed,
+            findInstalled = { name, size ->
+                modelRepository.models.first()
+                    .firstOrNull { it.fileName == name && it.sizeBytes == size && File(it.filePath).exists() }?.id
+            },
+            registry = drainerRegistry,
         )
     }
 

@@ -32,6 +32,7 @@ internal data class DetailDto(
     val cardData: CardDto? = null,
     val gguf: GgufDto? = null,
     val siblings: List<JsonElement> = emptyList(),
+    val sha: String? = null,
 )
 
 @Serializable
@@ -98,6 +99,8 @@ internal object HfParser {
         else -> null
     }
 
+    private val COMMIT_SHA = Regex("[0-9a-f]{40}")
+
     private fun DetailDto.toDetail(): HfRepoDetail {
         // One malformed sibling must not kill the whole repo: it is skipped.
         val parsed = siblings.mapNotNull { runCatching { json.decodeFromJsonElement<SiblingDto>(it) }.getOrNull() }
@@ -117,6 +120,7 @@ internal object HfParser {
             supportsTools = TOOLS.containsMatchIn(template),
             hasVision = files.any { QuantLabel.isMmproj(it.rfilename) },
             quants = quants,
+            sha = sha?.takeIf { COMMIT_SHA.matches(it) },
         )
     }
 }

@@ -104,7 +104,7 @@ class HfClient(
     suspend fun detail(repo: String, forceRefresh: Boolean = false): HfRepoDetail {
         val url = repoUrl(repo, "api/models").newBuilder().apply {
             addQueryParameter("blobs", "true")
-            listOf("gguf", "cardData", "downloads", "likes", "lastModified", "gated", "tags", "siblings")
+            listOf("gguf", "cardData", "downloads", "likes", "lastModified", "gated", "tags", "siblings", "sha")
                 .forEach { addQueryParameter("expand[]", it) }
         }.build()
         if (!forceRefresh) synchronized(cache) { cache[repo] }?.let { return it }
@@ -129,9 +129,9 @@ class HfClient(
     suspend fun readme(repo: String): String =
         fetch(repoUrl(repo, "raw/main/README.md", api = false)) { readBody(it, README_MAX_BYTES) }
 
-    /** Direct download URL of [fileName] in [repo] (honours `Range`). Same origin, no call made. */
-    fun fileUrl(repo: String, fileName: String): String =
-        repoUrl(repo, "resolve/main", api = false).newBuilder().addPathSegments(fileName).build().toString()
+    /** Direct download URL of [fileName] in [repo] at [revision] (a commit sha to pin it, `main` otherwise; honours `Range`). Same origin, no call made. */
+    fun fileUrl(repo: String, fileName: String, revision: String = "main"): String =
+        repoUrl(repo, "resolve/$revision", api = false).newBuilder().addPathSegments(fileName).build().toString()
 
     /** Page of the repo on the website, for "Open on Hugging Face". */
     fun repoPageUrl(repo: String): String = repoUrl(repo, "", api = false).toString()

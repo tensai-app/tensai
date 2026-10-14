@@ -9,6 +9,8 @@ import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
+import io.github.hokanosekai.tensai.download.DownloadDao
+import io.github.hokanosekai.tensai.download.DownloadEntity
 
 /**
  * App-wide Room database — [ModelEntity] plus the chat tables ([ConversationEntity], [MessageEntity]).
@@ -44,14 +46,23 @@ import io.github.hokanosekai.tensai.data.session.SessionEntity
  * conversations that never got a message. A new chat is now a draft with no row until its first
  * send, so those rows are no longer created, and the ones left from before go.
  *
+ * Version 11 added [DownloadEntity] (TEN-141): the model download queue, see
+ * [io.github.hokanosekai.tensai.download.DownloadManager]. A new table only, nothing to backfill.
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
  * against what Room actually generated at each version.
  */
 @Database(
-    entities = [ModelEntity::class, ConversationEntity::class, MessageEntity::class, SessionEntity::class],
-    version = 10,
+    entities = [
+        ModelEntity::class,
+        ConversationEntity::class,
+        MessageEntity::class,
+        SessionEntity::class,
+        DownloadEntity::class,
+    ],
+    version = 11,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
@@ -61,6 +72,8 @@ abstract class TensaiDb : RoomDatabase() {
     abstract fun chatDao(): ChatDao
 
     abstract fun sessionDao(): SessionDao
+
+    abstract fun downloadDao(): DownloadDao
 
     companion object {
         private const val DB_NAME = "tensai.db"

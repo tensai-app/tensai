@@ -187,6 +187,23 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v10 -> v11 (TEN-141): adds the `downloads` table behind
+     * [io.github.hokanosekai.tensai.download.DownloadManager]. Brand new, so existing rows are untouched.
+     */
+    val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `downloads` (`id` TEXT NOT NULL, `repo` TEXT NOT NULL, " +
+                    "`fileName` TEXT NOT NULL, `quant` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
+                    "`sizeBytes` INTEGER NOT NULL, `sha256` TEXT, `status` TEXT NOT NULL, " +
+                    "`bytesDone` INTEGER NOT NULL, `error` TEXT, `queuedAt` INTEGER NOT NULL, `modelId` TEXT, `commitSha` TEXT, " +
+                    "`allowMobile` INTEGER NOT NULL, `ioRetries` INTEGER NOT NULL, `notBefore` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`id`))",
+            )
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -198,5 +215,6 @@ object TensaiDbMigrations {
         MIGRATION_7_8,
         MIGRATION_8_9,
         MIGRATION_9_10,
+        MIGRATION_10_11,
     )
 }

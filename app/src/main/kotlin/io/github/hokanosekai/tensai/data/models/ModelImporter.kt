@@ -4,6 +4,8 @@ import io.github.hokanosekai.tensai.engine.GgufInfo
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
@@ -31,6 +33,14 @@ import kotlinx.coroutines.withContext
  *   why a test must never point this at a real `filesDir`.
  * @param models the current library, read to reject a re-import of something already there.
  */
+/**
+ * What registering a model produced: the stored [model], and the [previous] row it relinked (a
+ * "File missing" model whose file this one replaced), null for a brand new row. A caller that has
+ * to undo the registration needs the difference: a new row is deleted, a relinked one goes back to
+ * what it was, because its id carries chat sessions.
+ */
+data class RegisteredModel(val model: ModelEntity, val previous: ModelEntity?)
+
 internal class ModelImporter(
     private val modelsDir: File,
     private val modelDao: ModelDao,
@@ -107,87 +117,162 @@ internal class ModelImporter(
                 }
             }
 
-            val info = try {
-                readMetadata(destFile.absolutePath)
-            } catch (e: CancellationException) {
-                // Before the CancellationException clause existed, leaving the screen mid-import
-                // came back as "this is probably not a GGUF file" — the catch below swallowed the
-                // cancellation and answered with a verdict on the file instead (TEN-53).
-                throw e
-            } catch (e: Exception) {
-                throw ModelMetadataException(sourceName, e)
-            }
-
-            // A header that parses is not a model that loads (TEN-98). A GGUF with zero tensors
-            // reads as paramCount 0, and llama.cpp needs `<arch>.block_count` for every LLM arch,
-            // so blockCount 0 means it can never load either, yet the old code imported it and
-            // the Models screen called it "Runs well" (the TEN-91 fixture, 260 bytes). Same
-            // classification as an unparseable header, so the same message and the same cleanup.
-            // Real models clear it easily: Gemma-4 E2B 4.6e9 params / 35 blocks, Phi-4-mini
-            // 3.8e9 / 32, Qwen3-1.7B 1.7e9 / 28.
-            if (info.paramCount <= 0 || info.blockCount <= 0) {
-                throw ModelMetadataException(
-                    sourceName,
-                    IllegalStateException(
-                        "GGUF has no usable model: paramCount=${info.paramCount}, blockCount=${info.blockCount}",
-                    ),
-                )
-            }
-
-            val entity = ModelEntity(
-                id = UUID.randomUUID().toString(),
-                displayName = info.name.takeIf { it.isNotBlank() } ?: sourceName.removeSuffix(".gguf"),
-                fileName = sourceName,
-                filePath = destFile.absolutePath,
-                sizeBytes = copiedBytes,
-                architecture = info.architecture,
-                quantLabel = info.quantLabel,
-                paramCount = info.paramCount,
-                contextLength = info.contextLength,
-                embeddingLength = info.embeddingLength,
-                blockCount = info.blockCount,
-                supportsThinking = info.supportsThinking,
-                importedAt = System.currentTimeMillis(),
-                kvFullElementsPerToken = info.kvFullElementsPerToken,
-                kvSwaElementsPerToken = info.kvSwaElementsPerToken,
-                slidingWindow = info.slidingWindow,
-                // Stamped at import so a model that arrives current is never re-read by
-                // KvCacheShapeBackfill — the row already says which formula produced the three
-                // numbers above it. Omitting this would default to 0 and hand every new import
-                // straight back to the backfill on the next start.
-                kvShapeVersion = info.kvShapeVersion,
-            )
-            // The commit. NonCancellable so that leaving the screen cannot land between "the row
-            // is written" and "the copy is kept": once this block starts it runs to the end, and
-            // [committed] stops the catch below from deleting a file a row now points at.
-            val stored = withContext(NonCancellable) {
-                commitMutex.withLock {
-                    // A re-import of a file whose row survived it (same name and size, file gone)
-                    // relinks: the row keeps its id, so sessions saved against it stay attached.
-                    // Re-read under the lock: two concurrent relinks of one row would otherwise
-                    // both write it and leave the loser's copy with no row. The second one finds
-                    // the first one's file on disk and is refused as the duplicate it now is.
-                    val target = relink?.let { modelDao.getById(it.id) }
-                    if (target != null && target.filePath != destFile.absolutePath && fileExists(target.filePath)) {
-                        throw DuplicateModelException(sourceName)
-                    }
-                    val toStore = if (target == null) {
-                        entity
-                    } else {
-                        entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt)
-                    }
-                    // One statement: REPLACE on the primary key (see ModelDao.insert). A failure
-                    // leaves the old row exactly as it was.
-                    modelDao.insert(toStore)
-                    committed = true
-                    toStore
-                }
-            }
-            return stored
+            return commit(sourceName, destFile, copiedBytes, relink) { committed = true }.model
         } catch (e: Throwable) {
             if (!committed) destFile.delete()
             throw e
         }
+    }
+
+
+    /**
+     * Registers a file that was *downloaded* (TEN-141) through the same pipeline as an import:
+     * [partFile] is renamed atomically to a unique name under [modelsDir], its GGUF header is read
+     * and a [ModelEntity] is stored. No copy, so a multi-GB download costs no second pass over the
+     * disk (nor double the space).
+     *
+     * Same guarantees as [import]: a duplicate (same name and size, file on disk) is refused before
+     * anything moves ([DuplicateModelException], [partFile] untouched), and any failure after the
+     * rename deletes the destination. A row whose file went missing is relinked, so re-downloading
+     * a "File missing" model keeps its id and its sessions.
+     *
+     * @param sourceName the name to give it (the Hub's file name without directories).
+     */
+    suspend fun adopt(partFile: File, sourceName: String): RegisteredModel {
+        val size = partFile.length()
+        var relink: ModelEntity? = null
+        when (val match = match(sourceName, size)) {
+            is Match.Duplicate -> throw DuplicateModelException(sourceName)
+            is Match.Relink -> relink = match.row
+            Match.None -> Unit
+        }
+        val destFile = try {
+            reserveDestFile(sourceName)
+        } catch (e: IOException) {
+            throw ModelImportException(sourceName, e)
+        }
+        var committed = false
+        try {
+            try {
+                // Same directory, same volume: a rename, atomic, replacing the empty reservation.
+                Files.move(
+                    partFile.toPath(),
+                    destFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (e: IOException) {
+                throw ModelImportException(sourceName, e)
+            }
+            return commit(sourceName, destFile, size, relink) { committed = true }
+        } catch (e: Throwable) {
+            if (!committed) restorePartOrDelete(e, destFile, partFile)
+            throw e
+        }
+    }
+
+    /**
+     * After a failed [adopt]: a file that is not a model (bad header) or whose rename failed is
+     * deleted. Any other failure (a database error on insert, say) is not the file's fault, so
+     * it goes back to [partFile]: the caller keeps a finished download it can register again.
+     */
+    private fun restorePartOrDelete(cause: Throwable, destFile: File, partFile: File) {
+        val fileIsAtFault = cause is ModelMetadataException || cause is ModelImportException
+        if (!fileIsAtFault && destFile.length() > 0) {
+            try {
+                Files.move(destFile.toPath(), partFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                return
+            } catch (_: IOException) {
+            }
+        }
+        destFile.delete()
+    }
+
+    /** Header, validity check, row: everything after the bytes are in place at [destFile]. */
+    private suspend fun commit(
+        sourceName: String,
+        destFile: File,
+        copiedBytes: Long,
+        relink: ModelEntity?,
+        markCommitted: () -> Unit,
+    ): RegisteredModel {
+        val info = try {
+            readMetadata(destFile.absolutePath)
+        } catch (e: CancellationException) {
+            // Before the CancellationException clause existed, leaving the screen mid-import
+            // came back as "this is probably not a GGUF file": the catch below swallowed the
+            // cancellation and answered with a verdict on the file instead (TEN-53).
+            throw e
+        } catch (e: Exception) {
+            throw ModelMetadataException(sourceName, e)
+        }
+
+        // A header that parses is not a model that loads (TEN-98). A GGUF with zero tensors
+        // reads as paramCount 0, and llama.cpp needs `<arch>.block_count` for every LLM arch,
+        // so blockCount 0 means it can never load either, yet the old code imported it and
+        // the Models screen called it "Runs well" (the TEN-91 fixture, 260 bytes). Same
+        // classification as an unparseable header, so the same message and the same cleanup.
+        // Real models clear it easily: Gemma-4 E2B 4.6e9 params / 35 blocks, Phi-4-mini
+        // 3.8e9 / 32, Qwen3-1.7B 1.7e9 / 28.
+        if (info.paramCount <= 0 || info.blockCount <= 0) {
+            throw ModelMetadataException(
+                sourceName,
+                IllegalStateException(
+                    "GGUF has no usable model: paramCount=${info.paramCount}, blockCount=${info.blockCount}",
+                ),
+            )
+        }
+
+        val entity = ModelEntity(
+            id = UUID.randomUUID().toString(),
+            displayName = info.name.takeIf { it.isNotBlank() } ?: sourceName.removeSuffix(".gguf"),
+            fileName = sourceName,
+            filePath = destFile.absolutePath,
+            sizeBytes = copiedBytes,
+            architecture = info.architecture,
+            quantLabel = info.quantLabel,
+            paramCount = info.paramCount,
+            contextLength = info.contextLength,
+            embeddingLength = info.embeddingLength,
+            blockCount = info.blockCount,
+            supportsThinking = info.supportsThinking,
+            importedAt = System.currentTimeMillis(),
+            kvFullElementsPerToken = info.kvFullElementsPerToken,
+            kvSwaElementsPerToken = info.kvSwaElementsPerToken,
+            slidingWindow = info.slidingWindow,
+            // Stamped at import so a model that arrives current is never re-read by
+            // KvCacheShapeBackfill: the row already says which formula produced the three
+            // numbers above it. Omitting this would default to 0 and hand every new import
+            // straight back to the backfill on the next start.
+            kvShapeVersion = info.kvShapeVersion,
+        )
+        // The commit. NonCancellable so that leaving the screen cannot land between "the row
+        // is written" and "the copy is kept": once this block starts it runs to the end, and
+        // [committed] stops the catch below from deleting a file a row now points at.
+        val stored: RegisteredModel = withContext(NonCancellable) {
+            commitMutex.withLock {
+                // A re-import of a file whose row survived it (same name and size, file gone)
+                // relinks: the row keeps its id, so sessions saved against it stay attached.
+                // Re-read under the lock: two concurrent relinks of one row would otherwise
+                // both write it and leave the loser's copy with no row. The second one finds
+                // the first one's file on disk and is refused as the duplicate it now is.
+                val target = relink?.let { modelDao.getById(it.id) }
+                if (target != null && target.filePath != destFile.absolutePath && fileExists(target.filePath)) {
+                    throw DuplicateModelException(sourceName)
+                }
+                val toStore = if (target == null) {
+                    entity
+                } else {
+                    entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt)
+                }
+                // One statement: REPLACE on the primary key (see ModelDao.insert). A failure
+                // leaves the old row exactly as it was.
+                modelDao.insert(toStore)
+                markCommitted()
+                RegisteredModel(toStore, previous = target)
+            }
+        }
+        return stored
     }
 
     private sealed interface Match {

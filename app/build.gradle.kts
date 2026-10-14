@@ -131,6 +131,7 @@ dependencies {
     implementation(libs.commonmark.ext.gfm.tables)
     implementation(libs.aboutlibraries.core)
     implementation(libs.okhttp)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.kotlinx.serialization.json)
     debugImplementation(libs.compose.ui.tooling)
 

@@ -414,4 +414,33 @@
     <string name="notification_action_stop">Stop</string>
     <string name="notification_idle_title">Idle</string>
 
+
+    <!-- Model download notifications (TEN-141, DownloadNotifier). Resolved through withAppLanguage. -->
+    <string name="download_channel_name">Downloads</string>
+    <string name="download_channel_description">Progress of model downloads</string>
+    <string name="download_ready_channel_name">Downloads finished</string>
+    <string name="download_ready_channel_description">A downloaded model is ready</string>
+    <string name="download_notification_size">%1$s of %2$s</string>
+    <string name="download_notification_detail">%1$s · %2$s/s · %3$s left</string>
+    <string name="download_eta_hours">%1$d h %2$d min</string>
+    <string name="download_eta_minutes">%1$d min</string>
+    <string name="download_eta_seconds">%1$d s</string>
+    <string name="download_action_pause">Pause</string>
+    <string name="download_action_cancel">Cancel</string>
+    <string name="download_action_load">Load</string>
+    <string name="download_ready_title">%1$s is ready</string>
+    <string name="download_ready_text">Downloaded and added to your models</string>
+    <string name="download_failed_title">Download failed · %1$s</string>
+    <string name="download_error_gated">needs an accepted licence or token</string>
+    <string name="download_error_invalid_token">token refused</string>
+    <string name="download_error_not_found">file not found</string>
+    <string name="download_error_checksum">checksum mismatch</string>
+    <string name="download_error_size">unexpected file size</string>
+    <string name="download_error_disk_full">not enough storage</string>
+    <string name="download_error_network">network error</string>
+    <string name="download_error_already_imported">already on this device</string>
+    <string name="download_error_invalid_model">not a valid model file</string>
+    <string name="download_error_http">server error %1$d</string>
+    <string name="download_error_unknown">unexpected error</string>
+
 </resources>

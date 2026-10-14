@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
          listings and files from huggingface.co and nothing else: no telemetry, no other host.
          "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:name=".TensaiApp"
@@ -48,6 +51,19 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="on-device LLM inference" />
         </service>
+
+        <!-- TEN-141: WorkManager runs model downloads in this foreground service when a worker
+             calls setForeground. Its own manifest entry has no type; declaring dataSync here
+             (merged over the library's) is what lets the worker start it as a data transfer. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- Pause / Cancel actions of the download notification. -->
+        <receiver
+            android:name=".download.DownloadActionReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

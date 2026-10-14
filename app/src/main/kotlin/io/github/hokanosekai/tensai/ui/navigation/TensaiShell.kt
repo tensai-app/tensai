@@ -30,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.download.LoadRequests
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
@@ -37,6 +38,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** Which chrome (top bar) a given route gets. */
@@ -136,6 +138,21 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
         is OnboardingEntry.Show -> TensaiDestination.Onboarding.route
     }
     val onboardingStartStep = (onboardingEntry as? OnboardingEntry.Show)?.step ?: OnboardingStep.Welcome
+
+    // TEN-141: the "Load" action of the download-ready notification (see LoadRequests). It goes to the
+    // same load screen as every other Load button. Held while the first-run onboarding is up: that
+    // flow has its own way to a loaded model.
+    val pendingLoad by LoadRequests.pending.collectAsState()
+    LaunchedEffect(pendingLoad, currentRoute) {
+        val modelId = pendingLoad ?: return@LaunchedEffect
+        // Wait for the first destination, and for the onboarding to be over (it is a route, so this
+        // fires on its own once the user leaves it).
+        if (currentRoute == null || currentRoute.startsWith(TensaiDestination.Onboarding.route)) return@LaunchedEffect
+        LoadRequests.consume(modelId)
+        // A model deleted since the notification was posted: nothing to load, nothing to say.
+        val exists = RuntimeGraph.modelRepository.models.first().any { it.id == modelId }
+        if (exists) navController.navigate(TensaiDestination.Loading.route(modelId))
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,

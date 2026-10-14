@@ -479,6 +479,79 @@ class ModelImporterTest {
         assertEquals(listOf("winner.gguf"), filesOnDisk())
     }
 
+    // ---- a finished download takes the same road (TEN-141) ----
+
+    private fun partFile(name: String = "dl.part", content: String = "gguf-bytes"): File =
+        File(modelsDir, name).also { it.writeText(content) }
+
+    @Test
+    fun adoptRenamesThePartAndStoresTheRow() = runBlocking {
+        val part = partFile()
+
+        val stored = importer.adopt(part, "model.gguf").model
+
+        assertEquals(listOf("model.gguf"), filesOnDisk())
+        assertFalse("the part file is gone, renamed", part.exists())
+        assertEquals("gguf-bytes", File(stored.filePath).readText())
+        assertEquals(10L, stored.sizeBytes)
+        assertEquals(listOf(stored), dao.rows)
+    }
+
+    @Test
+    fun adoptPicksAFreeNameWhenTheOneItWantsIsTaken() = runBlocking {
+        File(modelsDir, "model.gguf").writeText("someone else")
+
+        val stored = importer.adopt(partFile(), "model.gguf").model
+
+        assertEquals("model-1.gguf", File(stored.filePath).name)
+        assertEquals("someone else", File(modelsDir, "model.gguf").readText())
+    }
+
+    @Test
+    fun adoptRefusesADuplicateAndLeavesThePartAlone() = runBlocking {
+        importer.adopt(partFile("first.part"), "model.gguf")
+        val second = partFile("second.part")
+
+        try {
+            importer.adopt(second, "model.gguf")
+            fail("expected DuplicateModelException")
+        } catch (_: DuplicateModelException) {
+        }
+
+        assertTrue("the caller still owns its part", second.exists())
+        assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun adoptPutsTheFileBackAsThePartWhenTheDatabaseFails() = runBlocking {
+        val part = partFile()
+        dao.failNextInsert = IllegalStateException("database is locked")
+
+        try {
+            importer.adopt(part, "model.gguf")
+            fail("expected the database failure")
+        } catch (_: IllegalStateException) {
+        }
+
+        assertTrue("the finished download is still there to register again", part.exists())
+        assertEquals(listOf("dl.part"), filesOnDisk())
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun adoptOfSomethingThatIsNotAModelDeletesTheDestinationAndKeepsNoRow() = runBlocking {
+        val bad = newImporter(readMetadata = { throw IOException("not a gguf") })
+
+        try {
+            bad.adopt(partFile(), "model.gguf")
+            fail("expected ModelMetadataException")
+        } catch (_: ModelMetadataException) {
+        }
+
+        assertEquals(emptyList<String>(), filesOnDisk())
+        assertTrue(dao.rows.isEmpty())
+    }
+
     /** In-memory stand-in for Room, same idea as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeModelDao : ModelDao {
         /** Makes the next insert throw before touching anything, like a transaction that rolled back. */

@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -17,6 +18,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.withAppLanguage
+import io.github.hokanosekai.tensai.download.LoadRequests
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
@@ -42,6 +44,8 @@ class MainActivity : ComponentActivity() {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Only a fresh launch: after process death the saved intent would replay an old tap.
+        if (savedInstanceState == null) LoadRequests.offer(intent)
 
         lifecycleScope.launch {
             onboardingEntryState.value = OnboardingGate.entry(
@@ -85,6 +89,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** A tap on "Load" in the download-ready notification while the app is already open. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        LoadRequests.offer(intent)
     }
 
     /** See [AppForegroundTracker] — the other half of [onStop]'s report. */

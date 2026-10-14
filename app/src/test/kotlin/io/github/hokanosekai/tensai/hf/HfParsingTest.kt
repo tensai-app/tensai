@@ -101,6 +101,14 @@ class HfParsingTest {
     }
 
     @Test
+    fun `commit sha is kept only when it is 40 hex`() {
+        val good = "0123456789abcdef0123456789abcdef01234567"
+        assertEquals(good, HfParser.parseDetail("""{"id":"a/b","sha":"$good","siblings":[]}""").sha)
+        assertEquals(null, HfParser.parseDetail("""{"id":"a/b","sha":"main","siblings":[]}""").sha)
+        assertEquals(null, HfParser.parseDetail("""{"id":"a/b","siblings":[]}""").sha)
+    }
+
+    @Test
     fun `repo without gguf block parses with zero params`() {
         val d = HfParser.parseDetail("""{"id":"a/b","siblings":[{"rfilename":"x-Q4_K_M.gguf","size":5}]}""")
         assertEquals(0, d.paramCount)

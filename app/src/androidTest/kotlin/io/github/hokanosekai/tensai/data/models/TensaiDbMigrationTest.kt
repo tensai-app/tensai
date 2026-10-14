@@ -302,6 +302,31 @@ class TensaiDbMigrationTest {
         }
     }
 
+    /** v10 -> v11 (TEN-141) adds an empty `downloads` table and leaves the models alone. */
+    @Test
+    fun downloadsTableAppearsInV11() {
+        helper.createDatabase(testDbName, 10).apply {
+            execSQL(
+                "INSERT INTO models (id, displayName, fileName, filePath, sizeBytes, architecture, quantLabel, " +
+                    "paramCount, contextLength, supportsThinking, importedAt, embeddingLength, blockCount, " +
+                    "kvFullElementsPerToken, kvSwaElementsPerToken, slidingWindow, kvShapeVersion) VALUES " +
+                    "('m1', 'Model One', 'm1.gguf', '/x/m1.gguf', 1, 'llama', 'Q4_K_M', 1, 1, 0, 1, 1, 1, 0, 0, 0, 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(testDbName, 11, true, TensaiDbMigrations.MIGRATION_10_11)
+
+        migrated.query("SELECT COUNT(*) FROM downloads").use {
+            assertTrue(it.moveToFirst())
+            assertEquals(0L, it.getLong(0))
+        }
+        migrated.query("SELECT COUNT(*) FROM models").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("the model row is untouched", 1L, it.getLong(0))
+        }
+    }
+
     /** The full chain still lands a v1 row on v8 intact, not just the single hop above. */
     @Test
     fun modelRowSurvivesV1ToV8() {

@@ -148,6 +148,41 @@ class ModelRepository(
         )
     }
 
+    /**
+     * Registers a finished download (TEN-141) through the same pipeline as [importModel]: [part] is
+     * renamed to a unique file under `models/`, its header is read, a [ModelEntity] is stored. See
+     * [ModelImporter.adopt] for what it refuses and what it cleans up.
+     *
+     * @param fileName the Hub's file name; any directory part is dropped.
+     */
+    suspend fun registerDownload(part: File, fileName: String): RegisteredModel = withContext(Dispatchers.IO) {
+        importer.adopt(part, fileName.substringAfterLast('/'))
+    }
+
+    /**
+     * Undoes [registerDownload] for a download that was cancelled while it was being registered. A
+     * new model is deleted with its file. A relinked one (the "File missing" row this download
+     * replaced) goes back to its previous state and keeps its id and sessions: only the new file goes.
+     */
+    suspend fun unregisterDownload(registered: RegisteredModel) = withContext(Dispatchers.IO) {
+        val previous = registered.previous
+        if (previous == null) {
+            deleteModel(registered.model.id)
+        } else {
+            File(registered.model.filePath).delete()
+            modelDao.insert(previous)
+        }
+    }
+
+    /** Where the in-progress download [downloadId] lives: next to the models, so the final rename is atomic. */
+    fun downloadPartFile(downloadId: String): File = File(modelsDir, "$downloadId.part")
+
+    /** Every `*.part` file under `models/`, referenced by a download row or not (see `DownloadManager.reconcile`). */
+    fun downloadPartFiles(): List<File> = modelsDir.listFiles { f -> f.name.endsWith(".part") }?.toList().orEmpty()
+
+    /** Free bytes on the volume models live on. */
+    fun freeBytes(): Long = StatFs(modelsDir.absolutePath).availableBytes
+
     // Everything backfillKvCacheShape does once it is on a background thread — over in
     // KvCacheShapeBackfill for the same reason the import logic is in ModelImporter: it is pure
     // logic worth testing, and this class can't be built on the JVM. Lazy to match `importer`,

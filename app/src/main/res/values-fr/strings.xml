@@ -337,4 +337,33 @@
     <string name="notification_action_stop">Arrêter</string>
     <string name="notification_idle_title">Inactif</string>
 
+
+    <!-- Notifications de téléchargement de modèles (TEN-141, DownloadNotifier). -->
+    <string name="download_channel_name">Téléchargements</string>
+    <string name="download_channel_description">Progression des téléchargements de modèles</string>
+    <string name="download_ready_channel_name">Téléchargements terminés</string>
+    <string name="download_ready_channel_description">Un modèle téléchargé est prêt</string>
+    <string name="download_notification_size">%1$s sur %2$s</string>
+    <string name="download_notification_detail">%1$s · %2$s/s · %3$s restant</string>
+    <string name="download_eta_hours">%1$d h %2$d min</string>
+    <string name="download_eta_minutes">%1$d min</string>
+    <string name="download_eta_seconds">%1$d s</string>
+    <string name="download_action_pause">Pause</string>
+    <string name="download_action_cancel">Annuler</string>
+    <string name="download_action_load">Charger</string>
+    <string name="download_ready_title">%1$s est prêt</string>
+    <string name="download_ready_text">Téléchargé et ajouté aux modèles</string>
+    <string name="download_failed_title">Échec du téléchargement · %1$s</string>
+    <string name="download_error_gated">licence ou jeton requis</string>
+    <string name="download_error_invalid_token">jeton refusé</string>
+    <string name="download_error_not_found">fichier introuvable</string>
+    <string name="download_error_checksum">somme de contrôle invalide</string>
+    <string name="download_error_size">taille inattendue</string>
+    <string name="download_error_disk_full">stockage insuffisant</string>
+    <string name="download_error_network">erreur réseau</string>
+    <string name="download_error_already_imported">déjà sur cet appareil</string>
+    <string name="download_error_invalid_model">fichier modèle invalide</string>
+    <string name="download_error_http">erreur serveur %1$d</string>
+    <string name="download_error_unknown">erreur inattendue</string>
+
 </resources>
