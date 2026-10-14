@@ -315,6 +315,21 @@
     <string name="discover_try_again">Try again</string>
     <string name="discover_none_title">Nothing to show</string>
     <string name="discover_none_body">No popular model fits this phone right now.</string>
+    <!-- Discover search, filters, sort (TEN-139). -->
+    <string name="discover_filter_fits">Fits my phone</string>
+    <string name="discover_sort_downloads">Downloads</string>
+    <string name="discover_sort_likes">Likes</string>
+    <string name="discover_sort_recent">Recent</string>
+    <string name="discover_sort_size">Size</string>
+    <string name="discover_link_unsupported">Only Hugging Face links are supported</string>
+    <string name="discover_searching">Searching</string>
+    <string name="discover_section_results">Results</string>
+    <string name="discover_no_results_title">No models found</string>
+    <string name="discover_no_results_fits_body">Nothing that fits your phone matches this search.</string>
+    <string name="discover_no_results_body">Nothing matches this search. Try a shorter name.</string>
+    <string name="discover_show_all_sizes">Show all sizes</string>
+    <string name="discover_rate_limited_title">Hugging Face is busy</string>
+    <string name="discover_rate_limited_body">Too many requests in a short time. Try again in a minute.</string>
     <string name="models_add">Add a model</string>
     <string name="models_add_phone_title">From this phone</string>
     <string name="models_add_phone_body">Import a GGUF file</string>

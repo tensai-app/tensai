@@ -6,6 +6,7 @@ import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.hf.HfCompatibility
 import io.github.hokanosekai.tensai.hf.HfRepoDetail
 import io.github.hokanosekai.tensai.hf.HfRepoSummary
+import io.github.hokanosekai.tensai.hf.HfSort
 import io.github.hokanosekai.tensai.ui.screens.onboarding.CatalogModel
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingCatalog
 import java.util.Locale
@@ -70,8 +71,9 @@ internal object DiscoverLogic {
 
     /**
      * The card of a Hugging Face repo, from the quant [HfCompatibility.recommendation] picks, or null
-     * when the repo has no usable quant or even its nearest-to-fitting one would not fit: Discover
-     * only lists what a phone can run.
+     * when the repo has no usable quant or is not a chat model. A repo whose nearest-to-fitting quant
+     * does not fit still gets its card, with [Verdict.WontFit]: whether it is listed is the "Fits my
+     * phone" filter's call ([matches]), not this function's.
      */
     fun cardFor(summary: HfRepoSummary, detail: HfRepoDetail, profile: DeviceProfile): RepoCardModel? {
         // Not a chat LLM llama.cpp can run: no GGUF header summary at all, or a toy-sized one.
@@ -79,7 +81,6 @@ internal object DiscoverLogic {
         if (detail.paramCount in 1 until MIN_PARAMS) return null
         val pick = HfCompatibility.recommendation(detail, profile) ?: return null
         val verdict = pick.compatibility.verdict
-        if (verdict == Verdict.WontFit) return null
         return RepoCardModel(
             id = summary.id,
             name = displayName(summary.name),
@@ -96,6 +97,34 @@ internal object DiscoverLogic {
         )
     }
 
+    /** Whether [card] passes [filters]: "Fits my phone" drops [Verdict.WontFit], Tools and Vision need the badge. */
+    fun matches(card: RepoCardModel, filters: DiscoverFilters): Boolean =
+        (!filters.fits || card.verdict != Verdict.WontFit) && (!filters.tools || card.tools) && (!filters.vision || card.vision)
+
+    /**
+     * The repos of a feed that are listed under [filters], in display order. A repo whose card has not
+     * arrived stays in (as a skeleton); one whose detail failed or that is not a chat model ([CardSlot.Hidden]),
+     * one whose card fails [matches] and the ones in [exclude] (lower case ids, already shown elsewhere) are out.
+     * [DiscoverSort.Size] orders by the size of the card's quant, smallest first, repos still loading last;
+     * the other sorts are the Hub's order, kept as it came.
+     */
+    fun shown(
+        repos: List<HfRepoSummary>,
+        slots: Map<String, CardSlot>,
+        filters: DiscoverFilters,
+        exclude: Set<String> = emptySet(),
+    ): List<HfRepoSummary> {
+        val listed = repos.filter { repo ->
+            repo.id.lowercase() !in exclude && when (val slot = slots[repo.id]) {
+                CardSlot.Hidden -> false
+                is CardSlot.Ready -> matches(slot.card, filters)
+                else -> true
+            }
+        }
+        if (filters.sort != DiscoverSort.Size) return listed
+        return listed.sortedBy { (slots[it.id] as? CardSlot.Ready)?.card?.sizeBytes ?: Long.MAX_VALUE }
+    }
+
     /** `Qwen3-4B-GGUF` -> `Qwen3-4B`: the suffix says what every repo here is, so it only adds noise. */
     fun displayName(repoName: String): String =
         repoName.replace(Regex("[-_.]GGUF$", RegexOption.IGNORE_CASE), "").ifBlank { repoName }
@@ -108,3 +137,39 @@ internal object DiscoverLogic {
         else -> String.format(Locale.US, "%.1f", n / 1_000_000.0).removeSuffix(".0") + "M"
     }
 }
+
+/** The sort menu of Discover. [api] is what the Hub is asked for; [Size] has no API sort and orders the loaded cards. */
+internal enum class DiscoverSort(val api: HfSort) {
+    Downloads(HfSort.Downloads),
+    Likes(HfSort.Likes),
+    Recent(HfSort.LastModified),
+    Size(HfSort.Downloads),
+}
+
+/** The chips and the sort of Discover: "Fits my phone" starts on. */
+internal data class DiscoverFilters(
+    val fits: Boolean = true,
+    val tools: Boolean = false,
+    val vision: Boolean = false,
+    val sort: DiscoverSort = DiscoverSort.Downloads,
+)
+
+/**
+ * [profile] read without letting a failure out: a device profile that cannot be read becomes a
+ * deliberately small, conservative phone (nothing big is called "fits"). Cancellation passes through.
+ */
+internal fun safeProfile(profile: () -> io.github.hokanosekai.tensai.compat.DeviceProfile): io.github.hokanosekai.tensai.compat.DeviceProfile =
+    try {
+        profile()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        io.github.hokanosekai.tensai.compat.DeviceProfile(
+            totalRamBytes = 3L * 1024 * 1024 * 1024,
+            availableRamBytes = 1L * 1024 * 1024 * 1024,
+            socModel = "unknown",
+            bigCoreCount = 0,
+            hasVulkan = false,
+            hasOpenCl = false,
+        )
+    }

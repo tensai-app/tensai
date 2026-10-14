@@ -92,8 +92,8 @@ internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
  *   Settings' storage group, which is the only screen that can release space *without* deleting a
  *   model (saved sessions). Deleting a model is already possible right here, so the banner sends
  *   the user at the option this screen doesn't have.
- * @param onOpenRepo a Discover card was tapped, with its repo path (`author/name`). The repo screen
- *   arrives with TEN-140.
+ * @param onOpenRepo a Discover card was tapped or a link pasted: the repo path (`author/name`) and the file
+ *   name to preselect, null unless the link pointed at a file.
  * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the "Add a model"
  *   sheet (TEN-138), whose "From this phone" row starts the picker, as the empty state's link and
  *   the failure dialog's "Try again" do.
@@ -105,7 +105,7 @@ fun ModelsScreen(
     onLoadModelClick: (String) -> Unit,
     onNavigateToStorage: () -> Unit,
     modifier: Modifier = Modifier,
-    onOpenRepo: (String) -> Unit = {},
+    onOpenRepo: (String, String?) -> Unit = { _, _ -> },
     importRequests: Flow<Unit> = emptyFlow(),
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {

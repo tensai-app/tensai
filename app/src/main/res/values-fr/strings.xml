@@ -250,6 +250,21 @@
     <string name="discover_try_again">Réessayer</string>
     <string name="discover_none_title">Rien à afficher</string>
     <string name="discover_none_body">Aucun modèle populaire ne tient sur ce téléphone pour l\'instant.</string>
+    <!-- Recherche Discover, filtres, tri (TEN-139). -->
+    <string name="discover_filter_fits">Tient sur mon téléphone</string>
+    <string name="discover_sort_downloads">Téléchargements</string>
+    <string name="discover_sort_likes">Likes</string>
+    <string name="discover_sort_recent">Récents</string>
+    <string name="discover_sort_size">Taille</string>
+    <string name="discover_link_unsupported">Seuls les liens Hugging Face sont acceptés</string>
+    <string name="discover_searching">Recherche en cours</string>
+    <string name="discover_section_results">Résultats</string>
+    <string name="discover_no_results_title">Aucun modèle trouvé</string>
+    <string name="discover_no_results_fits_body">Rien de ce qui tient sur ce téléphone ne correspond à cette recherche.</string>
+    <string name="discover_no_results_body">Rien ne correspond à cette recherche. Essayer un nom plus court.</string>
+    <string name="discover_show_all_sizes">Afficher toutes les tailles</string>
+    <string name="discover_rate_limited_title">Hugging Face est saturé</string>
+    <string name="discover_rate_limited_body">Trop de requêtes en peu de temps. Réessayer dans une minute.</string>
     <string name="models_add">Ajouter un modèle</string>
     <string name="models_add_phone_title">Depuis ce téléphone</string>
     <string name="models_add_phone_body">Importer un fichier GGUF</string>

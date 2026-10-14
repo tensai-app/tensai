@@ -8,6 +8,7 @@ import io.github.hokanosekai.tensai.hf.HfPage
 import io.github.hokanosekai.tensai.hf.HfQuantFile
 import io.github.hokanosekai.tensai.hf.HfRepoDetail
 import io.github.hokanosekai.tensai.hf.HfRepoSummary
+import io.github.hokanosekai.tensai.hf.HfSort
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingCatalog
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
@@ -54,7 +55,10 @@ class DiscoverViewModelTest {
         quants = listOf(HfQuantFile("m-Q4_K_M.gguf", "Q4_K_M", sizeMib * 1024 * 1024, null)),
     )
 
-    private class Fake(val page: () -> HfPage) {
+    private class Fake(val page: (String) -> HfPage) {
+        val queries = java.util.Collections.synchronizedList(mutableListOf<Pair<String, HfSort>>())
+        val nextCalls = java.util.Collections.synchronizedList(mutableListOf<String>())
+        var next: (String) -> HfPage = { error("no next page for $it") }
         val searches = AtomicInteger()
         val detailCalls = java.util.Collections.synchronizedList(mutableListOf<String>())
         var details: (String) -> HfRepoDetail = { error("no detail for $it") }
@@ -62,10 +66,16 @@ class DiscoverViewModelTest {
 
     private fun viewModel(fake: Fake) = DiscoverViewModel(
         scope = scope,
-        search = {
+        search = { query, sort ->
             fake.searches.incrementAndGet()
-            fake.page()
+            fake.queries += query to sort
+            fake.page(query)
         },
+        searchNext = { cursor ->
+            fake.nextCalls += cursor
+            fake.next(cursor)
+        },
+        debounceMs = 60,
         detail = {
             fake.detailCalls += it
             fake.details(it)
@@ -92,7 +102,7 @@ class DiscoverViewModelTest {
         val vm = viewModel(fakeWith(*repos.toTypedArray()))
         vm.start()
 
-        val s = vm.await { it.recommended.isNotEmpty() && it.popular is PopularState.Loaded }
+        val s = vm.await { it.recommended.isNotEmpty() && it.popular is FeedState.Loaded }
 
         assertEquals(8 * gib, s.deviceRamBytes)
         assertEquals(DiscoverLogic.recommended(OnboardingCatalog.all, phone), s.recommended)
@@ -101,10 +111,10 @@ class DiscoverViewModelTest {
     @Test
     fun popularStartsLoadingThenListsTheSearchOrder() = runBlocking {
         val vm = viewModel(fakeWith(*repos.toTypedArray()))
-        assertEquals(PopularState.Loading, vm.state.value.popular)
+        assertEquals(FeedState.Loading, vm.state.value.popular)
 
         vm.start()
-        val s = vm.await { it.popular is PopularState.Loaded }
+        val s = vm.await { it.popular is FeedState.Loaded }
 
         assertEquals(repos, s.popularShown.map { it.id })
     }
@@ -116,7 +126,7 @@ class DiscoverViewModelTest {
         fake.details = { id -> runBlocking { gate.await() }; detail(id, 1200) }
         val vm = viewModel(fake)
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
 
         vm.onVisible("alice/small-GGUF")
 
@@ -133,7 +143,7 @@ class DiscoverViewModelTest {
         val fake = fakeWith(*repos.toTypedArray())
         val vm = viewModel(fake)
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
 
         repeat(3) { vm.onVisible("bob/medium-GGUF") }
         vm.await { it.slots["bob/medium-GGUF"] is CardSlot.Ready }
@@ -146,27 +156,29 @@ class DiscoverViewModelTest {
     fun aRepoThatDoesNotFitDisappearsFromThePopularList() = runBlocking {
         val vm = viewModel(fakeWith(*repos.toTypedArray()))
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
 
         repos.forEach(vm::onVisible)
         val s = vm.await { st -> repos.all { st.slots[it] !is CardSlot.Loading && it in st.slots } }
 
-        assertEquals(CardSlot.Hidden, s.slots["carol/huge-GGUF"])
+        // Its card exists (the "Fits my phone" filter, on by default, is what hides it).
+        assertEquals(io.github.hokanosekai.tensai.compat.Verdict.WontFit, (s.slots["carol/huge-GGUF"] as CardSlot.Ready).card.verdict)
         assertEquals(listOf("alice/small-GGUF", "bob/medium-GGUF"), s.popularShown.map { it.id })
     }
 
     @Test
     fun aFailedDetailHidesThatCardOnly() = runBlocking {
         val fake = fakeWith(*repos.toTypedArray())
-        fake.details = { id -> if (id.startsWith("alice")) throw HfException(HfError.Http(500)) else detail(id, 1200) }
+        fake.details = { id -> if (id.startsWith("alice")) throw HfException(HfError.NotFound) else detail(id, 1200) }
         val vm = viewModel(fake)
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
 
         vm.onVisible("alice/small-GGUF")
         vm.onVisible("bob/medium-GGUF")
         val s = vm.await { it.slots["alice/small-GGUF"] == CardSlot.Hidden && it.slots["bob/medium-GGUF"] is CardSlot.Ready }
 
+        // carol is still a skeleton here (never on screen): kept until its detail says otherwise.
         assertEquals(listOf("bob/medium-GGUF", "carol/huge-GGUF"), s.popularShown.map { it.id })
     }
 
@@ -176,7 +188,7 @@ class DiscoverViewModelTest {
         val vm = viewModel(fakeWith(inCatalog.uppercase(), "alice/small-GGUF"))
         vm.start()
 
-        val s = vm.await { it.popular is PopularState.Loaded && it.recommended.isNotEmpty() }
+        val s = vm.await { it.popular is FeedState.Loaded && it.recommended.isNotEmpty() }
 
         assertEquals(listOf("alice/small-GGUF"), s.popularShown.map { it.id })
     }
@@ -188,14 +200,14 @@ class DiscoverViewModelTest {
         val vm = viewModel(fake)
         vm.start()
 
-        val failed = vm.await { it.popular is PopularState.Failed }
-        assertEquals(PopularState.Failed(HfError.Offline), failed.popular)
+        val failed = vm.await { it.popular is FeedState.Failed && it.recommended.isNotEmpty() }
+        assertEquals(FeedState.Failed(HfError.Offline), failed.popular)
         // The catalog part still came up: it needs no network.
         assertTrue(failed.recommended.isNotEmpty())
 
         online = true
         vm.load()
-        val ok = vm.await { it.popular is PopularState.Loaded }
+        val ok = vm.await { it.popular is FeedState.Loaded }
 
         assertEquals(listOf("alice/small-GGUF"), ok.popularShown.map { it.id })
         assertEquals(2, fake.searches.get())
@@ -206,7 +218,7 @@ class DiscoverViewModelTest {
         val vm = viewModel(Fake { throw HfException(HfError.RateLimited(30)) })
         vm.start()
 
-        assertEquals(PopularState.Failed(HfError.RateLimited(30)), vm.await { it.popular is PopularState.Failed }.popular)
+        assertEquals(FeedState.Failed(HfError.RateLimited(30)), vm.await { it.popular is FeedState.Failed }.popular)
     }
 
     @Test
@@ -214,7 +226,7 @@ class DiscoverViewModelTest {
         val fake = fakeWith(*repos.toTypedArray())
         val vm = viewModel(fake)
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
         vm.start()
 
         assertEquals(1, fake.searches.get())
@@ -225,12 +237,12 @@ class DiscoverViewModelTest {
         val fake = fakeWith(*repos.toTypedArray())
         val vm = viewModel(fake)
         vm.start()
-        vm.await { it.popular is PopularState.Loaded }
+        vm.await { it.popular is FeedState.Loaded }
         vm.onVisible("bob/medium-GGUF")
         vm.await { it.slots["bob/medium-GGUF"] is CardSlot.Ready }
 
         vm.load()
-        val s = vm.await { it.popular is PopularState.Loaded }
+        val s = vm.await { it.popular is FeedState.Loaded }
 
         assertTrue(s.slots.isEmpty())
     }

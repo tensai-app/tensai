@@ -123,9 +123,11 @@ class DiscoverLogicTest {
     }
 
     @Test
-    fun aRepoWhoseNearestQuantStillDoesNotFitHasNoCard() {
-        // 9 GiB of weights on a 4 GB phone.
-        assertNull(DiscoverLogic.cardFor(summary(), detail(quant("Q4_K_M", 9 * 1024)), device(totalGb = 4)))
+    fun aRepoWhoseNearestQuantStillDoesNotFitKeepsItsCardAsWontFit() {
+        // 9 GiB of weights on a 4 GB phone: the "Fits my phone" filter hides it, the card is still there.
+        val card = DiscoverLogic.cardFor(summary(), detail(quant("Q4_K_M", 9 * 1024)), device(totalGb = 4))
+
+        assertEquals(Verdict.WontFit, card?.verdict)
     }
 
     @Test
