@@ -3,7 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.models
 import io.github.hokanosekai.tensai.runtime.EffectiveBackend
 
 /** The chips under a card's facts line, in the order [cardChips] returns them. */
-internal enum class CardChip { Loaded, OnDevice, Tools, Thinking, Vision, NoTemplate, Gated, Imported }
+internal enum class CardChip { Loaded, OnDevice, Tools, Thinking, Vision, NoTemplate, Gated, Imported, Downloaded }
 
 private const val SEPARATOR = " · "
 
@@ -36,6 +36,7 @@ internal fun cardChips(
     noTemplate: Boolean = false,
     gated: Boolean = false,
     imported: Boolean = false,
+    downloaded: Boolean = false,
 ): List<CardChip> = buildList {
     if (loaded) add(CardChip.Loaded)
     if (onDevice) add(CardChip.OnDevice)
@@ -45,6 +46,7 @@ internal fun cardChips(
     if (noTemplate) add(CardChip.NoTemplate)
     if (gated) add(CardChip.Gated)
     if (imported) add(CardChip.Imported)
+    if (downloaded) add(CardChip.Downloaded)
 }
 
 /** "Vulkan · Mali-G68 MC4", "CPU · 8 cores"; just the backend name when the hardware is unknown. */

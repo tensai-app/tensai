@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,8 @@ fun TensaiNavGraph(
 ) {
     // Set by "Open Settings" on the repo screen: Settings opens with the token sheet up, once.
     var openTokenSheet by remember { mutableStateOf(false) }
+    // Set by the onboarding's "Browse Hugging Face": the next Models entry opens on Discover, once.
+    var modelsOnDiscover by remember { mutableStateOf(false) }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -76,6 +79,14 @@ fun TensaiNavGraph(
                     if (modelId != null) {
                         navController.navigate(TensaiDestination.Loading.route(modelId))
                     }
+                },
+                // Same exit as Skip (Home underneath, flag persisted by the screen), then Discover.
+                onBrowseHuggingFace = {
+                    modelsOnDiscover = true
+                    navController.navigate(TensaiDestination.Home.route) {
+                        popUpTo(TensaiDestination.Onboarding.route) { inclusive = true }
+                    }
+                    navController.navigate(TensaiDestination.Models.route)
                 },
             )
         }
@@ -121,7 +132,10 @@ fun TensaiNavGraph(
         }
 
         composable(TensaiDestination.Models.route) {
+            val startOnDiscover = remember { modelsOnDiscover }
+            LaunchedEffect(Unit) { modelsOnDiscover = false }
             ModelsScreen(
+                startOnDiscover = startOnDiscover,
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
                 onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
                 // singleTop: a double tap on a card must not stack two copies of the screen.

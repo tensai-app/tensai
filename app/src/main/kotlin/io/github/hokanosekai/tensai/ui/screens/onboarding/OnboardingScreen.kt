@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -61,6 +62,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,11 +103,16 @@ import io.github.hokanosekai.tensai.ui.components.TensaiBadge
 import io.github.hokanosekai.tensai.ui.components.TensaiBadgeTone
 import io.github.hokanosekai.tensai.ui.components.TensaiButton
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
+import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
 import io.github.hokanosekai.tensai.ui.components.TensaiChip
 import io.github.hokanosekai.tensai.ui.components.TensaiMonoBadge
 import io.github.hokanosekai.tensai.ui.components.TensaiProgressBar
 import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
 import io.github.hokanosekai.tensai.ui.screens.models.CompatIndicator
+import io.github.hokanosekai.tensai.ui.screens.models.DownloadCardState
+import io.github.hokanosekai.tensai.ui.screens.models.DownloadStateBody
+import io.github.hokanosekai.tensai.ui.screens.models.MobileDataDialog
+import io.github.hokanosekai.tensai.ui.screens.models.StorageDialog
 import io.github.hokanosekai.tensai.ui.screens.models.GgufMimeTypes
 import io.github.hokanosekai.tensai.ui.screens.models.ImportFailure
 import io.github.hokanosekai.tensai.ui.screens.models.ModelCard
@@ -116,18 +123,21 @@ import io.github.hokanosekai.tensai.ui.screens.models.formatGigabytes
 import io.github.hokanosekai.tensai.ui.screens.models.importFailureBody
 import io.github.hokanosekai.tensai.ui.screens.models.modelCompatibility
 import io.github.hokanosekai.tensai.ui.screens.models.rememberBackendTag
+import io.github.hokanosekai.tensai.ui.screens.settings.openLink
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
  * First-run onboarding (TEN-36, TEN-118): three Calm Night steps, one per [OnboardingStep]. Welcome
- * (theme and language pills), the model (a recommendation drawn from [OnboardingCatalog] plus the
- * GGUF import, since there is no in-app download before V1.1) and Ready, which hands off to the load.
+ * (theme and language pills), the model (a recommendation drawn from [OnboardingCatalog] that
+ * downloads in place, TEN-145, plus the GGUF import as the secondary way) and Ready, which hands off
+ * to the load.
  *
  * Which launches land here is [OnboardingGate]'s call. Theme and language write to their stores as
  * soon as a chip is tapped, so the page re-skins under the user's finger. There is no backend
@@ -137,6 +147,8 @@ import kotlinx.coroutines.launch
  * @param onDone called when the flow ends: with the imported model's id when the user finished it
  *   (the caller sends that to the loading screen, which continues into a first chat), or `null`
  *   when they left without going through Ready (the caller goes Home).
+ * @param onBrowseHuggingFace "Browse Hugging Face" of the other options: the skipped flag is written
+ *   exactly as Skip does, then the caller opens the Models screen on Discover. Home sits under it.
  * @param persistScope scope the preference writes run on. Deliberately **not** a
  *   `rememberCoroutineScope()`: "Skip" both persists the flag and navigates away, and a
  *   composition-scoped write would be cancelled by the navigation it triggers. Same reasoning as
@@ -147,6 +159,7 @@ fun OnboardingScreen(
     startStep: OnboardingStep,
     onDone: (modelId: String?) -> Unit,
     modifier: Modifier = Modifier,
+    onBrowseHuggingFace: () -> Unit = {},
     modelRepository: ModelRepository = RuntimeGraph.modelRepository,
     themeRepository: ThemeRepository = RuntimeGraph.themeRepository,
     languageRepository: LanguageRepository = RuntimeGraph.languageRepository,
@@ -163,6 +176,10 @@ fun OnboardingScreen(
     var othersOpen by remember { mutableStateOf(false) }
 
     var importedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The model came from the in-app download, not from the picker: badge "Downloaded", not "Imported".
+    var fromDownload by rememberSaveable { mutableStateOf(false) }
+    // The catalog entry picked for download (CatalogModel.key), so a recreated screen finds its row again.
+    var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     var importedEntity by remember { mutableStateOf<ModelEntity?>(null) }
     val models by modelRepository.models.collectAsState(initial = emptyList())
     // Fresh import first (the list can lag the insert by a frame), the list after a restore.
@@ -180,6 +197,13 @@ fun OnboardingScreen(
     val uiScope = rememberCoroutineScope()
     val copying = importProgress != null
 
+    val downloads = remember {
+        OnboardingDownloads(scope = uiScope, libraryIds = modelRepository.models.map { list -> list.map { it.id }.toSet() })
+    }
+    val downloadState by downloads.state.collectAsState()
+    val downloadPhase = downloadState.phase
+    LaunchedEffect(downloads) { downloads.start() }
+
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         pickerPending = false
         if (uri == null || importProgress != null) return@rememberLauncherForActivityResult
@@ -192,6 +216,7 @@ fun OnboardingScreen(
                 val model = modelRepository.importModel(uri) { progress -> importProgress = progress }
                 importedEntity = model
                 importedId = model.id
+                fromDownload = false
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -213,6 +238,14 @@ fun OnboardingScreen(
         importLauncher.launch(GgufMimeTypes)
     }
 
+    // "Browse Hugging Face": leaves the first-run flow the way Skip does (flag persisted), for Discover.
+    fun browse() {
+        if (finished) return
+        finished = true
+        persistScope.launch { onboardingRepository.setSkipped(true) }
+        onBrowseHuggingFace()
+    }
+
     // One exit only: a double tap must not navigate twice (two Home entries, Loading pushed twice).
     fun finish(modelId: String?) {
         if (finished) return
@@ -232,6 +265,18 @@ fun OnboardingScreen(
     // the free memory of the moment, so the pick does not change with what happens to be running.
     val profile = remember { RuntimeGraph.deviceProfiler.profile() }
     val recommendation = remember(profile) { OnboardingCatalog.recommend(profile) }
+    val selected = remember(recommendation, selectedKey) {
+        (listOf(recommendation.recommended) + recommendation.others).firstOrNull { it.model.key == selectedKey }
+    }
+    LaunchedEffect(downloads, selected?.model?.key) { downloads.follow(selected?.model) }
+    // The finished download becomes "your model", the same state an import leads to.
+    LaunchedEffect(downloadPhase) {
+        val done = downloadPhase as? OnboardingPhase.Done ?: return@LaunchedEffect
+        if (importedId == null) {
+            importedId = done.modelId
+            fromDownload = true
+        }
+    }
 
     // Ready is entered from the model step's Continue, so a model is there. A recreated screen
     // forgets it, and then the step that can produce one is the right place to be.
@@ -292,13 +337,43 @@ fun OnboardingScreen(
                 importTotalBytes = importTotalBytes,
                 importFileName = importFileName,
                 importFailure = importFailure,
+                fromDownload = fromDownload,
+                selected = selected,
+                downloadState = downloadState,
+                downloadPhase = downloadPhase,
                 othersOpen = othersOpen,
                 onToggleOthers = { othersOpen = !othersOpen },
+                onDownload = { model ->
+                    selectedKey = model.key
+                    downloads.download(model)
+                },
+                onPause = downloads::pause,
+                onResume = downloads::resume,
+                onCancel = downloads::cancel,
+                onRetry = downloads::retry,
+                onRetryLookup = downloads::retryLookup,
+                onBrowse = ::browse,
                 onImport = ::openPicker,
                 onNext = { stepOrdinal = OnboardingStep.Ready.ordinal },
             )
             OnboardingStep.Ready -> imported?.let { model -> ReadyStep(model = model, onStart = { finish(model.id) }) }
         }
+    }
+
+    when (val dialog = downloadState.dialog) {
+        null -> Unit
+        is OnboardingDialog.MobileData -> MobileDataDialog(
+            sizeBytes = dialog.sizeBytes,
+            onCancel = downloads::dismissDialog,
+            onConfirm = downloads::confirmMobileData,
+        )
+        // No library to manage yet: the dialog's second button just closes it.
+        is OnboardingDialog.Storage -> StorageDialog(
+            neededBytes = dialog.neededBytes,
+            freeBytes = dialog.freeBytes,
+            onCancel = downloads::dismissDialog,
+            onManage = downloads::dismissDialog,
+        )
     }
 }
 
@@ -535,12 +610,33 @@ private fun ColumnScope.ModelStep(
     importTotalBytes: Long?,
     importFileName: String,
     importFailure: ImportFailure?,
+    fromDownload: Boolean,
+    selected: RatedModel?,
+    downloadState: OnboardingDownloadState,
+    downloadPhase: OnboardingPhase,
     othersOpen: Boolean,
     onToggleOthers: () -> Unit,
+    onDownload: (CatalogModel) -> Unit,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onRetryLookup: () -> Unit,
+    onBrowse: () -> Unit,
     onImport: () -> Unit,
     onNext: () -> Unit,
 ) {
+    val context = LocalContext.current
     val copying = importProgress != null
+    // The selected entry takes the recommended card's place, and the recommended one joins the others.
+    val shown = selected ?: recommendation.recommended
+    val rest = (listOf(recommendation.recommended) + recommendation.others).filter { it.model.key != shown.model.key }
+        .sortedBy { it.model.facts.paramCount }
+    val resolving = downloadPhase is OnboardingPhase.Resolving
+    val active = downloadPhase as? OnboardingPhase.Active
+    val failed = active?.card is DownloadCardState.Failed
+    val inProgress = resolving || (active != null && !failed)
+    val lookupFailed = downloadState.lookup == OnboardingLookup.Offline || downloadState.lookup == OnboardingLookup.Failed
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier
@@ -568,7 +664,27 @@ private fun ColumnScope.ModelStep(
         }
 
         if (importFailure != null) {
-            ImportErrorCard(importFailure, onTryAnother = onImport)
+            ErrorCard(
+                message = if (importFailure is ImportFailure.NotAModelFile) {
+                    stringResource(R.string.onboarding_import_error)
+                } else {
+                    importFailureBody(importFailure)
+                },
+                actionLabel = stringResource(R.string.onboarding_try_another),
+                onAction = onImport,
+            )
+        }
+        if (imported == null && lookupFailed) {
+            ErrorCard(
+                message = stringResource(
+                    if (downloadState.lookup == OnboardingLookup.Offline) R.string.onboarding_download_offline else R.string.onboarding_download_unavailable,
+                ),
+                actionLabel = stringResource(R.string.repo_retry),
+                onAction = onRetryLookup,
+            )
+        }
+        if (imported == null && downloadState.notAllowed) {
+            ErrorCard(message = stringResource(R.string.repo_not_allowed), actionLabel = null, onAction = {})
         }
 
         when {
@@ -581,7 +697,8 @@ private fun ColumnScope.ModelStep(
                     compatibility = importedCompatibility,
                     backend = rememberBackendTag(importedCompatibility),
                     noAction = true,
-                    imported = true,
+                    imported = !fromDownload,
+                    downloaded = fromDownload,
                 )
             }
             copying -> {
@@ -590,41 +707,70 @@ private fun ColumnScope.ModelStep(
             }
             else -> {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val isRecommended = shown.model.key == recommendation.recommended.model.key
                     Eyebrow(
                         stringResource(
-                            if (recommendation.recommended.compatibility.verdict == Verdict.RunsWell) {
-                                R.string.onboarding_recommended
-                            } else {
-                                R.string.onboarding_smallest
+                            when {
+                                inProgress || failed -> R.string.onboarding_downloading
+                                !isRecommended -> R.string.onboarding_selected
+                                shown.compatibility.verdict == Verdict.RunsWell -> R.string.onboarding_recommended
+                                else -> R.string.onboarding_smallest
                             },
-                        ), modifier = Modifier.weight(1f, fill = false))
+                        ),
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
                     TensaiMonoBadge(stringResource(R.string.onboarding_ram_badge, ramLabel))
                 }
-                val reco = recommendation.recommended
-                ModelCard(
-                    model = reco.model.toDisplayEntity(),
-                    compatibility = reco.compatibility,
-                    backend = rememberBackendTag(reco.compatibility),
-                    link = ModelCardLink(reco.model.linkLabel, reco.model.linkUrl),
-                    noAction = true,
-                )
-                TextButton(onClick = onToggleOthers) {
-                    Text(
-                        text = stringResource(if (othersOpen) R.string.onboarding_options_hide else R.string.onboarding_options_show),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                if (downloadPhase is OnboardingPhase.Idle) {
+                    ModelCard(
+                        model = shown.model.toDisplayEntity(),
+                        compatibility = shown.compatibility,
+                        backend = rememberBackendTag(shown.compatibility),
+                        link = ModelCardLink(shown.model.linkLabel, shown.model.linkUrl),
+                        noAction = true,
                     )
-                    Icon(
-                        imageVector = if (othersOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.padding(start = 6.dp).size(18.dp),
+                } else {
+                    DownloadingCard(
+                        model = shown.model,
+                        phase = downloadPhase,
+                        onPause = onPause,
+                        onResume = onResume,
+                        onCancel = onCancel,
+                        onRetry = onRetry,
+                        onOpenPage = { openLink(context, shown.model.linkUrl) },
                     )
+                }
+                if (rest.isNotEmpty()) {
+                    TextButton(onClick = onToggleOthers) {
+                        Text(
+                            text = stringResource(if (othersOpen) R.string.onboarding_options_hide else R.string.onboarding_options_show),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Icon(
+                            imageVector = if (othersOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.padding(start = 6.dp).size(18.dp),
+                        )
+                    }
                 }
                 if (othersOpen) {
                     CardSurface {
-                        recommendation.others.forEachIndexed { index, rated ->
-                            if (index > 0) Divider()
-                            OtherModelRow(rated)
+                        rest.forEach { rated ->
+                            OtherModelRow(rated, downloadEnabled = !resolving, onDownload = { onDownload(rated.model) })
+                            Divider()
+                        }
+                        TextButton(onClick = onBrowse, modifier = Modifier.padding(horizontal = 8.dp)) {
+                            Text(
+                                text = stringResource(R.string.onboarding_browse_hf),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                            )
                         }
                     }
                 }
@@ -633,47 +779,101 @@ private fun ColumnScope.ModelStep(
     }
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 20.dp),
     ) {
-        if (imported != null) {
-            TensaiButton(
+        when {
+            imported != null -> TensaiButton(
                 text = stringResource(R.string.onboarding_continue),
                 onClick = onNext,
                 size = TensaiButtonSize.Lg,
                 trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward,
                 modifier = Modifier.fillMaxWidth(),
             )
-        } else {
-            TensaiButton(
-                text = stringResource(R.string.models_import),
-                onClick = onImport,
+            // Pending download: Continue is there but locked until the model is registered.
+            inProgress || failed -> TensaiButton(
+                text = stringResource(R.string.onboarding_continue),
+                onClick = onNext,
                 size = TensaiButtonSize.Lg,
-                icon = Icons.Rounded.FolderOpen,
+                trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward,
+                enabled = false,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            else -> TensaiButton(
+                text = stringResource(R.string.repo_download, formatFileSize(shown.model.facts.sizeBytes)),
+                onClick = { onDownload(shown.model) },
+                size = TensaiButtonSize.Lg,
+                icon = Icons.Rounded.Download,
                 enabled = !copying,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Download,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+        if (imported == null && !inProgress) {
+            TextButton(onClick = onImport, enabled = !copying) {
+                Icon(
+                    imageVector = Icons.Rounded.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp).size(18.dp),
+                )
+                Text(
+                    text = stringResource(R.string.models_import),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The selected entry while its download exists: name, link, quant and size, then what the state offers
+ * ([DownloadStateBody]: bytes, speed, time left, Pause / Cancel, or the reason and Retry).
+ */
+@Composable
+private fun DownloadingCard(
+    model: CatalogModel,
+    phase: OnboardingPhase,
+    onPause: (String) -> Unit,
+    onResume: (String) -> Unit,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onOpenPage: () -> Unit,
+) {
+    CardSurface {
+        Column(modifier = Modifier.padding(18.dp)) {
             Text(
-                text = stringResource(R.string.onboarding_download_soon),
-                fontSize = 12.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                text = model.name,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 22.sp,
             )
-            TensaiBadge(stringResource(R.string.onboarding_coming_soon), tone = TensaiBadgeTone.Neutral)
+            ModelLinkRow(ModelCardLink(model.linkLabel, model.linkUrl), modifier = Modifier.padding(top = 2.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 12.dp)) {
+                TensaiMonoBadge(model.quantLabel)
+                TensaiMonoBadge(formatFileSize(model.facts.sizeBytes))
+            }
+            Column(modifier = Modifier.padding(top = 16.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
+                when (phase) {
+                    is OnboardingPhase.Active -> DownloadStateBody(
+                        state = phase.card,
+                        onOpen = onOpenPage,
+                        onPause = { onPause(phase.id) },
+                        onResume = { onResume(phase.id) },
+                        onCancel = { onCancel(phase.id) },
+                        onRetry = { onRetry(phase.id) },
+                    )
+                    else -> {
+                        Text(
+                            text = stringResource(R.string.onboarding_download_preparing),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                        TensaiProgressBar(progress = null)
+                    }
+                }
+            }
         }
     }
 }
@@ -696,48 +896,50 @@ private fun Divider() {
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.tensaiTints.outline))
 }
 
-/** Name and verdict on one line, quant · size and the Hugging Face link on the next. */
+/** Name and verdict on one line, quant, size and the Hugging Face link on the next, a Download button at the end. */
 @Composable
-private fun OtherModelRow(rated: RatedModel) {
+private fun OtherModelRow(rated: RatedModel, downloadEnabled: Boolean, onDownload: () -> Unit) {
     val model = rated.model
-    Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                text = model.name,
-                fontSize = 14.5.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            CompatIndicator(rated.compatibility)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = model.name,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                CompatIndicator(rated.compatibility)
+            }
             Text(
                 text = "${model.quantLabel} · ${formatFileSize(model.facts.sizeBytes)}",
                 fontFamily = TensaiMono,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            ModelLinkRow(ModelCardLink(model.linkLabel, model.linkUrl), modifier = Modifier.weight(1f, fill = false))
+            ModelLinkRow(ModelCardLink(model.linkLabel, model.linkUrl))
         }
+        TensaiButton(
+            text = stringResource(R.string.onboarding_download),
+            onClick = onDownload,
+            variant = TensaiButtonVariant.Tonal,
+            size = TensaiButtonSize.Sm,
+            enabled = downloadEnabled,
+        )
     }
 }
 
-/**
- * Inline failure card. A file that is not a GGUF gets the step's own sentence; the other causes
- * (already imported, no space left, an interrupted copy) keep the wording the Models screen uses,
- * because "couldn't be read" would be a wrong diagnosis for them.
- */
+/** Inline failure card with an optional action (a retry, or "Try another file" for a bad import). */
 @Composable
-private fun ImportErrorCard(failure: ImportFailure, onTryAnother: () -> Unit) {
+private fun ErrorCard(message: String, actionLabel: String?, onAction: () -> Unit) {
     val error = MaterialTheme.colorScheme.error
-    val message = if (failure is ImportFailure.NotAModelFile) {
-        stringResource(R.string.onboarding_import_error)
-    } else {
-        importFailureBody(failure)
-    }
     Surface(
         shape = TensaiShapes.large,
         color = MaterialTheme.tensaiTints.error12,
@@ -746,7 +948,7 @@ private fun ImportErrorCard(failure: ImportFailure, onTryAnother: () -> Unit) {
     ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 6.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = if (actionLabel != null) 6.dp else 14.dp),
         ) {
             Icon(imageVector = Icons.Rounded.Error, contentDescription = null, tint = error, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -756,13 +958,15 @@ private fun ImportErrorCard(failure: ImportFailure, onTryAnother: () -> Unit) {
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                TextButton(onClick = onTryAnother) {
-                    Text(
-                        text = stringResource(R.string.onboarding_try_another),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = error,
-                    )
+                if (actionLabel != null) {
+                    TextButton(onClick = onAction) {
+                        Text(
+                            text = actionLabel,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = error,
+                        )
+                    }
                 }
             }
         }

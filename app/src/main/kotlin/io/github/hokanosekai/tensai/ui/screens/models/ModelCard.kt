@@ -94,7 +94,7 @@ import kotlinx.coroutines.flow.map
  * preference collector; `null` shows none.
  *
  * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button and the tap
- * target, [link] adds a mono "open in the browser" row, and [imported] adds the "Imported" chip.
+ * target, [link] adds a mono "open in the browser" row, [imported] adds the "Imported" chip and [downloaded] the "Downloaded" one.
  * The click callbacks are then unused, hence their defaults.
  */
 @Composable
@@ -112,6 +112,7 @@ internal fun ModelCard(
     link: ModelCardLink? = null,
     noAction: Boolean = false,
     imported: Boolean = false,
+    downloaded: Boolean = false,
 ) {
     val wontFit = compatibility?.verdict == Verdict.WontFit && !isLoaded
     val params = if (model.paramCount > 0) formatParamCount(model.paramCount) else null
@@ -126,6 +127,7 @@ internal fun ModelCard(
             thinking = model.thinkingAvailable,
             noTemplate = !model.hasChatTemplate,
             imported = imported,
+            downloaded = downloaded,
         ),
         modifier = modifier,
         highlighted = isLoaded,

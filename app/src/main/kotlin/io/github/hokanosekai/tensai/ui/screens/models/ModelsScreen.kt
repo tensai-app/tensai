@@ -95,6 +95,8 @@ internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
  *   the user at the option this screen doesn't have.
  * @param onOpenRepo a Discover card was tapped or a link pasted: the repo path (`author/name`) and the file
  *   name to preselect, null unless the link pointed at a file.
+ * @param startOnDiscover open on the Discover tab (the onboarding's "Browse Hugging Face"); read once, a
+ *   restored screen keeps the tab it was on.
  * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the "Add a model"
  *   sheet (TEN-138), whose "From this phone" row starts the picker, as the empty state's link and
  *   the failure dialog's "Try again" do.
@@ -108,6 +110,7 @@ fun ModelsScreen(
     modifier: Modifier = Modifier,
     onOpenRepo: (String, String?) -> Unit = { _, _ -> },
     importRequests: Flow<Unit> = emptyFlow(),
+    startOnDiscover: Boolean = false,
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
     val models by repository.models.collectAsState(initial = null)
@@ -126,7 +129,7 @@ fun ModelsScreen(
     var importTotalBytes by remember { mutableStateOf<Long?>(null) }
     var showAddSheet by remember { mutableStateOf(false) }
     // TEN-138: survives rotation. The focus request does not: a rotation must not pull the keyboard up again.
-    var tab by rememberSaveable { mutableStateOf(ModelsTab.OnDevice) }
+    var tab by rememberSaveable { mutableStateOf(if (startOnDiscover) ModelsTab.Discover else ModelsTab.OnDevice) }
     var focusSearchPending by remember { mutableStateOf(false) }
     // Bumped after a successful import: a relink can leave the row structurally equal (same id, same
     // path), so nothing else would make the file-existence pass run again.

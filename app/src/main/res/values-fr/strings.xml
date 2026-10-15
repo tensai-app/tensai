@@ -404,7 +404,7 @@
     <string name="onboarding_welcome_title">Bienvenue sur tensai</string>
     <string name="onboarding_welcome_body">Un agent IA local, qui tourne entièrement sur le téléphone. Rien ne quitte l\'appareil.</string>
     <string name="onboarding_model_title">Choisir un modèle pour le téléphone</string>
-    <string name="onboarding_import_body">tensai exécute les modèles GGUF depuis le stockage. En télécharger un sur un ordinateur, le copier sur le téléphone, puis l\'importer ici.</string>
+    <string name="onboarding_import_body">tensai exécute les modèles GGUF sur le téléphone, rien n\'en sort. En télécharger un ici, ou importer un fichier déjà là.</string>
     <string name="onboarding_recommended">Recommandé pour cet appareil</string>
     <string name="onboarding_ram_badge">%1$s de RAM</string>
     <string name="onboarding_smallest">Option la plus légère</string>
@@ -417,8 +417,14 @@
     <string name="onboarding_try_another">Essayer un autre fichier</string>
     <string name="onboarding_your_model">Le modèle</string>
     <string name="onboarding_imported_badge">Importé</string>
-    <string name="onboarding_download_soon">Téléchargement dans l\'app</string>
-    <string name="onboarding_coming_soon">Bientôt</string>
+    <string name="onboarding_downloaded_badge">Téléchargé</string>
+    <string name="onboarding_downloading">Téléchargement</string>
+    <string name="onboarding_selected">Modèle choisi</string>
+    <string name="onboarding_download">Télécharger</string>
+    <string name="onboarding_download_preparing">Préparation du téléchargement</string>
+    <string name="onboarding_download_offline">Pas de connexion. Se connecter pour télécharger un modèle, ou importer un fichier GGUF déjà sur le téléphone.</string>
+    <string name="onboarding_download_unavailable">Hugging Face est injoignable pour ce modèle. Réessayer, ou importer un fichier GGUF.</string>
+    <string name="onboarding_browse_hf">Parcourir Hugging Face</string>
     <string name="onboarding_ready_title">%1$s est prêt à être chargé</string>
     <string name="onboarding_ready_body">Le chargement prend quelques secondes. Le modèle reste ensuite en mémoire.</string>
     <string name="onboarding_notifications_body">Suivre la progression du chargement et garder tensai actif quand l\'app est quittée.</string>

@@ -178,5 +178,6 @@ internal fun CardChipBadge(chip: CardChip, modifier: Modifier = Modifier) {
         CardChip.NoTemplate -> TensaiBadge(stringResource(R.string.badge_no_chat_template), modifier, Icons.Default.Warning, TensaiBadgeTone.Warning)
         CardChip.Gated -> TensaiBadge(stringResource(R.string.discover_badge_gated), modifier, Icons.Default.Lock, TensaiBadgeTone.Warning)
         CardChip.Imported -> TensaiBadge(stringResource(R.string.onboarding_imported_badge), modifier, tone = TensaiBadgeTone.Neutral)
+        CardChip.Downloaded -> TensaiBadge(stringResource(R.string.onboarding_downloaded_badge), modifier, tone = TensaiBadgeTone.Neutral)
     }
 }

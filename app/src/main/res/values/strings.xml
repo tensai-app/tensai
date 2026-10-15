@@ -491,7 +491,7 @@
     <string name="onboarding_welcome_title">Welcome to tensai</string>
     <string name="onboarding_welcome_body">A local AI agent, running fully on your phone. Nothing leaves the device.</string>
     <string name="onboarding_model_title">Pick a model for your phone</string>
-    <string name="onboarding_import_body">tensai runs GGUF models from your storage. Download one on a computer, copy it to your phone, then import it here.</string>
+    <string name="onboarding_import_body">tensai runs GGUF models on your phone, nothing leaves it. Download one here, or import a file you already have.</string>
     <string name="onboarding_recommended">Recommended for your device</string>
     <!-- %1$s is the phone's total memory, e.g. 6.0 GB. -->
     <string name="onboarding_ram_badge">%1$s RAM</string>
@@ -505,8 +505,14 @@
     <string name="onboarding_try_another">Try another file</string>
     <string name="onboarding_your_model">Your model</string>
     <string name="onboarding_imported_badge">Imported</string>
-    <string name="onboarding_download_soon">In-app model downloads</string>
-    <string name="onboarding_coming_soon">Coming soon</string>
+    <string name="onboarding_downloaded_badge">Downloaded</string>
+    <string name="onboarding_downloading">Downloading</string>
+    <string name="onboarding_selected">Selected model</string>
+    <string name="onboarding_download">Download</string>
+    <string name="onboarding_download_preparing">Preparing the download</string>
+    <string name="onboarding_download_offline">You\'re offline. Connect to download a model, or import a GGUF file you already have.</string>
+    <string name="onboarding_download_unavailable">Couldn\'t reach Hugging Face for this model. Try again, or import a GGUF file.</string>
+    <string name="onboarding_browse_hf">Browse Hugging Face</string>
     <!-- %1$s is the model's display name. -->
     <string name="onboarding_ready_title">%1$s is ready to load</string>
     <string name="onboarding_ready_body">Loading takes a few seconds. It stays in memory afterwards.</string>
