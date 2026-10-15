@@ -127,7 +127,7 @@ fun ContextSheet(
                 .padding(bottom = 28.dp),
         ) {
             Section(stringResource(R.string.context_sheet_section_window)) {
-                SheetCard { WindowCard(state.breakdown, onOpenSettings) }
+                SheetCard { WindowCard(state.breakdown, modelLoaded = state.runtime is ContextRuntime.Loaded, onOpenSettings) }
             }
             Section(stringResource(R.string.context_sheet_section_runtime)) {
                 SheetCard { RuntimeCard(state.runtime, onLoad) }
@@ -137,7 +137,7 @@ fun ContextSheet(
 }
 
 @Composable
-private fun WindowCard(breakdown: ContextBreakdown, onOpenSettings: () -> Unit) {
+private fun WindowCard(breakdown: ContextBreakdown, modelLoaded: Boolean, onOpenSettings: () -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(200), label = "chevron")
     val error = MaterialTheme.colorScheme.error
@@ -198,7 +198,8 @@ private fun WindowCard(breakdown: ContextBreakdown, onOpenSettings: () -> Unit) 
                 ) {
                     Icon(Icons.Outlined.Info, contentDescription = null, tint = muted, modifier = Modifier.size(16.dp))
                     Text(
-                        text = stringResource(R.string.context_sheet_estimate),
+                        // With a model loaded the estimate means this conversation is not in the cache yet.
+                        text = stringResource(if (modelLoaded) R.string.context_sheet_estimate_not_cached else R.string.context_sheet_estimate),
                         fontSize = 13.sp,
                         color = muted,
                     )
