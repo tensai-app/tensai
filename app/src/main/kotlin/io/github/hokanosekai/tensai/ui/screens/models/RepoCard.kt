@@ -128,11 +128,17 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
 @Composable
 internal fun FlowRowScope.RepoBadges(card: RepoCardModel) = RepoBadges(card.tools, card.vision, card.gated)
 
+/**
+ * Whether Discover shows the Vision badge and filter. Off until the app can send images to a model
+ * (TEN-12): a badge would promise what it cannot do yet (TEN-156). `hasVision` is still read.
+ */
+internal const val SHOW_VISION = false
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun FlowRowScope.RepoBadges(tools: Boolean, vision: Boolean, gated: Boolean) {
     if (tools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
-    if (vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
+    if (SHOW_VISION && vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
     if (gated) TensaiBadge(stringResource(R.string.discover_badge_gated), icon = Icons.Default.Lock, warning = true)
 }
 

@@ -213,12 +213,14 @@ private fun FilterRow(
             icon = if (filters.tools) Icons.Default.Check else null,
             onClick = { onTools(!filters.tools) },
         )
-        TensaiChip(
-            label = stringResource(R.string.discover_badge_vision),
-            selected = filters.vision,
-            icon = if (filters.vision) Icons.Default.Check else null,
-            onClick = { onVision(!filters.vision) },
-        )
+        if (SHOW_VISION) {
+            TensaiChip(
+                label = stringResource(R.string.discover_badge_vision),
+                selected = filters.vision,
+                icon = if (filters.vision) Icons.Default.Check else null,
+                onClick = { onVision(!filters.vision) },
+            )
+        }
         SortMenu(filters.sort, onSort)
     }
 }
