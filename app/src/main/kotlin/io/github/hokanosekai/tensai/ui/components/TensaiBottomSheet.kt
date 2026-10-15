@@ -49,10 +49,7 @@ internal fun TensaiBottomSheet(
     fullHeight: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // A sheet sized to its content has no use for the half stop, and keeping it let Material
-    // re-anchor to it when the content grew (unfolding the context breakdown dropped the sheet to
-    // half height, the onSizeChanged re-expand below losing the race to Material's own animation).
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = !fullHeight)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
     // Whether the sheet last came to rest fully open. Read when the content changes size: Material
     // rebuilds the anchors then and always picks PartiallyExpanded when there is one, which dropped

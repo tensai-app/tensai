@@ -114,7 +114,7 @@ fun ModelPickerSheet(
         containerColor = MaterialTheme.colorScheme.background,
         scrimColor = MaterialTheme.tensaiTints.scrim,
         dragHandle = { SheetDragHandle() },
-        fullHeight = false,
+        fullHeight = true,
     ) {
         Box(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),

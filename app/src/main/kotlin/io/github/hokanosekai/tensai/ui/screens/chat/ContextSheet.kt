@@ -98,7 +98,9 @@ fun ContextSheet(
         containerColor = MaterialTheme.colorScheme.background,
         scrimColor = MaterialTheme.tensaiTints.scrim,
         dragHandle = { SheetDragHandle() },
-        fullHeight = false,
+        // Full height, like the conversation settings: unfolding the breakdown only unfolds, the
+        // sheet keeps its size (and its half stop on the way down).
+        fullHeight = true,
     ) {
         Box(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
