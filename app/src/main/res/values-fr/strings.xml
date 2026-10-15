@@ -88,8 +88,33 @@
     <string name="settings_kv_cache_value">%1$s · %2$s</string>
     <string name="settings_inference_chosen_auto">auto</string>
     <string name="settings_inference_in_use">Utilisé par %1$s</string>
-    <string name="settings_inference_planned">Prévu pour %1$s, choisi à chaque chargement selon la mémoire libre</string>
+    <string name="settings_inference_planned">Prévu pour %1$s, selon le réglage de contexte et la mémoire du téléphone</string>
     <string name="settings_inference_no_model">Aucun modèle chargé ni présent sur l\'appareil</string>
+
+    <!-- Réglage de la longueur de contexte (TEN-150) : la ligne des Réglages et le sélecteur partagé avec l'écran du modèle. -->
+    <string name="settings_context_setting">Longueur de contexte</string>
+    <string name="context_option_auto">Auto</string>
+    <string name="context_option_auto_subtitle">Le maximum que la mémoire du téléphone permet, dans la limite de la longueur d\'entraînement</string>
+    <string name="context_option_max">Max</string>
+    <string name="context_option_max_tokens">Max · %1$s tokens</string>
+    <string name="context_option_max_subtitle">La longueur sur laquelle le modèle a été entraîné</string>
+    <string name="context_option_global">Utiliser le réglage global</string>
+    <string name="context_option_global_subtitle">Actuellement : %1$s</string>
+    <string name="context_option_global_value">Global (%1$s)</string>
+    <string name="context_option_resolves_to">%1$s tokens sur ce téléphone</string>
+    <string name="context_option_memory">Cache d\'environ %1$s · total d\'environ %2$s sur %3$s</string>
+    <string name="context_option_warning">Trop pour la mémoire du téléphone : démarre à %1$s tokens ou moins</string>
+    <string name="context_picker_note_model">Changer le contexte efface les sessions enregistrées de ce modèle.</string>
+    <string name="context_picker_note_global">Changer le contexte efface les sessions enregistrées des modèles qui suivent ce réglage.</string>
+    <string name="context_picker_figures_for">Chiffres pour %1$s</string>
+    <string name="model_detail_context_setting">Réglage du contexte</string>
+    <string name="context_option_infeasible">Ce modèle ne peut pas être chargé sur ce téléphone</string>
+    <string name="settings_auto_share">Mémoire pour le contexte Auto</string>
+    <string name="settings_auto_share_explain">Plus de contexte, ou plus de place pour Android et les autres applications</string>
+    <string name="settings_auto_share_value">%1$d %%</string>
+    <string name="settings_auto_share_30">Le plus de place pour le système et les autres applications</string>
+    <string name="settings_auto_share_50">Équilibré</string>
+    <string name="settings_auto_share_70">Plus de contexte, moins de place</string>
 
     <string name="settings_storage_models">Modèles</string>
     <string name="settings_storage_models_usage">%1$s sur %2$s</string>

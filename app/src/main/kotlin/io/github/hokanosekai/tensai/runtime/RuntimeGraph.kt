@@ -6,6 +6,7 @@ import android.util.Log
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.ContextRepository
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
@@ -182,6 +183,9 @@ object RuntimeGraph {
 
     /** Backend the user picked in onboarding/settings — see [BackendPreference.resolve]. */
     val backendRepository: BackendRepository by lazy { BackendRepository(appContext) }
+
+    /** Global context window setting (TEN-150), see [ContextSetting]. */
+    val contextRepository: ContextRepository by lazy { ContextRepository(appContext) }
 
     /** Language the app renders in, independently of the system's — see [LanguageRepository]. */
     val languageRepository: LanguageRepository by lazy { LanguageRepository(appContext) }

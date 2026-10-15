@@ -427,11 +427,16 @@ internal fun verdictColor(verdict: Verdict): Color = when (verdict) {
 
 /**
  * [CompatibilityChecker.check] against the current [io.github.hokanosekai.tensai.compat.DeviceProfile].
- * Deliberately not `remember`-ed: free RAM changes between recompositions and the check is cheap, so
- * the single-model screen (onboarding) recomputes it rather than show a stale verdict. The Models
- * list and the detail screen do the opposite on purpose: one verdict per model, kept until the
- * library changes, so the filter, the card and the detail agree.
+ * `remember`-ed per model and context preferences, like the Models list and the detail screen: one
+ * verdict kept until its inputs change, so the card and the summary agree and a recomposition does
+ * not re-read the device. Null until DataStore delivers the preferences, so no verdict is shown from
+ * guessed defaults (same as the backend preference).
  */
 @Composable
-internal fun modelCompatibility(model: ModelEntity) =
-    CompatibilityChecker.check(model, RuntimeGraph.deviceProfiler.profile())
+internal fun modelCompatibility(model: ModelEntity): Compatibility? {
+    val prefs by remember { RuntimeGraph.contextRepository.prefs }.collectAsState(initial = null)
+    val current = prefs ?: return null
+    return remember(model, current) {
+        CompatibilityChecker.check(model, RuntimeGraph.deviceProfiler.profile(), current.setting, current.autoShare)
+    }
+}

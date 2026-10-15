@@ -1,6 +1,8 @@
 package io.github.hokanosekai.tensai.ui.screens.settings
 
 import io.github.hokanosekai.tensai.compat.DeviceProfile
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
@@ -37,11 +39,11 @@ sealed interface InferenceFacts {
 /**
  * Settings > Inference's two read-only rows.
  *
- * Neither value is a setting in V1: `n_ctx` and KV-cache precision are derived per load by
- * [LoadPolicy] from the model's own trained context and the device's usable RAM (see its KDoc —
- * the two are chosen *together*, trading precision for context rather than shrinking the context
- * first). Exposing either as a picker would mean letting the user request a load the device cannot
- * hold, so the screen reports them instead, and this is where that reporting is decided.
+ * Neither row is the setting itself: `n_ctx` and KV-cache precision are derived per load by
+ * [LoadPolicy] from the user's [ContextSetting], the model's own trained context and the device's
+ * usable RAM (see its KDoc: the two are chosen *together*, trading precision for context rather
+ * than shrinking the context first). The context *setting* is its own row with its own picker; the
+ * screen reports what that and the KV precision come to, and this is where that reporting is decided.
  *
  * Same "a row whose file is gone is not a model" rule as
  * [io.github.hokanosekai.tensai.ui.screens.HomePill.state], and the same injectable [fileExists]:
@@ -59,12 +61,17 @@ object SettingsInference {
      * @param profile the device as it is now, or `null` if it can't be read — without it there is
      *   no RAM figure to plan against, so an empty queue resolves to [InferenceFacts.Unknown]
      *   rather than to a plan computed from a made-up number.
+     * @param global the user's global [ContextSetting], what [InferenceFacts.Planned] is planned with (a
+     *   model's own override still wins, as it does at load).
+     * @param autoShare the share of memory Auto may spend, see [AutoMemoryShare].
      * @param fileExists existence check for a [ModelEntity.filePath] — injectable for tests.
      */
     fun facts(
         resident: LoadedModelInfo?,
         models: List<ModelEntity>,
         profile: DeviceProfile?,
+        global: ContextSetting = ContextSetting.Auto,
+        autoShare: AutoMemoryShare = AutoMemoryShare.P50,
         fileExists: (String) -> Boolean = { File(it).exists() },
     ): InferenceFacts {
         if (resident != null) {
@@ -75,15 +82,31 @@ object SettingsInference {
             )
         }
         if (profile == null) return InferenceFacts.Unknown
-        val next = models.firstOrNull { fileExists(it.filePath) } ?: return InferenceFacts.Unknown
+        val next = nextModel(models, fileExists) ?: return InferenceFacts.Unknown
         // No feasible plan is "nothing loadable", which is exactly what Unknown means. Printing
         // LoadPlan.Infeasible's floor here would put a context on screen for a load this device
         // can't perform — the row would read as a promise (TEN-77).
-        val plan = LoadPolicy.compute(next, profile) as? LoadPlan.Feasible ?: return InferenceFacts.Unknown
+        val plan = LoadPolicy.compute(next, profile, global, autoShare) as? LoadPlan.Feasible ?: return InferenceFacts.Unknown
         return InferenceFacts.Planned(
             modelName = next.shownName,
             nCtx = plan.nCtx,
             kvCacheType = plan.kvCacheType,
         )
     }
+
+    /**
+     * The model the global context picker prices its options for (TEN-150): the resident one if it is
+     * still in [models], else the one [facts] plans for. `null` when there is none, and the picker
+     * then shows no figures: a memory estimate needs a model's weights and KV shape, and the global
+     * setting is not about any one model.
+     */
+    fun previewModel(
+        resident: LoadedModelInfo?,
+        models: List<ModelEntity>,
+        fileExists: (String) -> Boolean = { File(it).exists() },
+    ): ModelEntity? =
+        resident?.let { loaded -> models.firstOrNull { it.id == loaded.modelId } } ?: nextModel(models, fileExists)
+
+    private fun nextModel(models: List<ModelEntity>, fileExists: (String) -> Boolean): ModelEntity? =
+        models.firstOrNull { fileExists(it.filePath) }
 }

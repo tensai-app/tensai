@@ -240,6 +240,18 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v13 -> v14 (TEN-150): `models.contextOverride`, the per-model [io.github.hokanosekai.tensai.data.ContextSetting]
+     * by name. Nullable with no default: every existing row reads null, "use the global setting",
+     * which is what they were doing. Nothing to backfill, and no `kvShapeVersion` reset: the column
+     * is the user's choice, not something the header backfill derives.
+     */
+    val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `contextOverride` TEXT")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -254,5 +266,6 @@ object TensaiDbMigrations {
         MIGRATION_10_11,
         MIGRATION_11_12,
         MIGRATION_12_13,
+        MIGRATION_13_14,
     )
 }

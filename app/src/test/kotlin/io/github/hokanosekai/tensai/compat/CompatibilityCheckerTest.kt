@@ -1,9 +1,12 @@
 package io.github.hokanosekai.tensai.compat
 
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
-import io.github.hokanosekai.tensai.engine.KvCacheType
+import io.github.hokanosekai.tensai.runtime.LoadPlan
+import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.ui.screens.models.formatGigabytes
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -86,7 +89,10 @@ class CompatibilityCheckerTest {
             contextLength = 8_192,
             embeddingLength = 3584,
             blockCount = 42,
-            sizeBytes = 5_800_000_000,
+            // Over the 6.5 GiB this 8 GB phone leaves a model: not even the 1024 floor loads. (Since TEN-150
+            // the verdict is the load plan's, and the plan shrinks the context before it gives up, so the
+            // 5.8 GB Q4 that used to be WontFit at a planned 4096 is a tight fit at a smaller context.)
+            sizeBytes = 7_200_000_000,
         )
 
         val result = CompatibilityChecker.check(model, dimensity900_8gb)
@@ -165,7 +171,7 @@ class CompatibilityCheckerTest {
      * ticket was asked not to undo.
      */
     @Test
-    fun theEstimateIsWeightsPlusTheAppsOwnKvCacheFigurePlusOverhead() {
+    fun theEstimateIsTheCostOfThePlanTheLoadWouldRun() {
         val model = model(
             architecture = "qwen2",
             paramCount = 494_000_000,
@@ -177,17 +183,16 @@ class CompatibilityCheckerTest {
 
         val result = CompatibilityChecker.check(model, dimensity900_8gb)
 
-        // 4096 is CompatibilityChecker's planned context, F16 its planned cache type; both are
-        // private, so they are restated here — if either changes, this test is meant to notice.
-        val kvCacheBytes = KvCacheSize.bytesAt(model, nCtx = 4096, kvCacheType = KvCacheType.F16)
-        val overheadBytes = 300L * 1024 * 1024
+        val plan = LoadPolicy.compute(model, dimensity900_8gb) as LoadPlan.Feasible
+        val kvCacheBytes = KvCacheSize.bytesAt(model, nCtx = plan.nCtx.toLong(), kvCacheType = plan.kvCacheType)
 
         assertEquals(
-            "the estimate must be the model's weights, the app's own KV-cache figure and the " +
-                "compute-buffer allowance — nothing recomputed on the side",
-            model.sizeBytes + kvCacheBytes + overheadBytes,
+            "the estimate must be the plan's own cost: weights, the app's KV-cache figure, base overhead " +
+                "and the compute buffer that grows with the context, nothing recomputed on the side",
+            model.sizeBytes + kvCacheBytes + 300L * 1024 * 1024 + LoadPolicy.computeBufferBytes(plan.nCtx.toLong()),
             result.estimatedBytes,
         )
+        assertEquals(LoadPolicy.estimate(model, plan.nCtx.toLong(), plan.kvCacheType), result.estimatedBytes)
         assertEquals(
             "the phone's side of the comparison is total RAM, not what happens to be free",
             dimensity900_8gb.totalRamBytes,
@@ -214,7 +219,11 @@ class CompatibilityCheckerTest {
 
         val result = CompatibilityChecker.check(model, dimensity900_8gb)
 
-        assertEquals("1.0 GB", formatGigabytes(result.estimatedBytes))
+        val plan = LoadPolicy.compute(model, dimensity900_8gb) as LoadPlan.Feasible
+        assertEquals(
+            formatGigabytes(LoadPolicy.estimate(model, plan.nCtx.toLong(), plan.kvCacheType)),
+            formatGigabytes(result.estimatedBytes),
+        )
         assertEquals("8.0 GB", formatGigabytes(result.deviceRamBytes))
     }
 
@@ -223,6 +232,41 @@ class CompatibilityCheckerTest {
      * estimate and the backend match what the entity overload gives for the same figures, and an
      * unknown attention shape falls back to the same KV formula.
      */
+    /** TEN-150: one plan, one total. The verdict and the estimate follow the setting, the share and a model's own override. */
+    @Test
+    fun theVerdictAndTheEstimateFollowTheSamePlanAsTheLoad() {
+        val long = model(
+            architecture = "qwen2",
+            paramCount = 494_000_000,
+            contextLength = 131_072,
+            embeddingLength = 896,
+            blockCount = 24,
+            sizeBytes = 380_000_000,
+        )
+
+        for (global in listOf(ContextSetting.Auto, ContextSetting.K8, ContextSetting.Max)) {
+            for (share in AutoMemoryShare.entries) {
+                val plan = LoadPolicy.compute(long, dimensity900_8gb, global, share)
+                val result = CompatibilityChecker.check(long, dimensity900_8gb, global, share)
+
+                val expected = when (plan) {
+                    is LoadPlan.Feasible -> LoadPolicy.estimate(long, plan.nCtx.toLong(), plan.kvCacheType)
+                    is LoadPlan.Infeasible -> plan.requiredBytes
+                }
+                assertEquals("$global $share", expected, result.estimatedBytes)
+                assertEquals("$global $share", plan is LoadPlan.Infeasible, result.verdict == Verdict.WontFit)
+            }
+        }
+
+        val own = long.copy(contextOverride = ContextSetting.K4.name)
+        val ownPlan = LoadPolicy.compute(own, dimensity900_8gb, ContextSetting.Max) as LoadPlan.Feasible
+        assertEquals(4_096, ownPlan.nCtx)
+        assertEquals(
+            LoadPolicy.estimate(own, 4_096, ownPlan.kvCacheType),
+            CompatibilityChecker.check(own, dimensity900_8gb, ContextSetting.Max).estimatedBytes,
+        )
+    }
+
     @Test
     fun factsOverloadAgreesWithTheEntityOverload() {
         val entity = model(

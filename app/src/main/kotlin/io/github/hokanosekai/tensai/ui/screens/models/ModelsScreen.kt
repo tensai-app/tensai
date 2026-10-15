@@ -232,12 +232,17 @@ fun ModelsScreen(
     // cannot say "Load model" for a frame and then flip to "File missing".
     val existenceReady = currentModels?.all { it.id in existence } == true
     // `remember`-ed on the library and the existence map so the list does not reshuffle under the
-    // user's finger when free RAM twitches; a library change re-reads the device profile.
-    val verdicts = remember(currentModels, existence, existenceReady) {
-        if (!existenceReady) return@remember emptyMap()
-        val profile = RuntimeGraph.deviceProfiler.profile()
+    // user's finger when free RAM twitches; a library change re-reads the device profile, a change of
+    // the context preferences does not (it only re-prices the same reading). Null until DataStore
+    // delivers the preferences, and the list is held back until then, like the backend preference.
+    val contextPrefs by remember { RuntimeGraph.contextRepository.prefs }.collectAsState(initial = null)
+    val verdictProfile = remember(currentModels) { RuntimeGraph.deviceProfiler.profile() }
+    val verdicts = remember(currentModels, existence, existenceReady, contextPrefs, verdictProfile) {
+        val prefs = contextPrefs
+        if (!existenceReady || prefs == null) return@remember emptyMap()
+        val profile = verdictProfile
         currentModels.orEmpty().associate { model ->
-            model.id to if (existence[model.id] == true) CompatibilityChecker.check(model, profile) else null
+            model.id to if (existence[model.id] == true) CompatibilityChecker.check(model, profile, prefs.setting, prefs.autoShare) else null
         }
     }
     // One collector for the list (null until DataStore delivers it): the list is held back until then,
@@ -299,7 +304,7 @@ fun ModelsScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                !existenceReady || backendPreference == null -> Unit // stat() pass or preference load still running, see above.
+                !existenceReady || backendPreference == null || contextPrefs == null -> Unit // stat() pass or preference load still running, see above.
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

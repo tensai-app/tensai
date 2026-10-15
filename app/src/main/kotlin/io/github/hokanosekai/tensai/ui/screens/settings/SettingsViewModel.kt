@@ -4,6 +4,9 @@ import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.ContextRepository
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.models.ModelEntity
@@ -64,6 +67,7 @@ class SettingsViewModel(
     private val themeRepository: ThemeRepository = RuntimeGraph.themeRepository,
     private val languageRepository: LanguageRepository = RuntimeGraph.languageRepository,
     private val backendRepository: BackendRepository = RuntimeGraph.backendRepository,
+    private val contextRepository: ContextRepository = RuntimeGraph.contextRepository,
     private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val downloadPreferences: DownloadPreferences = RuntimeGraph.downloadPreferences,
     private val tokenStore: TokenStore = RuntimeGraph.tokenStore,
@@ -88,6 +92,12 @@ class SettingsViewModel(
     /** What the next load will resolve its backend from — see [BackendPreference.resolve]. */
     val backend: Flow<BackendPreference> = backendRepository.preference
 
+    /** The global context window setting, see [ContextSetting]; a model's own override wins over it. */
+    val contextSetting: Flow<ContextSetting> = contextRepository.setting
+
+    /** The share of memory Auto may spend, see [AutoMemoryShare]. */
+    val autoShare: Flow<AutoMemoryShare> = contextRepository.autoShare
+
     /** Whether a download may start on mobile data without asking, see [DownloadPreferences]. */
     val allowMobileData: Flow<Boolean> = downloadPreferences.allowMobileData
 
@@ -111,14 +121,30 @@ class SettingsViewModel(
         }
 
     /** Context window and KV-cache precision, in use or planned — see [SettingsInference.facts]. */
-    val inference: Flow<InferenceFacts> = combine(queueState, models) { state, modelList ->
+    val inference: Flow<InferenceFacts> = combine(queueState, models, contextRepository.prefs) { state, modelList, prefs ->
         SettingsInference.facts(
             resident = state.residentModel,
             models = modelList,
             profile = deviceProfile(),
+            global = prefs.setting,
+            autoShare = prefs.autoShare,
             fileExists = { path -> fileSize(path) != null },
         )
     }
+
+    /**
+     * The model the global context picker shows memory figures for, see [SettingsInference.previewModel].
+     */
+    val contextPreviewModel: Flow<ModelEntity?> = combine(queueState, models) { state, modelList ->
+        SettingsInference.previewModel(
+            resident = state.residentModel,
+            models = modelList,
+            fileExists = { path -> fileSize(path) != null },
+        )
+    }
+
+    /** The device as it is now, for the picker's figures; `null` when it can't be read. */
+    fun currentProfile(): DeviceProfile? = deviceProfile()
 
     fun setThemeMode(mode: ThemeMode) {
         scope.launch { themeRepository.setThemeMode(mode) }
@@ -130,6 +156,14 @@ class SettingsViewModel(
 
     fun setBackend(preference: BackendPreference) {
         scope.launch { backendRepository.setPreference(preference) }
+    }
+
+    fun setContextSetting(setting: ContextSetting) {
+        scope.launch { contextRepository.setSetting(setting) }
+    }
+
+    fun setAutoShare(share: AutoMemoryShare) {
+        scope.launch { contextRepository.setAutoShare(share) }
     }
 
     fun setAllowMobileData(allowed: Boolean) {

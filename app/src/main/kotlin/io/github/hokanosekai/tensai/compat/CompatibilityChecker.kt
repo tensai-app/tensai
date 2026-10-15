@@ -1,9 +1,12 @@
 package io.github.hokanosekai.tensai.compat
 
-import io.github.hokanosekai.tensai.data.models.KvCacheSize
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.engine.KvCacheType
+import io.github.hokanosekai.tensai.runtime.LoadPlan
+import io.github.hokanosekai.tensai.runtime.LoadPolicy
 
 /** Traffic-light verdict for whether a [ModelEntity] is a good idea to load on this device. */
 enum class Verdict {
@@ -31,10 +34,10 @@ enum class Verdict {
  * from, so nothing can quietly grow a second estimate that disagrees with the verdict shown next
  * to it.
  *
- * @param estimatedBytes what this model is expected to cost to load: weights + KV cache at
- *   [CompatibilityChecker]'s planned context (through [KvCacheSize], the one KV formula in the
- *   app) + compute-buffer overhead. This is the number the verdict is decided from, and the same
- *   one the UI prints.
+ * @param estimatedBytes what this model is expected to cost to load: weights + KV cache + compute
+ *   buffers at the context [io.github.hokanosekai.tensai.runtime.LoadPolicy] plans for it (TEN-150),
+ *   [io.github.hokanosekai.tensai.runtime.LoadPolicy.estimate]. This is the number the UI prints; the verdict's
+ *   RunsWell/TightFit split uses [verdictBytes].
  * @param deviceRamBytes [DeviceProfile.totalRamBytes] — total physical RAM, not what happens to be
  *   free right now. The comparison the user is shown is against the phone they own, which does not
  *   change while they read it; [DeviceProfile.availableRamBytes] only feeds the
@@ -43,12 +46,21 @@ enum class Verdict {
  *   *this* device (see [CompatibilityChecker]'s per-architecture table) — a hint for the loader's
  *   default, not a guarantee; the user can still override it ("load anyway" is a UI decision, not
  *   this checker's).
+ * @param verdictBytes what [verdict]'s RunsWell/TightFit split was decided from, against free RAM. Not
+ *   always [estimatedBytes]: under [ContextSetting.Auto] the context is as large as the memory share
+ *   allows, which is always more than free RAM and says nothing about whether the model runs well, so
+ *   the split is priced at `min(trained, 4096)` at F16 instead. A manual size or Max is judged at the
+ *   real plan, and can legitimately be tight.
+ * @param plannedCtx the context of the plan [estimatedBytes] was priced at (the floor when nothing
+ *   fits), so a screen needs no second [LoadPolicy.compute] for it.
  */
 data class Compatibility(
     val verdict: Verdict,
     val estimatedBytes: Long,
     val deviceRamBytes: Long,
     val recommendedBackend: BackendHint,
+    val verdictBytes: Long = estimatedBytes,
+    val plannedCtx: Int = 0,
 )
 
 /**
@@ -67,6 +79,29 @@ data class ModelFacts(
     val kvFullElementsPerToken: Long = 0,
     val kvSwaElementsPerToken: Long = 0,
     val slidingWindow: Long = 0,
+)
+
+/**
+ * A [ModelEntity] stand-in for [LoadPolicy], which plans on one: a catalog entry has no file, no id and
+ * no override, only the figures.
+ */
+private fun ModelFacts.toEntity() = ModelEntity(
+    id = "",
+    displayName = "",
+    fileName = "",
+    filePath = "",
+    sizeBytes = sizeBytes,
+    architecture = architecture,
+    quantLabel = "",
+    paramCount = paramCount,
+    contextLength = contextLength,
+    embeddingLength = embeddingLength,
+    blockCount = blockCount,
+    supportsThinking = false,
+    importedAt = 0L,
+    kvFullElementsPerToken = kvFullElementsPerToken,
+    kvSwaElementsPerToken = kvSwaElementsPerToken,
+    slidingWindow = slidingWindow,
 )
 
 private fun ModelEntity.facts() = ModelFacts(
@@ -116,19 +151,6 @@ private fun ModelEntity.facts() = ModelFacts(
 object CompatibilityChecker {
 
     /**
-     * Context length assumed for the KV-cache estimate — matches
-     * [io.github.hokanosekai.tensai.engine.ModelLoadConfig]'s default `nCtx`, not
-     * [ModelEntity.contextLength] (the model's *trained* max, which for e.g. Qwen2.5 is 32k+ and
-     * would wildly overestimate KV memory for a model that will actually be loaded at 4096).
-     * [kvCacheBytes] takes the smaller of the two, so a model whose trained context is below this
-     * isn't overestimated either.
-     */
-    private const val PLANNED_CTX_TOKENS = 4096L
-
-    /** Rough allowance for compute buffers/graph overhead beyond weights + KV cache. */
-    private const val OVERHEAD_BYTES = 300L * 1024 * 1024
-
-    /**
      * Dense models at or above this size sit at or below the ~2 tok/s usable floor on this device
      * class per the measured table (Phi-4-mini, 3.8B: 1.7-2.3 tok/s; Qwen2.5-7B, 7B: 0.2 tok/s),
      * while everything measured below it (Qwen2.5-0.5B/3B, Llama-3.2-3B) stays comfortably above.
@@ -143,30 +165,74 @@ object CompatibilityChecker {
      */
     private val TIGHT_ARCHITECTURE_MARKERS = listOf("gemma3n", "gemma4")
 
+    /** The context the verdict split is priced at under Auto: the 4096 every verdict was priced at before TEN-150. */
+    private const val TYPICAL_CTX = 4_096L
+
     /** Architectures whose llama.cpp CPU path is disproportionately slow — prefer GPU offload. */
     private val GPU_PREFERRED_ARCH_MARKERS = listOf("gemma3n", "gemma4", "phi")
 
     /** Dense architectures — fastest on the big CPU cores (see this object's KDoc). */
     private val DENSE_ARCH_MARKERS = listOf("qwen", "llama", "gemma")
 
-    fun check(model: ModelEntity, profile: DeviceProfile): Compatibility = check(model.facts(), profile)
+    /**
+     * The verdict for [model], from the very plan [LoadPolicy.compute] would load it with (TEN-150):
+     * [global] and [autoShare] are the user's context preferences, a model's own override wins as it
+     * does at load. One source of truth, so the status, the "Estimated memory" row and the picker
+     * never show two totals for one model.
+     */
+    fun check(
+        model: ModelEntity,
+        profile: DeviceProfile,
+        global: ContextSetting = ContextSetting.Auto,
+        autoShare: AutoMemoryShare = AutoMemoryShare.P50,
+    ): Compatibility = check(model, model.facts(), profile, global, autoShare, catalog = false)
 
     /**
      * Same verdict as [check] for a model known only by its facts: a catalog entry with no file on
-     * the device yet (the onboarding recommendation). One implementation behind both, so a model
-     * gets the same answer whether it was imported or merely described.
+     * the device yet (the onboarding recommendation). One implementation behind both.
+     *
+     * Callers use the default [global] and [autoShare] on purpose: a catalog entry has no model of its own
+     * to carry an override and the discovery screens are not about the user's context choice. One
+     * difference from the entity overload, to keep what is *recommended* as before TEN-150: an entry is
+     * also [Verdict.WontFit] when it does not fit at the typical 4096 context, not only at the 1024 floor
+     * the load would shrink to.
      */
-    fun check(facts: ModelFacts, profile: DeviceProfile): Compatibility {
-        val estimatedBytes = facts.sizeBytes + kvCacheBytes(facts) + OVERHEAD_BYTES
+    fun check(
+        facts: ModelFacts,
+        profile: DeviceProfile,
+        global: ContextSetting = ContextSetting.Auto,
+        autoShare: AutoMemoryShare = AutoMemoryShare.P50,
+    ): Compatibility = check(facts.toEntity(), facts, profile, global, autoShare, catalog = true)
 
-        // [DeviceProfile.usableRamBytes], the same basis LoadPolicy budgets its context against —
-        // see that property's KDoc. A verdict decided from one memory reading and a context
-        // planned from another is how a model passed this check and was then planned at 256
-        // tokens (TEN-77).
-        val wontFit = estimatedBytes > profile.usableRamBytes
+    private fun check(
+        model: ModelEntity,
+        facts: ModelFacts,
+        profile: DeviceProfile,
+        global: ContextSetting,
+        autoShare: AutoMemoryShare,
+        catalog: Boolean,
+    ): Compatibility {
+        // The plan the load runs: what it would cost, or what its floor costs when nothing fits.
+        val plan = LoadPolicy.compute(model, profile, global, autoShare)
+        val estimatedBytes = when (plan) {
+            is LoadPlan.Feasible -> LoadPolicy.estimate(model, plan.nCtx.toLong(), plan.kvCacheType)
+            is LoadPlan.Infeasible -> plan.requiredBytes
+        }
+
+        // Not loadable at any context worth having, on the same [DeviceProfile.usableRamBytes] the
+        // plan budgets against (TEN-77). A verdict decided from one reading and a context planned
+        // from another is how a model passed this check and was then planned at 256 tokens.
+        // A catalog entry is a recommendation, not a file the user already holds: it also has to fit at the
+        // typical context, as before TEN-150, so nothing is offered that only loads at the floor.
+        val typical = LoadPolicy.estimate(model, minOf(LoadPolicy.trainedContext(model), TYPICAL_CTX), KvCacheType.F16)
+        val wontFit = plan is LoadPlan.Infeasible || (catalog && typical > profile.usableRamBytes)
+
+        // Auto asks for as much context as its share allows, so pricing the split at it would flag every
+        // model tight; it is priced at the typical context instead. A manual size or Max is the real plan.
+        val verdictBytes = if (LoadPolicy.effectiveSetting(model, global) == ContextSetting.Auto) typical else estimatedBytes
         // availableRamBytes only ever softens a verdict here, never decides fit: "the system is
         // busy right now" is the one question a free-memory reading answers honestly.
-        val tightFit = !wontFit && (estimatedBytes > profile.availableRamBytes || isLikelySlow(facts))
+        val tightFit = !wontFit && (verdictBytes > profile.availableRamBytes || isLikelySlow(facts))
 
         val verdict = when {
             wontFit -> Verdict.WontFit
@@ -179,29 +245,11 @@ object CompatibilityChecker {
             estimatedBytes = estimatedBytes,
             deviceRamBytes = profile.totalRamBytes,
             recommendedBackend = recommendedBackend(facts.architecture, profile.hasVulkan),
-        )
-    }
-
-    /**
-     * KV-cache bytes at [PLANNED_CTX_TOKENS], from the model's real attention shape — see
-     * [KvCacheSize], which also holds the fallback for models whose shape is unknown (imported
-     * before TEN-18, or a header that didn't yield one).
-     */
-    private fun kvCacheBytes(facts: ModelFacts): Long {
-        // A header with no context_length key records 0, which isn't a context anything will be
-        // loaded at — the engine turns a non-positive n_ctx into 4096 (tensai_jni.cpp), which is
-        // PLANNED_CTX_TOKENS. Taking the min with 0 would report a model as needing no KV cache
-        // at all. Same reasoning as LoadPolicy.trainedContextOf.
-        val trainedCtx = if (facts.contextLength > 0) facts.contextLength else PLANNED_CTX_TOKENS
-        val plannedCtx = minOf(trainedCtx, PLANNED_CTX_TOKENS)
-        return KvCacheSize.bytesAt(
-            embeddingLength = facts.embeddingLength,
-            blockCount = facts.blockCount,
-            kvFullElementsPerToken = facts.kvFullElementsPerToken,
-            kvSwaElementsPerToken = facts.kvSwaElementsPerToken,
-            slidingWindow = facts.slidingWindow,
-            nCtx = plannedCtx,
-            kvCacheType = KvCacheType.F16,
+            verdictBytes = verdictBytes,
+            plannedCtx = when (plan) {
+                is LoadPlan.Feasible -> plan.nCtx
+                is LoadPlan.Infeasible -> plan.floor.nCtx
+            },
         )
     }
 

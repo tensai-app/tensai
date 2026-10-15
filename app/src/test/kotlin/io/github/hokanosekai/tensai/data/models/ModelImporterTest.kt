@@ -636,6 +636,20 @@ class ModelImporterTest {
         assertEquals(origin, again.origin)
     }
 
+    /** A relink is the user's own model again, so the context they chose for it (TEN-150) stays chosen. */
+    @Test
+    fun reImportingAMissingFileKeepsTheModelsContextOverride() = runBlocking {
+        val first = importMine()
+        dao.insert(first.copy(contextOverride = "K8"))
+        File(first.filePath).delete()
+
+        val again = importMine()
+
+        assertEquals(first.id, again.id)
+        assertEquals("K8", again.contextOverride)
+        assertEquals("K8", dao.rows.single().contextOverride)
+    }
+
     /** In-memory stand-in for Room, same idea as `SessionRepositoryTest`'s `FakeSessionDao`. */
     private class FakeModelDao : ModelDao {
         /** Makes the next insert throw before touching anything, like a transaction that rolled back. */
@@ -647,6 +661,8 @@ class ModelImporterTest {
         override fun observeAll(): Flow<List<ModelEntity>> = flow
 
         override suspend fun getById(id: String): ModelEntity? = rows.find { it.id == id }
+
+        override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             rows.filter { it.kvShapeVersion != kvShapeVersion }

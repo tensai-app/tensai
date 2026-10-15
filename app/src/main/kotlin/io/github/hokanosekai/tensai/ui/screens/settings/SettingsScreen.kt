@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Percent
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
@@ -75,6 +77,8 @@ import androidx.core.app.NotificationManagerCompat
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.runtime.rememberResumeCount
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
@@ -109,6 +113,9 @@ fun SettingsScreen(
     val theme by viewModel.themeMode.collectAsState(initial = ThemeMode.System)
     val language by viewModel.language.collectAsState(initial = AppLanguage.System)
     val backend by viewModel.backend.collectAsState(initial = BackendPreference.Auto)
+    val contextSetting by viewModel.contextSetting.collectAsState(initial = ContextSetting.Auto)
+    val autoShare by viewModel.autoShare.collectAsState(initial = AutoMemoryShare.P50)
+    val contextPreviewModel by viewModel.contextPreviewModel.collectAsState(initial = null)
     val storage by viewModel.storage.collectAsState(initial = null)
     val inferenceState by viewModel.inference.collectAsState(initial = InferenceFacts.Unknown)
     val inference = inferenceState
@@ -218,6 +225,21 @@ fun SettingsScreen(
                 )
                 RowDivider()
                 SettingsRow(
+                    icon = Icons.Rounded.AspectRatio,
+                    title = stringResource(R.string.settings_context_setting),
+                    onClick = { picker = Picker.Context },
+                    trailing = { ValueText(contextSetting.label()); Chevron() },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Percent,
+                    title = stringResource(R.string.settings_auto_share),
+                    supporting = stringResource(R.string.settings_auto_share_explain),
+                    onClick = { picker = Picker.AutoShare },
+                    trailing = { ValueText(stringResource(R.string.settings_auto_share_value, autoShare.percent)); Chevron() },
+                )
+                RowDivider()
+                SettingsRow(
                     icon = Icons.Rounded.Straighten,
                     title = stringResource(R.string.settings_context_size),
                     supporting = inference.caption(),
@@ -309,6 +331,29 @@ fun SettingsScreen(
                         onSelect = { viewModel.setBackend(preference) },
                     )
                 }
+                Picker.Context -> contextPickerOptions(
+                    choices = ContextSetting.entries,
+                    selected = contextSetting,
+                    global = contextSetting,
+                    model = contextPreviewModel,
+                    profile = remember(contextPreviewModel) { viewModel.currentProfile() },
+                    autoShare = autoShare,
+                    onSelect = { choice -> choice?.let(viewModel::setContextSetting) },
+                )
+                Picker.AutoShare -> AutoMemoryShare.entries.map { share ->
+                    PickerOption(
+                        title = stringResource(R.string.settings_auto_share_value, share.percent),
+                        subtitle = stringResource(
+                            when (share) {
+                                AutoMemoryShare.P30 -> R.string.settings_auto_share_30
+                                AutoMemoryShare.P50 -> R.string.settings_auto_share_50
+                                AutoMemoryShare.P70 -> R.string.settings_auto_share_70
+                            },
+                        ),
+                        selected = autoShare == share,
+                        onSelect = { viewModel.setAutoShare(share) },
+                    )
+                }
                 Picker.MobileData -> listOf(false, true).map { allow ->
                     PickerOption(
                         title = stringResource(if (allow) R.string.settings_mobile_data_allow else R.string.settings_mobile_data_ask),
@@ -322,6 +367,14 @@ fun SettingsScreen(
                 title = stringResource(current.titleRes),
                 options = options,
                 onDismiss = { picker = null },
+                note = if (current == Picker.Context) {
+                    listOfNotNull(
+                        stringResource(R.string.context_picker_note_global),
+                        contextPreviewModel?.let { stringResource(R.string.context_picker_figures_for, it.shownName) },
+                    ).joinToString("\n")
+                } else {
+                    null
+                },
             )
         }
 
@@ -416,27 +469,44 @@ private enum class Picker(val titleRes: Int) {
     Theme(R.string.settings_theme),
     Language(R.string.settings_language),
     Backend(R.string.settings_backend),
+    Context(R.string.settings_context_setting),
+    AutoShare(R.string.settings_auto_share),
     MobileData(R.string.settings_mobile_data),
 }
 
-private data class PickerOption(
+/**
+ * One row of [PickerDialog]. [warning] (TEN-150) is a line under [subtitle] in the error colour, for
+ * a choice the device cannot fully honour.
+ */
+internal data class PickerOption(
     val title: String,
     val subtitle: String?,
     val selected: Boolean,
     val onSelect: () -> Unit,
+    val warning: String? = null,
 )
 
+/** [note] is a line above the options, for what the whole choice implies (TEN-150). */
 @Composable
-private fun PickerDialog(
+internal fun PickerDialog(
     title: String,
     options: List<PickerOption>,
     onDismiss: () -> Unit,
+    note: String? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (note != null) {
+                    Text(
+                        text = note,
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
                 options.forEach { option ->
                     // Applied on tap, and the dialog closes: the write comes back through the
                     // store's flow, so the row behind already shows the new value.
@@ -471,6 +541,14 @@ private fun PickerDialog(
                                     text = option.subtitle,
                                     fontSize = 12.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
+                            if (option.warning != null) {
+                                Text(
+                                    text = option.warning,
+                                    fontSize = 12.5.sp,
+                                    color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.padding(top = 2.dp),
                                 )
                             }

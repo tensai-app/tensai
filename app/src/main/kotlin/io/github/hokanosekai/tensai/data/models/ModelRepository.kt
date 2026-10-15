@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import android.provider.OpenableColumns
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.engine.GgufInfo
 import java.io.File
 import java.io.IOException
@@ -216,6 +217,16 @@ class ModelRepository(
      */
     suspend fun backfillKvCacheShape() = withContext(Dispatchers.IO) {
         kvShapeBackfill.run()
+    }
+
+    /**
+     * Sets [id]'s own context setting, `null` to follow the global one again (TEN-150). Saved sessions
+     * of the model are not touched here: they carry the `n_ctx` they were saved under and are
+     * dropped by [io.github.hokanosekai.tensai.data.session.SessionRepository.restore] on the first
+     * load whose context differs.
+     */
+    suspend fun setContextSetting(id: String, setting: ContextSetting?) = withContext(Dispatchers.IO) {
+        modelDao.setContextOverride(id, setting?.name)
     }
 
     /**

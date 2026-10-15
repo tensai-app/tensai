@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,8 @@ import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.ContextPrefs
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelOrigin
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -80,12 +83,16 @@ import io.github.hokanosekai.tensai.ui.components.TensaiButton
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
 import io.github.hokanosekai.tensai.ui.components.TensaiProgressBar
+import io.github.hokanosekai.tensai.ui.screens.settings.Chevron
 import io.github.hokanosekai.tensai.ui.screens.settings.MonoText
+import io.github.hokanosekai.tensai.ui.screens.settings.PickerDialog
 import io.github.hokanosekai.tensai.ui.screens.settings.RowDivider
 import io.github.hokanosekai.tensai.ui.screens.settings.SectionCard
 import io.github.hokanosekai.tensai.ui.screens.settings.SectionLabel
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsRow
 import io.github.hokanosekai.tensai.ui.screens.settings.ValueText
+import io.github.hokanosekai.tensai.ui.screens.settings.contextPickerOptions
+import io.github.hokanosekai.tensai.ui.screens.settings.label
 import io.github.hokanosekai.tensai.ui.screens.settings.openLink
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
@@ -124,6 +131,10 @@ fun ModelDetailScreen(
     val sessions = remember(allSessions, modelId) { sessionsOfModel(modelId, allSessions) }
 
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showContextPicker by remember { mutableStateOf(false) }
+    // Null until DataStore delivers the preferences: the body is held back until then, like the backend
+    // preference, so no row shows a verdict priced from guessed defaults.
+    val contextPrefs by remember { RuntimeGraph.contextRepository.prefs }.collectAsState(initial = null)
     // Bumped after a successful import: a relink keeps the id and may keep the path, so the row can
     // be structurally equal and nothing else would re-run the file-existence check.
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -203,18 +214,18 @@ fun ModelDetailScreen(
                         }
                     }
                 }
-                fileExists == null -> Unit
+                fileExists == null || contextPrefs == null -> Unit
                 else -> {
+                    val prefs = checkNotNull(contextPrefs)
+                    val globalContext = prefs.setting
                     val exists = fileExists == true
                     // One preference collector for the whole screen; null until loaded, so no wrong backend shows.
                     val profile = remember(model) { RuntimeGraph.deviceProfiler.profile() }
-                    val compatibility = remember(model, profile) { CompatibilityChecker.check(model, profile) }
-                    val plannedCtx = remember(model, profile) {
-                        when (val plan = LoadPolicy.compute(model, profile)) {
-                            is LoadPlan.Feasible -> plan.nCtx
-                            is LoadPlan.Infeasible -> plan.floor.nCtx
-                        }
+                    // One compute: the verdict, the estimate and the planned context all come from the same plan.
+                    val compatibility = remember(model, profile, prefs) {
+                        CompatibilityChecker.check(model, profile, prefs.setting, prefs.autoShare)
                     }
+                    val plannedCtx = compatibility.plannedCtx
                     val backend = rememberBackendTag(compatibility)
                     val wontFit = compatibility.verdict == Verdict.WontFit && !isLoaded
                     Column(
@@ -281,6 +292,19 @@ fun ModelDetailScreen(
                                     monoFigures(stringResource(R.string.model_detail_context_trained, it), listOf(it))
                                 },
                                 trailing = { MonoText(stringResource(R.string.model_detail_context_used, groupedNumber(plannedCtx.toLong()))) },
+                            )
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Tune,
+                                title = stringResource(R.string.model_detail_context_setting),
+                                onClick = { showContextPicker = true },
+                                trailing = {
+                                    ValueText(
+                                        model.contextSettingOverride?.label()
+                                            ?: stringResource(R.string.context_option_global_value, globalContext.label()),
+                                    )
+                                    Chevron()
+                                },
                             )
                             if (origin != null) {
                                 RowDivider()
@@ -429,6 +453,29 @@ fun ModelDetailScreen(
                                 )
                             }
                         }
+                    }
+
+                    if (showContextPicker) {
+                        // A fixed size at or above the trained context is not offered: it would be Max, or a
+                        // context the model was never trained for. An unknown trained context plans as 4096.
+                        val trainedContext = if (model.contextLength > 0) model.contextLength else 4_096L
+                        PickerDialog(
+                            title = stringResource(R.string.model_detail_context_length),
+                            options = contextPickerOptions(
+                                choices = listOf<ContextSetting?>(null) + ContextSetting.offeredFor(trainedContext),
+                                selected = model.contextSettingOverride,
+                                global = globalContext,
+                                model = model,
+                                profile = profile,
+                                autoShare = prefs.autoShare,
+                                onSelect = { choice ->
+                                    // applicationScope: a one-statement write that must land even if the user leaves.
+                                    RuntimeGraph.applicationScope.launch { repository.setContextSetting(model.id, choice) }
+                                },
+                            ),
+                            onDismiss = { showContextPicker = false },
+                            note = stringResource(R.string.context_picker_note_model),
+                        )
                     }
 
                     if (showDeleteConfirm) {

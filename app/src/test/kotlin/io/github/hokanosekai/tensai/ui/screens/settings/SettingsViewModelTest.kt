@@ -7,6 +7,8 @@ import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.ContextRepository
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.models.ModelEntity
@@ -66,6 +68,7 @@ class SettingsViewModelTest {
     private lateinit var themeStore: DataStore<Preferences>
     private lateinit var languageStore: DataStore<Preferences>
     private lateinit var backendStore: DataStore<Preferences>
+    private lateinit var contextStore: DataStore<Preferences>
     private lateinit var downloadStore: DataStore<Preferences>
     private lateinit var tokenDataStore: DataStore<Preferences>
     private lateinit var tokenStore: TokenStore
@@ -88,6 +91,7 @@ class SettingsViewModelTest {
         themeStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "theme.preferences_pb") }
         languageStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "language.preferences_pb") }
         backendStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "backend.preferences_pb") }
+        contextStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "context.preferences_pb") }
         downloadStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "downloads.preferences_pb") }
         tokenDataStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "token.preferences_pb") }
         tokenStore = TokenStore(tokenDataStore, FakeTokenCipher(), Dispatchers.IO)
@@ -255,6 +259,18 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun changingTheContextSettingLandsInTheStoreTheLoaderReadsFrom() = runBlocking {
+        val viewModel = newViewModel()
+        assertEquals("Auto until the user says otherwise", ContextSetting.Auto, viewModel.contextSetting.first())
+
+        viewModel.setContextSetting(ContextSetting.K16)
+        awaitWrites()
+
+        assertEquals(ContextSetting.K16, ContextRepository(contextStore).setting.first())
+        assertEquals(ContextSetting.K16, viewModel.contextSetting.first())
+    }
+
+    @Test
     fun changingTheLanguageLandsInTheStoreMainActivityResolvesStringsAgainst() = runBlocking {
         val viewModel = newViewModel()
 
@@ -365,6 +381,7 @@ class SettingsViewModelTest {
         themeRepository = ThemeRepository(themeStore),
         languageRepository = LanguageRepository(languageStore),
         backendRepository = BackendRepository(backendStore),
+        contextRepository = ContextRepository(contextStore),
         sessionRepository = sessionRepository,
         models = models,
         sessions = sessionDao.observeAll(),

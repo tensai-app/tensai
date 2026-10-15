@@ -51,6 +51,14 @@ interface ModelDao {
     )
 
     /**
+     * Sets (or, with null, clears) [id]'s own context setting, see [ModelEntity.contextOverride]. Its own
+     * statement rather than a read-modify-write of the row, so it cannot undo a concurrent
+     * [updateKvCacheShape].
+     */
+    @Query("UPDATE models SET contextOverride = :contextOverride WHERE id = :id")
+    suspend fun setContextOverride(id: String, contextOverride: String?)
+
+    /**
      * REPLACE, not ABORT: a re-import of a missing file relinks its row by inserting it again under
      * the same id, and that has to be one statement (one transaction). A delete followed by an
      * insert could be interrupted between the two and lose the row. Ids are UUIDs, so a fresh

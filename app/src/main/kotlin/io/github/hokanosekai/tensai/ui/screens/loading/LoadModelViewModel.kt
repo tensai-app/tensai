@@ -5,9 +5,11 @@ import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.data.ContextPrefs
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.engine.BackendHint
+import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadStage
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.OutOfMemoryException
@@ -119,6 +121,13 @@ class LoadModelViewModel(
     private val backendPreference: suspend () -> BackendPreference = {
         RuntimeGraph.backendRepository.preference.first()
     },
+    /**
+     * The global context setting and Auto's memory share (TEN-150); the model's own override, if any,
+     * wins over the setting in [LoadPolicy.compute].
+     */
+    private val contextPrefs: suspend () -> ContextPrefs = {
+        RuntimeGraph.contextRepository.prefs.first()
+    },
     private val queue: InferenceQueue = RuntimeGraph.inferenceQueue,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
     /**
@@ -158,7 +167,8 @@ class LoadModelViewModel(
             }
 
             val profile = deviceProfile()
-            val compatibility = CompatibilityChecker.check(model, profile)
+            val prefs = contextPrefs()
+            val compatibility = CompatibilityChecker.check(model, profile, prefs.setting, prefs.autoShare)
             if (compatibility.verdict == Verdict.WontFit && !confirmedOverride) {
                 _state.value = LoadUiState.Blocked(model, compatibility)
                 return@launch
@@ -168,19 +178,17 @@ class LoadModelViewModel(
             // policy answered "256 tokens, good luck" and the screen went straight to a chat that
             // accepted a prompt and never replied.
             //
-            // A backstop, and knowingly so. Since TEN-77 both layers budget against the same
-            // DeviceProfile.usableRamBytes, and the checker's own estimate (F16 at up to 4096) is
-            // strictly larger than the floor plan this can fail on (Q8_0 at 1024) — so any model
-            // that reaches here un-overridden has already survived a strictly harder test, and
-            // this branch cannot fire. It stays because that argument is about arithmetic in two
-            // files agreeing, and the cost of them silently drifting apart again is precisely the
-            // bug being fixed. `compatibility` is the right thing to show it with for the same
-            // reason: if the plan is infeasible, that Compatibility says WontFit.
+            // A backstop, and knowingly so. Since TEN-150 [CompatibilityChecker.check] is decided from this
+            // very [LoadPolicy.compute] (same model, profile, setting and Auto share): WontFit is exactly
+            // "the plan is Infeasible", so any model that reaches here un-overridden has a feasible plan and
+            // this branch cannot fire. It stays as a guard against the two ever being computed apart again,
+            // which is the bug TEN-77 fixed. `compatibility` is the right thing to show it with: if the plan
+            // is infeasible, that Compatibility says WontFit.
             //
             // Never after "Load anyway" — a confirmation that lands back on the dialog it came
             // from is a dead button. That path loads at `floor` and lets the engine be the one to
             // refuse, which surfaces as the "Not enough memory" dialog rather than as silence.
-            val plan = LoadPolicy.compute(model, profile)
+            val plan = LoadPolicy.compute(model, profile, prefs.setting, prefs.autoShare)
             if (plan is LoadPlan.Infeasible && !confirmedOverride) {
                 _state.value = LoadUiState.Blocked(model, compatibility)
                 return@launch
@@ -234,7 +242,24 @@ class LoadModelViewModel(
                 }
             }
             try {
-                queue.loadModel(config)
+                // Out of memory is the one failure a smaller context can cure, and the estimate that picked
+                // this one is an estimate: so first retry the same context at Q8_0 if it was F16, then step down one
+                // ladder rung at a time at Q8_0, down to the floor, before the user sees a dialog. Safe in this path because a failed [InferenceQueue.loadModel]
+                // leaves the queue as it was, which is what "Retry" and "Retry on CPU" already rely on.
+                var attempt = config
+                while (true) {
+                    try {
+                        queue.loadModel(attempt)
+                        break
+                    } catch (e: OutOfMemoryException) {
+                        attempt = if (attempt.kvCacheType == KvCacheType.F16) {
+                            // First the cheaper cache at the context the user asked for, then rungs.
+                            attempt.copy(kvCacheType = KvCacheType.Q8_0)
+                        } else {
+                            attempt.copy(nCtx = LoadPolicy.stepDown(model, attempt.nCtx) ?: throw e)
+                        }
+                    }
+                }
                 // Stop mirroring the queue first, and wait for it: a late Loading value landing
                 // after the Ready write below would drag the screen back a stage.
                 progressJob.cancelAndJoin()

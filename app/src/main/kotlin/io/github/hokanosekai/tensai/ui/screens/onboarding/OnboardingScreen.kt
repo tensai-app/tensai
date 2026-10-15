@@ -573,11 +573,12 @@ private fun ColumnScope.ModelStep(
         when {
             imported != null -> {
                 Eyebrow(stringResource(R.string.onboarding_your_model))
+                val importedCompatibility = modelCompatibility(imported)
                 ModelCard(
                     model = imported,
-                    // One check, read once per composition, see modelCompatibility's KDoc.
-                    compatibility = modelCompatibility(imported),
-                    backend = rememberBackendTag(modelCompatibility(imported)),
+                    // One check, remembered per model and preferences, see modelCompatibility's KDoc.
+                    compatibility = importedCompatibility,
+                    backend = rememberBackendTag(importedCompatibility),
                     noAction = true,
                     extraBadge = { TensaiBadge(stringResource(R.string.onboarding_imported_badge)) },
                 )
@@ -869,7 +870,7 @@ private fun ColumnScope.ReadyStep(model: ModelEntity, onStart: () -> Unit) {
                     )
                 }
                 Divider()
-                SummaryRow(stringResource(R.string.onboarding_summary_compatibility)) { CompatIndicator(compatibility) }
+                SummaryRow(stringResource(R.string.onboarding_summary_compatibility)) { compatibility?.let { CompatIndicator(it) } }
                 Divider()
                 SummaryRow(stringResource(R.string.onboarding_summary_backend)) {
                     Text(

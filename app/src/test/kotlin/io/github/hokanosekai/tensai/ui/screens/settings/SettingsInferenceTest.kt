@@ -1,12 +1,14 @@
 package io.github.hokanosekai.tensai.ui.screens.settings
 
 import io.github.hokanosekai.tensai.compat.DeviceProfile
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -66,6 +68,55 @@ class SettingsInferenceTest {
     }
 
     @Test
+    fun theGlobalContextSettingReachesThePlan() {
+        val long = model("a", contextLength = 131_072)
+
+        val facts = SettingsInference.facts(
+            resident = null,
+            models = listOf(long),
+            profile = roomy,
+            global = ContextSetting.K8,
+            fileExists = { true },
+        ) as InferenceFacts.Planned
+
+        assertEquals(8_192, facts.nCtx)
+    }
+
+    @Test
+    fun theModelsOwnOverrideBeatsTheGlobalSettingInThePlan() {
+        val own = model("a", contextLength = 131_072).copy(contextOverride = ContextSetting.K16.name)
+
+        val facts = SettingsInference.facts(
+            resident = null,
+            models = listOf(own),
+            profile = roomy,
+            global = ContextSetting.K8,
+            fileExists = { true },
+        ) as InferenceFacts.Planned
+
+        assertEquals(16_384, facts.nCtx)
+    }
+
+    @Test
+    fun thePickerIsPricedForTheResidentModelThenForTheNextOneOnDisk() {
+        val resident = model("loaded")
+        val next = model("next")
+        val info = LoadedModelInfo("Loaded", 2048, "CPU", KvCacheType.F16, modelId = "loaded")
+
+        assertEquals(
+            resident,
+            SettingsInference.previewModel(info, listOf(next, resident), fileExists = { true }),
+        )
+        assertEquals(next, SettingsInference.previewModel(null, listOf(next, resident), fileExists = { true }))
+    }
+
+    @Test
+    fun withNoModelThereIsNothingToPriceThePickerFor() {
+        assertNull(SettingsInference.previewModel(null, emptyList()))
+        assertNull(SettingsInference.previewModel(null, listOf(model("gone")), fileExists = { false }))
+    }
+
+    @Test
     fun theSameLibraryOnAPhoneWithLessRamReportsDifferentNumbers() {
         // The one assertion that would fail if either row were ever hard-coded: same model, same
         // code path, two phones, two answers. 5408 MiB of total RAM leaves 500 MiB for the KV
@@ -77,12 +128,14 @@ class SettingsInferenceTest {
             resident = null,
             models = listOf(big),
             profile = profile(totalRamBytes = 8L * 1024 * 1024 * 1024),
+            global = ContextSetting.K4,
             fileExists = { true },
         ) as InferenceFacts.Planned
         val tightFacts = SettingsInference.facts(
             resident = null,
             models = listOf(big),
             profile = profile(totalRamBytes = 5408L * 1024 * 1024),
+            global = ContextSetting.K4,
             fileExists = { true },
         ) as InferenceFacts.Planned
 

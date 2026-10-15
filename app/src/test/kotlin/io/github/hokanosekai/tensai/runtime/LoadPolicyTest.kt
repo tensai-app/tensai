@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.runtime
 
 import io.github.hokanosekai.tensai.compat.DeviceProfile
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.KvCacheType
 import org.junit.Assert.assertEquals
@@ -24,6 +25,10 @@ import org.junit.Test
  * Every profile below is built by [deviceWithKvBudget], which sets
  * [DeviceProfile.availableRamBytes] to 0 — a reading no real device reports, and the point:
  * since TEN-77 nothing in this class may read it.
+ *
+ * TEN-150: these cases predate the configurable context and were all written against the old 4096
+ * cap. They now ask for it explicitly ([ContextSetting.K4]); the new settings are covered by
+ * [LoadPolicyContextSettingTest].
  */
 class LoadPolicyTest {
 
@@ -34,9 +39,9 @@ class LoadPolicyTest {
         val model = model(contextLength = 32_768)
         val profile = deviceWithKvBudget(8L * GB)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
-        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
+        assertEquals(LoadPlan.Feasible(CAP_4K, KvCacheType.F16), plan)
     }
 
     @Test
@@ -47,9 +52,9 @@ class LoadPolicyTest {
         val model = model(contextLength = 32_768)
         val profile = deviceWithKvBudget(200_000_000L)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
-        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.Q8_0), plan)
+        assertEquals(LoadPlan.Feasible(CAP_4K, KvCacheType.Q8_0), plan)
     }
 
     @Test
@@ -60,7 +65,7 @@ class LoadPolicyTest {
         val model = model(contextLength = 32_768)
         val profile = deviceWithKvBudget(50_000_000L)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
         assertEquals(LoadPlan.Feasible(1_024, KvCacheType.Q8_0), plan)
     }
@@ -79,7 +84,7 @@ class LoadPolicyTest {
         val model = model(contextLength = 32_768)
         val profile = deviceWithKvBudget(40_000_000L)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
         assertTrue("expected an Infeasible plan, got $plan", plan is LoadPlan.Infeasible)
         plan as LoadPlan.Infeasible
@@ -89,8 +94,9 @@ class LoadPolicyTest {
             plan.floor,
         )
         assertEquals(profile.usableRamBytes, plan.budgetBytes)
-        // 1GB of weights + 300MiB of overhead + 43 520 000 bytes of Q8_0 cache at 1024 cells.
-        assertEquals(1_000_000_000L + OVERHEAD_BYTES + 43_520_000L, plan.requiredBytes)
+        // 1GB of weights + 300MiB of overhead + the compute buffer at 1024 cells (3 145 728) + 43 520 000
+        // bytes of Q8_0 cache at 1024 cells.
+        assertEquals(1_000_000_000L + OVERHEAD_BYTES + LoadPolicy.computeBufferBytes(1_024) + 43_520_000L, plan.requiredBytes)
         assertTrue(
             "an Infeasible plan has to be over budget, or it isn't one",
             plan.requiredBytes > plan.budgetBytes,
@@ -108,7 +114,7 @@ class LoadPolicyTest {
         val model = model(contextLength = 32_768)
 
         for (budget in 0L..200_000_000L step 1_000_000L) {
-            val plan = LoadPolicy.compute(model, deviceWithKvBudget(budget))
+            val plan = LoadPolicy.compute(model, deviceWithKvBudget(budget), ContextSetting.K4)
             if (plan is LoadPlan.Feasible) {
                 assertTrue(
                     "budget $budget planned n_ctx ${plan.nCtx}, below the usable floor",
@@ -165,9 +171,9 @@ class LoadPolicyTest {
         val model = model(contextLength = 0)
         val profile = deviceWithKvBudget(8L * GB)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
-        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
+        assertEquals(LoadPlan.Feasible(CAP_4K, KvCacheType.F16), plan)
     }
 
     /** ...and that stand-in goes through the same RAM budget as a trained one, it isn't a bypass. */
@@ -176,8 +182,8 @@ class LoadPolicyTest {
         val profile = deviceWithKvBudget(50_000_000L)
 
         assertEquals(
-            LoadPolicy.compute(model(contextLength = 4_096), profile),
-            LoadPolicy.compute(model(contextLength = 0), profile),
+            LoadPolicy.compute(model(contextLength = 4_096), profile, ContextSetting.K4),
+            LoadPolicy.compute(model(contextLength = 0), profile, ContextSetting.K4),
         )
     }
 
@@ -186,7 +192,7 @@ class LoadPolicyTest {
         val model = model(contextLength = 2_048)
         val profile = deviceWithKvBudget(8L * GB)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
         assertEquals(LoadPlan.Feasible(2_048, KvCacheType.F16), plan)
     }
@@ -203,7 +209,7 @@ class LoadPolicyTest {
         val model = model(contextLength = 1_536)
         val profile = deviceWithKvBudget(70_000_000L)
 
-        val plan = LoadPolicy.compute(model, profile)
+        val plan = LoadPolicy.compute(model, profile, ContextSetting.K4)
 
         assertEquals(LoadPlan.Feasible(1_536, KvCacheType.Q8_0), plan)
     }
@@ -222,13 +228,13 @@ class LoadPolicyTest {
         val profile = deviceWithKvBudget(300_000_000L)
 
         // 57 344 * 4096 elements at Q8_0 = 249 561 088 bytes, inside the budget.
-        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.Q8_0), LoadPolicy.compute(gqa, profile))
+        assertEquals(LoadPlan.Feasible(CAP_4K, KvCacheType.Q8_0), LoadPolicy.compute(gqa, profile, ContextSetting.K4))
 
         // Same device, same model, shape unknown: 121 856 bytes per cell at Q8_0 leaves room for
         // 2304 cells. TEN-77 snaps that down to the ladder's 2048 rung rather than planning the
         // 2304 the binary search reached — 256 tokens given up so that the answer survives the
         // next change to this app's overhead constant or to the model's recorded KV shape.
-        assertEquals(LoadPlan.Feasible(2_048, KvCacheType.Q8_0), LoadPolicy.compute(unknownShape, profile))
+        assertEquals(LoadPlan.Feasible(2_048, KvCacheType.Q8_0), LoadPolicy.compute(unknownShape, profile, ContextSetting.K4))
     }
 
     /**
@@ -245,8 +251,8 @@ class LoadPolicyTest {
             val profile = deviceWithKvBudget(budget)
             assertEquals(
                 "unknown shape must not plan differently from the estimate it falls back to",
-                LoadPolicy.compute(spelledOut, profile),
-                LoadPolicy.compute(unknownShape, profile),
+                LoadPolicy.compute(spelledOut, profile, ContextSetting.K4),
+                LoadPolicy.compute(unknownShape, profile, ContextSetting.K4),
             )
         }
     }
@@ -261,6 +267,7 @@ class LoadPolicyTest {
      * At 4096 the windowed cache is `min(4096, 1024 + 512)` = 1536 cells, so F16 costs
      * `2 * (10 240 * 4096 + 102 400 * 1536)` = 398 458 880 bytes — against 1 761 607 680 if those
      * 25 layers were charged at full context, which is the budget this device doesn't have.
+     * The device below has 420 MB: that cache plus the 12.6 MB the compute buffer adds at 4096 cells.
      */
     @Test
     fun slidingWindowLayers_arentChargedAtFullContext() {
@@ -270,11 +277,11 @@ class LoadPolicyTest {
             kvSwaElementsPerToken = 102_400L,
             slidingWindow = 1_024L,
         )
-        val profile = deviceWithKvBudget(400_000_000L)
+        val profile = deviceWithKvBudget(420_000_000L)
 
-        val plan = LoadPolicy.compute(gemma, profile)
+        val plan = LoadPolicy.compute(gemma, profile, ContextSetting.K4)
 
-        assertEquals(LoadPlan.Feasible(LoadPolicy.CTX_LATENCY_CAP, KvCacheType.F16), plan)
+        assertEquals(LoadPlan.Feasible(CAP_4K, KvCacheType.F16), plan)
     }
 
     /**
@@ -330,6 +337,8 @@ class LoadPolicyTest {
     private companion object {
         const val MB = 1024L * 1024
         const val GB = 1024L * 1024 * 1024
+        /** The 4096 every plan here was capped at before TEN-150, now asked for as an explicit [ContextSetting.K4]. */
+        const val CAP_4K = 4_096
         const val OVERHEAD_BYTES = 300L * 1024 * 1024
     }
 }

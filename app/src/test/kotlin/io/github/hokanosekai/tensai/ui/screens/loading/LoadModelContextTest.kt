@@ -3,7 +3,10 @@ package io.github.hokanosekai.tensai.ui.screens.loading
 import android.content.ContextWrapper
 import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.AutoMemoryShare
 import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.data.ContextPrefs
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -16,6 +19,7 @@ import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
+import io.github.hokanosekai.tensai.engine.OutOfMemoryException
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
@@ -102,7 +106,7 @@ class LoadModelContextTest {
         assertEquals(
             "free RAM at load time must not decide the context — 256 tokens is a chat that " +
                 "cannot answer, and nothing in the UI says so",
-            LoadPolicy.CTX_LATENCY_CAP,
+            4_096,
             config.nCtx,
         )
         assertEquals(KvCacheType.F16, config.kvCacheType)
@@ -201,13 +205,141 @@ class LoadModelContextTest {
         assertEquals(KvCacheType.Q8_0, config.kvCacheType)
     }
 
-    private fun viewModel(model: ModelEntity, profile: DeviceProfile): LoadModelViewModel {
+    /**
+     * TEN-150 end to end: the global setting reaches the engine as `n_ctx`, a model's own override
+     * beats it, and neither can ask for more than the model was trained on.
+     */
+    @Test
+    fun theGlobalContextSettingReachesTheEngineAndAModelsOverrideBeatsIt() = runBlocking {
+        val phone = phone(totalRamGb = 8, availableRamMb = 6_000)
+
+        viewModel(longContextModel("global-8k"), phone, global = ContextSetting.K8).start()
+        assertEquals(8_192, awaitLoad().nCtx)
+
+        engine = RecordingEngine()
+        queue = InferenceQueue(engine)
+        viewModel(longContextModel("own-16k", contextOverride = ContextSetting.K16.name), phone, global = ContextSetting.K8).start()
+        assertEquals(16_384, awaitLoad().nCtx)
+
+        engine = RecordingEngine()
+        queue = InferenceQueue(engine)
+        viewModel(longContextModel("clamped", contextLength = 6_144), phone, global = ContextSetting.K32).start()
+        assertEquals("a global 32K is clamped to what the model was trained on", 6_144, awaitLoad().nCtx)
+    }
+
+    /**
+     * TEN-150: an out-of-memory load is retried one ladder rung lower, again and again down to the floor,
+     * before the user sees the dialog. Here 32K does not fit, 16K does not, 8K does.
+     */
+    @Test
+    fun anOutOfMemoryLoadStepsDownTheLadderUntilItFits() = runBlocking {
+        engine.failAbove = 8_192
+        val viewModel = viewModel(
+            longContextModel("oom-steps"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K32,
+        )
+
+        viewModel.start()
+        awaitViewModel()
+
+        assertEquals(listOf(32_768, 32_768, 16_384, 8_192), engine.attempts)
+        assertEquals(listOf(KvCacheType.F16, KvCacheType.Q8_0, KvCacheType.Q8_0, KvCacheType.Q8_0), engine.types)
+        assertEquals(8_192, engine.lastConfig?.nCtx)
+        assertTrue("it ends loaded, no dialog: ${viewModel.state.value}", viewModel.state.value is LoadUiState.Success)
+    }
+
+    /** ...and when even the floor runs out of memory the dialog finally shows, after trying every rung. */
+    @Test
+    fun anOutOfMemoryLoadThatNeverFitsEndsOnTheDialogAfterTheFloor() = runBlocking {
+        engine.failAbove = 0
+        val viewModel = viewModel(
+            longContextModel("oom-never"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K8,
+        )
+
+        viewModel.start()
+        awaitViewModel()
+
+        assertEquals(listOf(8_192, 8_192, 4_096, 3_072, 2_048, 1_024), engine.attempts)
+        assertTrue(viewModel.state.value is LoadUiState.OomFailed)
+    }
+
+    /** An F16 cache that runs out of memory is first retried at Q8_0, at the very context that was asked for. */
+    @Test
+    fun anOutOfMemoryF16LoadRetriesTheSameContextAtQ8BeforeStepping() = runBlocking {
+        engine.failOnF16 = true
+        val viewModel = viewModel(
+            longContextModel("oom-f16"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K16,
+        )
+
+        viewModel.start()
+        awaitViewModel()
+
+        assertEquals(listOf(16_384, 16_384), engine.attempts)
+        assertEquals(listOf(KvCacheType.F16, KvCacheType.Q8_0), engine.types)
+        assertTrue(viewModel.state.value is LoadUiState.Success)
+    }
+
+    /** Only out-of-memory is retried: any other failure is shown at once, after one attempt. */
+    @Test
+    fun aFailureThatIsNotOutOfMemoryIsNotRetried() = runBlocking {
+        engine.genericFailure = IllegalStateException("model file is corrupt")
+        val viewModel = viewModel(
+            longContextModel("generic"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K16,
+        )
+
+        viewModel.start()
+        awaitViewModel()
+
+        assertEquals(1, engine.attempts.size)
+        assertTrue(viewModel.state.value is LoadUiState.GenericFailed)
+    }
+
+    /** Cancelling while a retry is in flight stops there: no further rung, no dialog. */
+    @Test
+    fun cancellingDuringARetryStopsTheStepDown() = runBlocking {
+        engine.failOnF16 = true
+        engine.hangFromAttempt = 2
+        val viewModel = viewModel(
+            longContextModel("cancel-retry"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K16,
+        )
+
+        viewModel.start()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (engine.attempts.size < 2 && System.currentTimeMillis() < deadline) kotlinx.coroutines.delay(10)
+        assertEquals("the retry has to have started", 2, engine.attempts.size)
+        scope.coroutineContext.job.children.toList().forEach { it.cancel() }
+        engine.gate.complete(Unit)
+        awaitViewModel()
+
+        assertEquals("a cancelled retry must not step further", 2, engine.attempts.size)
+        assertTrue(
+            "a cancellation is not a failure: ${viewModel.state.value}",
+            viewModel.state.value !is LoadUiState.OomFailed && viewModel.state.value !is LoadUiState.GenericFailed,
+        )
+    }
+
+    private fun viewModel(
+        model: ModelEntity,
+        profile: DeviceProfile,
+        global: ContextSetting = ContextSetting.Auto,
+        autoShare: AutoMemoryShare = AutoMemoryShare.P50,
+    ): LoadModelViewModel {
         runBlocking { modelDao.insert(model) }
         return LoadModelViewModel(
             modelId = model.id,
             modelRepository = modelRepository,
             deviceProfile = { profile },
             backendPreference = { BackendPreference.Cpu },
+            contextPrefs = { ContextPrefs(global, autoShare) },
             queue = queue,
             scope = scope,
         )
@@ -247,6 +379,13 @@ class LoadModelContextTest {
         slidingWindow = 512,
     )
 
+    private fun longContextModel(id: String, contextLength: Long = 131_072, contextOverride: String? = null) = model(
+        id = id,
+        sizeBytes = 1_000L * 1024 * 1024,
+        contextLength = contextLength,
+        contextOverride = contextOverride,
+    )
+
     /** 6 GB of weights: no phone in this test file can hold it, whatever its memory is doing. */
     private fun oversizedModel() = model(id = "oversized", sizeBytes = 6L * 1024 * 1024 * 1024)
 
@@ -255,6 +394,8 @@ class LoadModelContextTest {
         sizeBytes: Long,
         kvFullElementsPerToken: Long = 1_024,
         kvSwaElementsPerToken: Long = 0,
+        contextLength: Long = 4096,
+        contextOverride: String? = null,
         slidingWindow: Long = 0,
     ): ModelEntity {
         val file = File(storageRoot, "$id.gguf").apply { writeText("not really a gguf") }
@@ -267,7 +408,7 @@ class LoadModelContextTest {
             architecture = "gemma4",
             quantLabel = "Q4_K_M",
             paramCount = 2_000_000_000,
-            contextLength = 4096,
+            contextLength = contextLength,
             embeddingLength = 2_048,
             blockCount = 30,
             supportsThinking = false,
@@ -275,6 +416,7 @@ class LoadModelContextTest {
             kvFullElementsPerToken = kvFullElementsPerToken,
             kvSwaElementsPerToken = kvSwaElementsPerToken,
             slidingWindow = slidingWindow,
+            contextOverride = contextOverride,
         )
     }
 
@@ -292,8 +434,38 @@ class LoadModelContextTest {
         @Volatile
         var lastConfig: ModelLoadConfig? = null
 
+        /** Loads asking for more than this run out of memory; the default never does. */
+        @Volatile
+        var failAbove: Int = Int.MAX_VALUE
+
+        /** Every `n_ctx` the engine was asked for, in order. */
+        val attempts = java.util.Collections.synchronizedList(mutableListOf<Int>())
+
+        /** The cache precision of each attempt, parallel to [attempts]. */
+        val types = java.util.Collections.synchronizedList(mutableListOf<KvCacheType>())
+
+        /** An F16 cache runs out of memory, whatever the context. */
+        @Volatile
+        var failOnF16: Boolean = false
+
+        /** A failure that is not an out-of-memory one, thrown on every attempt when set. */
+        @Volatile
+        var genericFailure: Exception? = null
+
+        /** From this attempt on (1-based) the load suspends until [gate] opens (the queue shields the engine call from a caller's cancellation). */
+        @Volatile
+        var hangFromAttempt: Int = Int.MAX_VALUE
+
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel {
             lastConfig = config
+            attempts += config.nCtx
+            types += config.kvCacheType
+            genericFailure?.let { throw it }
+            if (attempts.size >= hangFromAttempt) gate.await()
+            if (failOnF16 && config.kvCacheType == KvCacheType.F16) throw OutOfMemoryException("out of memory at F16")
+            if (config.nCtx > failAbove) throw OutOfMemoryException("out of memory at ${config.nCtx}")
             return object : LoadedModel {
                 override val metadata = LoadedModelInfo(
                     name = "test-model",
@@ -331,6 +503,8 @@ class LoadModelContextTest {
         override fun observeAll(): Flow<List<ModelEntity>> = flow
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
+
+        override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             models.values.filter { it.kvShapeVersion != kvShapeVersion }

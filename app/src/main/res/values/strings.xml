@@ -103,8 +103,45 @@
     <string name="settings_inference_unknown" translatable="false">-</string>
     <!-- %1$s is a model\'s display name. -->
     <string name="settings_inference_in_use">In use by %1$s</string>
-    <string name="settings_inference_planned">Planned for %1$s, chosen per load from free memory</string>
+    <string name="settings_inference_planned">Planned for %1$s, from your context setting and this phone\'s memory</string>
     <string name="settings_inference_no_model">No model loaded and none on disk</string>
+
+    <!-- Context length setting (TEN-150): the Settings row and the picker shared by Settings and the model screen. -->
+    <string name="settings_context_setting">Context length</string>
+    <string name="context_option_auto">Auto</string>
+    <string name="context_option_auto_subtitle">The most this phone\'s memory can hold, up to the trained length</string>
+    <string name="context_option_4k" translatable="false">4K</string>
+    <string name="context_option_8k" translatable="false">8K</string>
+    <string name="context_option_16k" translatable="false">16K</string>
+    <string name="context_option_32k" translatable="false">32K</string>
+    <string name="context_option_max">Max</string>
+    <!-- %1$s is a token count such as 131,072. -->
+    <string name="context_option_max_tokens">Max · %1$s tokens</string>
+    <string name="context_option_max_subtitle">The length the model was trained on</string>
+    <string name="context_option_global">Use global setting</string>
+    <!-- %1$s is the global choice (Auto, 8K, Max…). -->
+    <string name="context_option_global_subtitle">Currently: %1$s</string>
+    <!-- %1$s is the global choice (Auto, 8K, Max…). -->
+    <string name="context_option_global_value">Global (%1$s)</string>
+    <!-- %1$s is a token count. -->
+    <string name="context_option_resolves_to">%1$s tokens on this phone</string>
+    <!-- %1$s KV cache size, %2$s weights + cache + overhead, %3$s the memory budget, all like 1.2 GB. -->
+    <string name="context_option_memory">Cache about %1$s · total about %2$s of %3$s</string>
+    <!-- %1$s is the token count the load will actually start with. -->
+    <string name="context_option_warning">Too much for this phone\'s memory: starts at %1$s tokens or fewer</string>
+    <string name="context_picker_note_model">Changing the context clears the saved sessions of this model.</string>
+    <string name="context_picker_note_global">Changing the context clears the saved sessions of the models that follow this setting.</string>
+    <!-- %1$s is a model name. -->
+    <string name="context_picker_figures_for">Figures for %1$s</string>
+    <string name="model_detail_context_setting">Context setting</string>
+    <string name="context_option_infeasible">This model cannot be loaded on this phone</string>
+    <string name="settings_auto_share">Memory for Auto context</string>
+    <string name="settings_auto_share_explain">More context, or more room left for Android and your other apps</string>
+    <!-- %1$d is a percentage. -->
+    <string name="settings_auto_share_value">%1$d %%</string>
+    <string name="settings_auto_share_30">Most room left for the system and other apps</string>
+    <string name="settings_auto_share_50">Balanced</string>
+    <string name="settings_auto_share_70">More context, less room left</string>
 
     <!-- Storage. -->
     <string name="settings_storage_models">Models</string>

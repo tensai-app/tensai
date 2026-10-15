@@ -1676,6 +1676,8 @@ class ChatViewModelTest {
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
 
+        override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             models.values.filter { it.kvShapeVersion != kvShapeVersion }
 

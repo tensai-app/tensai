@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.hf.QuantLabel
 
 /**
@@ -46,6 +47,8 @@ import io.github.hokanosekai.tensai.hf.QuantLabel
  * @param downloadedAt epoch millis when the download was registered as this model.
  * @param supportsTools the chat template takes tools, see [ChatTemplateCapabilities] (TEN-154). `false` is also
  *   what rows from before v13 hold until [KvCacheShapeBackfill] re-reads their header.
+ * @param contextOverride this model's own [ContextSetting] by name, `null` = use the global one (TEN-150). Never
+ *   written by the header backfill: it is the user's choice, not a derived figure.
  */
 @Entity(tableName = "models")
 data class ModelEntity(
@@ -73,7 +76,12 @@ data class ModelEntity(
     val sourceCommit: String? = null,
     val downloadedAt: Long? = null,
     val supportsTools: Boolean = false,
+    val contextOverride: String? = null,
 ) {
+    /** [contextOverride] as a [ContextSetting], `null` for none (or a name this build does not know). */
+    val contextSettingOverride: ContextSetting?
+        get() = ContextSetting.parse(contextOverride)
+
     /** Where this model was downloaded from, null for an import (or a row from before TEN-142). */
     val origin: ModelOrigin?
         get() {

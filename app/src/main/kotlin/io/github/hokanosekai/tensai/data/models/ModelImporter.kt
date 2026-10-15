@@ -267,7 +267,7 @@ internal class ModelImporter(
                 val toStore = if (target == null) {
                     entity
                 } else {
-                    entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt)
+                    entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt, contextOverride = target.contextOverride)
                         // A re-import of the same file keeps where it was first downloaded from.
                         .let { if (origin == null) it.withOrigin(target.origin) else it }
                 }

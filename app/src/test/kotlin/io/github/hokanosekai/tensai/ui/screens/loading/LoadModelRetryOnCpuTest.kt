@@ -3,6 +3,8 @@ package io.github.hokanosekai.tensai.ui.screens.loading
 import android.content.ContextWrapper
 import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.BackendPreference
+import io.github.hokanosekai.tensai.data.ContextPrefs
+import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -130,6 +132,7 @@ class LoadModelRetryOnCpuTest {
             modelRepository = modelRepository,
             deviceProfile = { profile(hasGpu) },
             backendPreference = { preference },
+            contextPrefs = { ContextPrefs() },
             queue = queue,
             scope = scope,
         )
@@ -190,6 +193,8 @@ class LoadModelRetryOnCpuTest {
         override fun observeAll(): Flow<List<ModelEntity>> = flow
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
+
+        override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             models.values.filter { it.kvShapeVersion != kvShapeVersion }

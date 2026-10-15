@@ -332,6 +332,8 @@ class KvCacheShapeBackfillTest {
 
         override suspend fun getById(id: String): ModelEntity? = rows[id]
 
+        override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             rows.values.filter { it.kvShapeVersion != kvShapeVersion }
 

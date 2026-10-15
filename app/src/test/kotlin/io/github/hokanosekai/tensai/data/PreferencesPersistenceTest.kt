@@ -3,6 +3,8 @@ package io.github.hokanosekai.tensai.data
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.hokanosekai.tensai.engine.BackendHint
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 import java.io.File
@@ -105,6 +107,48 @@ class PreferencesPersistenceTest {
         assertNull(AppLanguage.System.localeTag)
         assertEquals("en", AppLanguage.English.localeTag)
         assertEquals("fr", AppLanguage.French.localeTag)
+    }
+
+    @Test
+    fun theGlobalContextSettingComesBackAfterARestart() = runBlocking {
+        val file = File(dir, "context.preferences_pb")
+
+        withStore(file) { ContextRepository(it).setSetting(ContextSetting.K16) }
+        val restored = withStore(file) { ContextRepository(it).setting.first() }
+
+        assertEquals(ContextSetting.K16, restored)
+    }
+
+    @Test
+    fun theGlobalContextSettingDefaultsToAutoAndSurvivesAnUnknownStoredName() = runBlocking {
+        val file = File(dir, "context-default.preferences_pb")
+
+        assertEquals(ContextSetting.Auto, withStore(file) { ContextRepository(it).setting.first() })
+
+        // A build downgrade can leave a name this one has never heard of: that reads as the default.
+        withStore(file) { store -> store.edit { it[stringPreferencesKey("context_setting")] = "K64" } }
+        assertEquals(ContextSetting.Auto, withStore(file) { ContextRepository(it).setting.first() })
+    }
+
+    @Test
+    fun anUnknownStoredAutoMemoryShareReadsAsTheDefault() = runBlocking {
+        val file = File(dir, "share-unknown.preferences_pb")
+
+        withStore(file) { store -> store.edit { it[stringPreferencesKey("auto_memory_share")] = "P99" } }
+
+        assertEquals(AutoMemoryShare.P50, withStore(file) { ContextRepository(it).autoShare.first() })
+        assertEquals(AutoMemoryShare.P50, withStore(file) { ContextRepository(it).prefs.first().autoShare })
+    }
+
+    @Test
+    fun theAutoMemorySharePickedInSettingsComesBackAfterARestartAndDefaultsToFiftyPercent() = runBlocking {
+        val file = File(dir, "share.preferences_pb")
+        assertEquals(AutoMemoryShare.P50, withStore(file) { ContextRepository(it).autoShare.first() })
+
+        withStore(file) { ContextRepository(it).setAutoShare(AutoMemoryShare.P70) }
+        val restored = withStore(file) { ContextRepository(it).prefs.first() }
+
+        assertEquals(ContextPrefs(ContextSetting.Auto, AutoMemoryShare.P70), restored)
     }
 
     @Test
