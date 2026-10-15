@@ -197,6 +197,7 @@ fun ModelsScreen(
     }
 
     val currentModels = models
+    val onDeviceRepos = remember(currentModels) { DiscoverLogic.onDeviceRepos(currentModels.orEmpty()) }
     val currentUsage = storageUsage
     // Recomputed whenever the library or the free-space reading changes, not on every
     // recomposition: unlike the RAM check on each card, this one stats every model file, and
@@ -286,6 +287,7 @@ fun ModelsScreen(
                         focusSearch = focusSearchPending,
                         onFocusSearchHandled = { focusSearchPending = false },
                         onOpenRepo = onOpenRepo,
+                        onDeviceRepos = onDeviceRepos,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

@@ -99,6 +99,7 @@ internal fun DiscoverPane(
     focusSearch: Boolean,
     onFocusSearchHandled: () -> Unit,
     onOpenRepo: (String, String?) -> Unit,
+    onDeviceRepos: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
@@ -175,10 +176,11 @@ internal fun DiscoverPane(
                 results = results,
                 viewModel = viewModel,
                 onOpenRepo = onOpenRepo,
+                onDeviceRepos = onDeviceRepos,
                 modifier = Modifier.weight(1f),
             )
             failure != null -> FailureBody(failure, onRetry = viewModel::load, modifier = Modifier.weight(1f))
-            else -> HomeBody(state, viewModel, onOpenRepo, modifier = Modifier.weight(1f))
+            else -> HomeBody(state, viewModel, onOpenRepo, onDeviceRepos, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -289,6 +291,7 @@ private fun HomeBody(
     state: DiscoverState,
     viewModel: DiscoverViewModel,
     onOpenRepo: (String, String?) -> Unit,
+    onDeviceRepos: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     val feed = state.popular
@@ -316,7 +319,7 @@ private fun HomeBody(
                 )
             }
             items(recommended, key = { "recommended/${it.id}" }) { card ->
-                RepoCard(card, onClick = { onOpenRepo(card.id, null) })
+                RepoCard(card, onClick = { onOpenRepo(card.id, null) }, onDevice = card.id.lowercase() in onDeviceRepos)
             }
         }
         if (loading || shown.isNotEmpty()) {
@@ -343,7 +346,7 @@ private fun HomeBody(
                 // Keyed on the slot being absent too: a card that gave up on a flaky call is asked again.
                 LaunchedEffect(repo.id, state.slots[repo.id] == null) { viewModel.onVisible(repo.id) }
                 when (val slot = state.slots[repo.id]) {
-                    is CardSlot.Ready -> RepoCard(slot.card, onClick = { onOpenRepo(repo.id, null) })
+                    is CardSlot.Ready -> RepoCard(slot.card, onClick = { onOpenRepo(repo.id, null) }, onDevice = repo.id.lowercase() in onDeviceRepos)
                     else -> SkeletonCard()
                 }
             }
@@ -370,6 +373,7 @@ private fun ResultsBody(
     results: FeedState,
     viewModel: DiscoverViewModel,
     onOpenRepo: (String, String?) -> Unit,
+    onDeviceRepos: Set<String>,
     modifier: Modifier = Modifier,
 ) {
     when (results) {
@@ -423,7 +427,7 @@ private fun ResultsBody(
                         // Keyed on the slot being absent too: a card that gave up on a flaky call is asked again.
                 LaunchedEffect(repo.id, state.slots[repo.id] == null) { viewModel.onVisible(repo.id) }
                         when (val slot = state.slots[repo.id]) {
-                            is CardSlot.Ready -> RepoCard(slot.card, onClick = { onOpenRepo(repo.id, null) })
+                            is CardSlot.Ready -> RepoCard(slot.card, onClick = { onOpenRepo(repo.id, null) }, onDevice = repo.id.lowercase() in onDeviceRepos)
                             else -> SkeletonCard()
                         }
                     }

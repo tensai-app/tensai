@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.ui.screens.models
 
 import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.hf.HfGate
 import io.github.hokanosekai.tensai.hf.HfQuantFile
 import io.github.hokanosekai.tensai.hf.HfRepoDetail
@@ -164,5 +165,25 @@ class DiscoverLogicTest {
         assertEquals("999k", DiscoverLogic.formatCount(999_999))
         assertEquals("1M", DiscoverLogic.formatCount(1_000_000))
         assertEquals("2.3M", DiscoverLogic.formatCount(2_340_000))
+    }
+
+    private fun model(id: String, repo: String?) = ModelEntity(
+        id = id, displayName = id, fileName = "$id.gguf", filePath = "/x/$id.gguf", sizeBytes = 1, architecture = "llama",
+        quantLabel = "Q4_K_M", paramCount = 1, contextLength = 1, embeddingLength = 1, blockCount = 1,
+        supportsThinking = false, importedAt = 1, sourceRepo = repo,
+    )
+
+    @Test
+    fun severalQuantsOfOneRepoGiveOneEntryMatchedWithoutCase() {
+        val repos = DiscoverLogic.onDeviceRepos(
+            listOf(model("a", "bartowski/Llama-3.2-1B-Instruct-GGUF"), model("b", "bartowski/Llama-3.2-1B-Instruct-GGUF")),
+        )
+        assertEquals(setOf("bartowski/llama-3.2-1b-instruct-gguf"), repos)
+        assertTrue("Bartowski/Llama-3.2-1B-Instruct-GGUF".lowercase() in repos)
+    }
+
+    @Test
+    fun importsWithoutAnOriginAreNotMatched() {
+        assertTrue(DiscoverLogic.onDeviceRepos(listOf(model("a", null), model("b", ""))).isEmpty())
     }
 }

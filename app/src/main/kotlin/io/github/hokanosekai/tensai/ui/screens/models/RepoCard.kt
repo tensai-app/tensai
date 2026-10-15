@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -55,7 +56,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifier = Modifier, onDevice: Boolean = false) {
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         shape = TensaiShapes.large,
@@ -112,7 +113,7 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             ) {
-                RepoBadges(card)
+                RepoBadges(card, onDevice)
                 if (card.downloads != null && card.likes != null) {
                     // The kit's `margin-left: auto`: the counts take the rest of the line, pushed to its end.
                     Box(contentAlignment = Alignment.CenterEnd, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 22.dp)) {
@@ -126,7 +127,10 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun FlowRowScope.RepoBadges(card: RepoCardModel) = RepoBadges(card.tools, card.vision, card.gated)
+internal fun FlowRowScope.RepoBadges(card: RepoCardModel, onDevice: Boolean = false) {
+    if (onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), icon = Icons.Default.Check)
+    RepoBadges(card.tools, card.vision, card.gated)
+}
 
 /**
  * Whether Discover shows the Vision badge and filter. Off until the app can send images to a model

@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.models
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
 import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.hf.HfCompatibility
 import io.github.hokanosekai.tensai.hf.HfRepoDetail
 import io.github.hokanosekai.tensai.hf.HfRepoSummary
@@ -124,6 +125,13 @@ internal object DiscoverLogic {
         if (filters.sort != DiscoverSort.Size) return listed
         return listed.sortedBy { (slots[it.id] as? CardSlot.Ready)?.card?.sizeBytes ?: Long.MAX_VALUE }
     }
+
+    /**
+     * Lower-cased repo ids the library has a download of (TEN-153): a Discover card of one of them
+     * says "On device", whatever quant is installed. Imports have no origin and are not matched.
+     */
+    fun onDeviceRepos(models: List<ModelEntity>): Set<String> =
+        models.mapNotNullTo(HashSet()) { it.sourceRepo?.takeIf(String::isNotBlank)?.lowercase() }
 
     /** `Qwen3-4B-GGUF` -> `Qwen3-4B`: the suffix says what every repo here is, so it only adds noise. */
     fun displayName(repoName: String): String =
