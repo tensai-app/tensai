@@ -216,6 +216,14 @@ class RepoLogicTest {
         assertEquals(inFolder.fileName, RepoLogic.preselect(all, recommendation(q2), "m-q4_k_m.gguf"))
     }
 
+    @Test
+    fun aLinkedFileInARemovedQuantNeverSelectsAnythingHidden() {
+        val all = rated(q2, q4)
+
+        assertEquals(q4.fileName, RepoLogic.preselect(all, recommendation(q4), "m-Q4_0_4_4.gguf"))
+        assertEquals(q2.fileName, RepoLogic.preselect(all, null, "dir/m-Q4_0_8_8.gguf"))
+    }
+
     // ---- labels
 
     @Test

@@ -70,4 +70,12 @@ class QuantLabelTest {
         assertEquals("Q4_0", label("model-Q4_0.gguf"))
         assertEquals("Q4_K_M", label("model-Q4_K_M.gguf"))
     }
+
+    @Test
+    fun theRemovedArmRepacksAreUnsupportedAndNothingElseIs() {
+        listOf("Q4_0_4_4", "Q4_0_4_8", "Q4_0_8_8").forEach { assertTrue(QuantLabel.isUnsupported(it)) }
+        listOf("Q4_0", "Q4_K_M", "Q8_0", "IQ4_XS", QuantLabel.UNKNOWN).forEach { assertFalse(QuantLabel.isUnsupported(it)) }
+        assertTrue(QuantLabel.isUnsupportedFile("dir/model-q4_0_4_8.gguf"))
+        assertFalse(QuantLabel.isUnsupportedFile("model-Q4_0.gguf"))
+    }
 }

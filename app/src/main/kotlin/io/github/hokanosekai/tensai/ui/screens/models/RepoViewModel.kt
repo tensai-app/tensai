@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.hf.HfError
 import io.github.hokanosekai.tensai.hf.HfException
 import io.github.hokanosekai.tensai.hf.HfQuantFile
 import io.github.hokanosekai.tensai.hf.HfRepoDetail
+import io.github.hokanosekai.tensai.hf.QuantLabel
 import io.github.hokanosekai.tensai.hf.RatedQuant
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import java.io.File
@@ -110,6 +111,7 @@ internal data class QuantRow(
  *   switches the button at once, before the library flow has said so.
  * @param queue every download of the app, oldest first.
  * @param notAllowed the download manager refused the file (not a huggingface.co file): nothing was started.
+ * @param requestedUnsupported the pasted link pointed at a file llama.cpp can no longer load: it is not listed.
  */
 internal data class RepoState(
     val load: RepoLoad = RepoLoad.Loading,
@@ -121,6 +123,7 @@ internal data class RepoState(
     val hasToken: Boolean = false,
     val dialog: RepoDialog? = null,
     val notAllowed: Boolean = false,
+    val requestedUnsupported: Boolean = false,
     val readme: ReadmeState = ReadmeState.Loading,
     val readmeExpanded: Boolean = false,
 ) {
@@ -192,7 +195,9 @@ internal class RepoViewModel(
     private val now: () -> Long = System::currentTimeMillis,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    private val _state = MutableStateFlow(RepoState())
+    private val _state = MutableStateFlow(
+        RepoState(requestedUnsupported = preselectFile?.let(QuantLabel::isUnsupportedFile) == true),
+    )
     val state: StateFlow<RepoState> = _state.asStateFlow()
 
     private val meter = SpeedMeter()

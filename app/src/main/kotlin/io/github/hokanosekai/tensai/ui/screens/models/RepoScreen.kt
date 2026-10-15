@@ -230,6 +230,14 @@ private fun RepoBody(
         }
 
         Eyebrow(stringResource(R.string.repo_choose_file))
+        if (state.requestedUnsupported) {
+            Text(
+                text = stringResource(R.string.repo_file_unsupported),
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
         if (state.rows.isEmpty()) {
             Text(
                 text = stringResource(R.string.repo_no_files),

@@ -227,6 +227,16 @@ class RepoViewModelTest {
     }
 
     @Test
+    fun aLinkToARemovedQuantFallsBackAndTellsWhy() = runBlocking {
+        val e = env(quants = listOf(q2, q4))
+        val vm = loaded(e, "m-Q4_0_4_4.gguf")
+
+        assertTrue(vm.state.value.requestedUnsupported)
+        assertNotNull(vm.state.value.selectedQuant)
+        assertFalse(loaded(e, "m-Q4_K_M.gguf").state.value.requestedUnsupported)
+    }
+
+    @Test
     fun hubFailuresAreReportedAndTryAgainLoadsAgain() = runBlocking {
         var online = false
         val e = env().apply {

@@ -455,6 +455,7 @@
     <string name="repo_queued_ahead">En attente · %1$d devant</string>
     <string name="repo_paused_of">En pause · %1$s sur %2$s</string>
     <string name="repo_speed_eta">%1$s/s · %2$s restantes</string>
+    <string name="repo_file_unsupported">Le fichier de ce lien est dans un format que llama.cpp ne supporte plus, il n\'est donc pas proposé.</string>
     <string name="repo_not_allowed">Seuls les fichiers Hugging Face peuvent être téléchargés.</string>
     <string name="repo_not_found_title">Repo introuvable</string>
     <string name="repo_not_found_body">Ce repo n\'existe pas sur Hugging Face, ou il est privé.</string>

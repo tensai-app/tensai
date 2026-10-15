@@ -104,11 +104,13 @@ internal object HfParser {
     /**
      * Drops the files that cannot be the model's weights: smaller than 1.5 bits per parameter (an
      * auxiliary file such as a 13 MB `.gguf` in a 27B repo; the lowest real quants are above 1.6),
-     * only when the parameter count is known. Then, when some files carry a quant label, the
+     * only when the parameter count is known. The quants llama.cpp no longer reads ([QuantLabel.isUnsupported])
+     * go first: a file nobody can load is never offered. Then, when some files carry a quant label, the
      * unlabelled ones go too: they are the odd files out, not the weights.
      */
     internal fun plausibleQuants(files: List<HfQuantFile>, paramCount: Long): List<HfQuantFile> {
-        val sized = if (paramCount > 0) files.filter { it.sizeBytes * 8 >= paramCount * 3 / 2 } else files
+        val loadable = files.filter { !QuantLabel.isUnsupported(it.quant) }
+        val sized = if (paramCount > 0) loadable.filter { it.sizeBytes * 8 >= paramCount * 3 / 2 } else loadable
         return if (sized.any { it.quant != QuantLabel.UNKNOWN }) sized.filter { it.quant != QuantLabel.UNKNOWN } else sized
     }
 

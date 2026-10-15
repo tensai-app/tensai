@@ -130,6 +130,15 @@ object QuantLabel {
         return stem.trimEnd('_', '-', '.').ifBlank { base }
     }
 
+    // ARM repacks that llama.cpp removed from GGUF files (use Q4_0, repacked at runtime): they never load.
+    private val UNSUPPORTED = setOf("Q4_0_4_4", "Q4_0_4_8", "Q4_0_8_8")
+
+    /** [label] (as [parse] returns it) is a quant our llama.cpp can no longer read from a GGUF file. */
+    fun isUnsupported(label: String) = label in UNSUPPORTED
+
+    /** [fileName] is a GGUF whose quant is [isUnsupported]. */
+    fun isUnsupportedFile(fileName: String) = isUnsupported(parse(fileName))
+
     fun isGguf(fileName: String) = fileName.endsWith(".gguf", ignoreCase = true)
 
     /** `-00001-of-00003.gguf` parts: always too big for a phone and not loadable one by one. */

@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.download
 
 import io.github.hokanosekai.tensai.hf.HfQuantFile
+import io.github.hokanosekai.tensai.hf.QuantLabel
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
@@ -131,7 +132,7 @@ class DownloadManager(
         confirmMobileData: Boolean = false,
         commitSha: String? = null,
     ): EnqueueResult = withContext(io) {
-        if (quantFile.sizeBytes <= 0) return@withContext EnqueueResult.NotAllowed
+        if (quantFile.sizeBytes <= 0 || QuantLabel.isUnsupported(quantFile.quant)) return@withContext EnqueueResult.NotAllowed
         val sha = commitSha?.takeIf { COMMIT_SHA.matches(it) }
         val url = runCatching { urlFor(repo, sha, quantFile.fileName) }.getOrNull()?.toHttpUrlOrNull()
         if (url == null || !hostAllowed(url)) return@withContext EnqueueResult.NotAllowed

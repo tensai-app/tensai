@@ -35,6 +35,18 @@ class HfPlausibleQuantsTest {
     }
 
     @Test
+    fun `removed ARM repack quants are never offered`() {
+        val files = listOf(f("m-Q4_0_4_4.gguf", 4_000), f("m-Q4_0_8_8.gguf", 4_000), f("m-Q4_0.gguf", 4_000))
+        assertEquals(listOf("Q4_0"), HfParser.plausibleQuants(files, 7_000_000_000L).map { it.quant })
+    }
+
+    @Test
+    fun `a repo with only removed quants has no quant at all`() {
+        val files = listOf(f("m-Q4_0_4_8.gguf", 4_000), f("m-Q4_0_8_8.gguf", 4_000))
+        assertEquals(emptyList<HfQuantFile>(), HfParser.plausibleQuants(files, 7_000_000_000L))
+    }
+
+    @Test
     fun `an unlabelled file alone is kept`() {
         assertEquals(1, HfParser.plausibleQuants(listOf(f("model.gguf", 4_000)), 7_000_000_000L).size)
     }

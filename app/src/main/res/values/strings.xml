@@ -536,6 +536,7 @@
     <!-- %1$s of %2$s are sizes; %1$s of the speed line is a speed, %2$s a time left. -->
     <string name="repo_paused_of">Paused · %1$s of %2$s</string>
     <string name="repo_speed_eta">%1$s/s · %2$s left</string>
+    <string name="repo_file_unsupported">The file in this link is in a format llama.cpp no longer supports, so it is not offered.</string>
     <string name="repo_not_allowed">Only Hugging Face files can be downloaded.</string>
     <string name="repo_not_found_title">Repo not found</string>
     <string name="repo_not_found_body">This repo does not exist on Hugging Face, or it is private.</string>

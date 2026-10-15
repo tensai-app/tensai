@@ -189,6 +189,14 @@ class DownloadManagerTest {
         assertEquals(EnqueueResult.NotAllowed, enqueue(manager(), size = 0))
     }
 
+    @Test
+    fun aQuantLlamaCppNoLongerReadsIsRefusedAtEnqueue() {
+        val removed = file.copy(fileName = "model-Q4_0_4_4.gguf", quant = "Q4_0_4_4")
+
+        assertEquals(EnqueueResult.NotAllowed, runBlocking { manager().enqueue("org/repo", removed, "Model") })
+        assertTrue(dao.rows.isEmpty() && scheduler.ensured == 0)
+    }
+
     // ---- queue ----
 
     @Test
