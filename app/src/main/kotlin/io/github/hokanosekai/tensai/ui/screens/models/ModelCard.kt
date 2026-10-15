@@ -158,7 +158,7 @@ internal fun ModelCard(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = model.displayName,
+                        text = model.shownName,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         lineHeight = 22.sp,
@@ -173,7 +173,7 @@ internal fun ModelCard(
                 ModelStatus(compatibility, modifier = Modifier.padding(top = 2.dp).widthIn(max = 140.dp))
                 if (!noAction) {
                     ModelOverflowMenu(
-                        modelName = model.displayName,
+                        modelName = model.shownName,
                         onDetails = onDetailsClick,
                         onDelete = { onDeleteClick(fileExists) },
                     )

@@ -239,7 +239,7 @@ fun ModelDetailScreen(
 
                         Column(modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp)) {
                             Text(
-                                text = model.displayName,
+                                text = model.shownName,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 lineHeight = 26.sp,
@@ -395,7 +395,7 @@ fun ModelDetailScreen(
                                     if (exists) {
                                         showDeleteConfirm = true
                                     } else {
-                                        scope.launch { if (removeModel(model.displayName)) onDeleted() }
+                                        scope.launch { if (removeModel(model.shownName)) onDeleted() }
                                     }
                                 },
                                 variant = TensaiButtonVariant.Text,
@@ -417,11 +417,11 @@ fun ModelDetailScreen(
 
                     if (showDeleteConfirm) {
                         DeleteModelDialog(
-                            modelName = model.displayName,
+                            modelName = model.shownName,
                             onCancel = { showDeleteConfirm = false },
                             onConfirm = {
                                 showDeleteConfirm = false
-                                scope.launch { if (removeModel(model.displayName)) onDeleted() }
+                                scope.launch { if (removeModel(model.shownName)) onDeleted() }
                             },
                         )
                     }

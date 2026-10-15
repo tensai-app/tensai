@@ -35,7 +35,7 @@ internal object ModelSource {
                 sizeBytes = model.sizeBytes,
                 sha256 = origin.sha256,
             ),
-            displayName = model.displayName,
+            displayName = model.shownName,
             commitSha = origin.commit,
         )
     }

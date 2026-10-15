@@ -149,7 +149,7 @@ fun ModelsScreen(
             try {
                 repository.deleteModel(model.id)
             } catch (e: ModelInUseException) {
-                snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, model.displayName))
+                snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, model.shownName))
             }
         }
     }
@@ -364,7 +364,7 @@ fun ModelsScreen(
 
             pendingDelete?.let { model ->
                 DeleteModelDialog(
-                    modelName = model.displayName,
+                    modelName = model.shownName,
                     onCancel = { pendingDelete = null },
                     onConfirm = {
                         pendingDelete = null

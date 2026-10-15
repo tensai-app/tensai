@@ -204,6 +204,7 @@ class LoadModelViewModel(
                 // button. BackendPreference.Auto is exactly "no opinion, use the recommendation".
                 backend = backendOverride ?: backendPreference().resolve(compatibility.recommendedBackend),
                 kvCacheType = effective.kvCacheType,
+                name = model.shownName,
             )
             val backendLabel = LoadProgressMap.backendLabel(config.backend, profile.hasVulkan, profile.hasOpenCl)
             // Already resident for this exact config: loadModel below is the dedup no-op, so there is

@@ -53,6 +53,6 @@ object HomePill {
     ): HomePillState {
         if (loadedModelName != null) return HomePillState.Ready(loadedModelName)
         val usable = models.firstOrNull { fileExists(it.filePath) } ?: return HomePillState.NoModel
-        return HomePillState.LoadNeeded(modelId = usable.id, displayName = usable.displayName)
+        return HomePillState.LoadNeeded(modelId = usable.id, displayName = usable.shownName)
     }
 }

@@ -831,7 +831,7 @@ private fun ColumnScope.ReadyStep(model: ModelEntity, onStart: () -> Unit) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                 KanjiGlyph(size = 64.dp, glow = true)
                 Text(
-                    text = stringResource(R.string.onboarding_ready_title, model.displayName),
+                    text = stringResource(R.string.onboarding_ready_title, model.shownName),
                     fontSize = 22.sp,
                     lineHeight = 28.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -852,7 +852,7 @@ private fun ColumnScope.ReadyStep(model: ModelEntity, onStart: () -> Unit) {
             CardSurface {
                 SummaryRow(stringResource(R.string.onboarding_summary_model)) {
                     Text(
-                        text = model.displayName,
+                        text = model.shownName,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         textAlign = TextAlign.End,

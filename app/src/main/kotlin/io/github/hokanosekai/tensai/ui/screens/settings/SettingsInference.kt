@@ -81,7 +81,7 @@ object SettingsInference {
         // can't perform — the row would read as a promise (TEN-77).
         val plan = LoadPolicy.compute(next, profile) as? LoadPlan.Feasible ?: return InferenceFacts.Unknown
         return InferenceFacts.Planned(
-            modelName = next.displayName,
+            modelName = next.shownName,
             nCtx = plan.nCtx,
             kvCacheType = plan.kvCacheType,
         )

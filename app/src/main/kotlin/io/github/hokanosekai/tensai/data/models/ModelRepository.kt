@@ -227,7 +227,7 @@ class ModelRepository(
     suspend fun deleteModel(id: String) = withContext(Dispatchers.IO) {
         val entity = modelDao.getById(id) ?: return@withContext
         if (currentLoadedModelId() == entity.id) {
-            throw ModelInUseException("Cannot delete \"${entity.displayName}\" while it is loaded")
+            throw ModelInUseException("Cannot delete \"${entity.shownName}\" while it is loaded")
         }
         File(entity.filePath).delete()
         modelDao.delete(entity)

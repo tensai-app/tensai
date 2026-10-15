@@ -103,6 +103,8 @@ object QuantLabel {
             ")(?![A-Za-z0-9])",
         RegexOption.IGNORE_CASE,
     )
+    // Uploader tags sitting between the name and the quant: `UD` (unsloth), `imatrix`, `i1` (mradermacher).
+    private val UPLOADER_TAGS = Regex("(?:${SEP}(?:UD|imatrix|imat|i1))+\\z", RegexOption.IGNORE_CASE)
     private val SPLIT = Regex("-\\d{5}-of-\\d{5}\\.gguf$", RegexOption.IGNORE_CASE)
 
     /** Canonical label (`Q4_K_M`, `Q8_0`, `IQ4_XS`, `F16` (also `fp16`), `BF16`, `TQ1_0`, `Q4_0_4_4`, bare `Q4`) of [fileName], or [UNKNOWN]. The last match wins. */
@@ -111,6 +113,21 @@ object QuantLabel {
         val m = LABEL.findAll(base).lastOrNull() ?: return UNKNOWN
         return m.value.uppercase().replace('-', '_').replace('.', '_')
             .replace("FP16", "F16").replace("FP32", "F32")
+    }
+
+    /**
+     * [fileName] without its folder, `.gguf` and a *trailing* quant label plus the separator before it:
+     * `Foo-Bar-Q4_K_M.gguf` -> `Foo-Bar`. Uploader tags right before it (`UD`, `imat`, `imatrix`, `i1`) go
+     * too. A label in the middle of the name is left alone, as is a name
+     * that is nothing but a label.
+     */
+    fun stripFromName(fileName: String): String {
+        val file = fileName.substringAfterLast('/')
+        val base = if (file.endsWith(".gguf", ignoreCase = true)) file.dropLast(5) else file
+        val m = LABEL.findAll(base).lastOrNull() ?: return base
+        if (m.range.last != base.lastIndex) return base
+        val stem = base.substring(0, m.range.first).trimEnd('_', '-', '.').replace(UPLOADER_TAGS, "")
+        return stem.trimEnd('_', '-', '.').ifBlank { base }
     }
 
     fun isGguf(fileName: String) = fileName.endsWith(".gguf", ignoreCase = true)

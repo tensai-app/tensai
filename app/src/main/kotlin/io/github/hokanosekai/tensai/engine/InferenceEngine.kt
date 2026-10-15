@@ -55,6 +55,9 @@ enum class KvCacheType {
  *   on — implementations must not assume the caller's dispatcher.
  * @param onStage optional callback fired when the load enters a new [LoadStage]. Same threading as
  *   [onProgress]. An engine that has no stages simply never calls it.
+ * @param name name to report on [LoadedModelInfo.name] in place of the GGUF header's own, which is
+ *   often a hash or a placeholder (TEN-147). The app passes [io.github.hokanosekai.tensai.data.models.ModelEntity.shownName];
+ *   `null` (the default) keeps the header name.
  */
 data class ModelLoadConfig(
     val path: String,
@@ -64,6 +67,7 @@ data class ModelLoadConfig(
     val kvCacheType: KvCacheType = KvCacheType.F16,
     val onProgress: ((Float) -> Unit)? = null,
     val onStage: ((LoadStage) -> Unit)? = null,
+    val name: String? = null,
 )
 
 /**

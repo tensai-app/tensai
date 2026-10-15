@@ -195,7 +195,7 @@ private fun LoadingContent(
     ) {
         KanjiGlyph(size = 150.dp, progress = state.progress, glow = true)
         Text(
-            text = state.model.displayName,
+            text = state.model.shownName,
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
@@ -287,7 +287,7 @@ private fun FileMissingDialog(model: ModelEntity, onClose: () -> Unit) {
         icon = Icons.Default.FolderOff,
         iconTint = MaterialTheme.tensaiColors.warning,
         title = stringResource(R.string.model_file_missing),
-        body = stringResource(R.string.loading_file_missing_body, model.displayName),
+        body = stringResource(R.string.loading_file_missing_body, model.shownName),
         actions = listOf(TensaiDialogAction(stringResource(R.string.loading_back_to_models), onClose)),
     )
 }
@@ -309,7 +309,7 @@ private fun BlockedDialog(
         onDismissRequest = onSeeSmallerModels,
         icon = Icons.Default.Warning,
         iconTint = MaterialTheme.tensaiColors.warning,
-        title = stringResource(R.string.loading_blocked_title, model.displayName),
+        title = stringResource(R.string.loading_blocked_title, model.shownName),
         body = compatExplanation(compatibility),
         actions = listOf(
             TensaiDialogAction(stringResource(R.string.loading_see_smaller_models), onSeeSmallerModels),
@@ -325,7 +325,7 @@ private fun OomDialog(model: ModelEntity, onSeeSmallerModels: () -> Unit, onClos
         icon = Icons.Default.Memory,
         iconTint = MaterialTheme.colorScheme.error,
         title = stringResource(R.string.loading_oom_title),
-        body = stringResource(R.string.loading_oom_body, model.displayName),
+        body = stringResource(R.string.loading_oom_body, model.shownName),
         actions = listOf(
             TensaiDialogAction(stringResource(R.string.action_close), onClose),
             TensaiDialogAction(stringResource(R.string.loading_see_smaller_models), onSeeSmallerModels),

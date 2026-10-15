@@ -206,7 +206,9 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         }
 
         val info = LoadedModelInfo(
-            name = meta?.name?.takeIf { it.isNotBlank() } ?: File(config.path).name,
+            name = config.name?.takeIf { it.isNotBlank() }
+                ?: meta?.name?.takeIf { it.isNotBlank() }
+                ?: File(config.path).name,
             nCtxEffective = config.nCtx,
             backend = backend,
             kvCacheType = config.kvCacheType,
