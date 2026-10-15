@@ -134,6 +134,7 @@ internal object HfParser {
             contextLength = gguf?.context_length ?: 0,
             supportsTools = ChatTemplateCapabilities.supportsTools(template),
             supportsThinking = ChatTemplateCapabilities.supportsThinking(template),
+            hasChatTemplate = gguf == null || template.isNotEmpty(),
             hasVision = files.any { QuantLabel.isMmproj(it.rfilename) },
             quants = quants,
             sha = sha?.takeIf { COMMIT_SHA.matches(it) },

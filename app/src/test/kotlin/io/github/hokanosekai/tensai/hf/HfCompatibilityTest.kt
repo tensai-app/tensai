@@ -143,4 +143,37 @@ class HfCompatibilityTest {
         val p8 = HfCompatibility.factsFor(q8, q8.quants[0]).paramCount
         assertTrue(p2 > p8 * 3)
     }
+
+    @Test
+    fun `quants under 2 bits are very low quality`() {
+        listOf("IQ1_S", "IQ1_M", "IQ2_XXS", "TQ1_0", "TQ2_0").forEach { assertTrue(it, QuantLabel.isVeryLowQuality(it)) }
+        listOf("IQ2_XS", "IQ2_M", "Q2_K", "IQ3_XXS", "Q4_K_M", "Q8_0", "F16", QuantLabel.UNKNOWN)
+            .forEach { assertTrue(it, !QuantLabel.isVeryLowQuality(it)) }
+        assertTrue(QuantLabel.isVeryLowQuality(QuantLabel.parse("mathstral-7B-v0.1.IQ1_S.gguf")))
+    }
+
+    @Test
+    fun `a very low quality quant is never the recommendation when something else runs well`() {
+        val d = detail(quant("IQ1_S", 500), quant("IQ2_XXS", 600), quant("Q2_K", 800), params = 2_031_739_904)
+        val rec = HfCompatibility.recommendation(d, phone(4000))!!
+        assertEquals("Q2_K", rec.quant.quant)
+        assertTrue(rec.isRecommended)
+    }
+
+    @Test
+    fun `a very low quality quant is skipped even when it is the only one that runs well`() {
+        // 2.4 GB usable: only the smallest runs well, the rest are over the budget.
+        val d = detail(quant("IQ1_S", 500), quant("Q6_K", 4000), quant("Q8_0", 5000))
+        val rec = HfCompatibility.recommendation(d, phone(2400))!!
+        assertEquals("Q6_K", rec.quant.quant)
+        assertTrue(!rec.isRecommended)
+    }
+
+    @Test
+    fun `a repo that only has very low quality quants still gets a pick, never tagged recommended`() {
+        val d = detail(quant("IQ1_S", 500), quant("TQ1_0", 450))
+        val rec = HfCompatibility.recommendation(d, phone(4000))!!
+        assertEquals("TQ1_0", rec.quant.quant)
+        assertTrue(!rec.isRecommended)
+    }
 }

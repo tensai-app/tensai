@@ -3,7 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.models
 import io.github.hokanosekai.tensai.runtime.EffectiveBackend
 
 /** The chips under a card's facts line, in the order [cardChips] returns them. */
-internal enum class CardChip { Loaded, OnDevice, Tools, Thinking, Vision, Gated, Imported }
+internal enum class CardChip { Loaded, OnDevice, Tools, Thinking, Vision, NoTemplate, Gated, Imported }
 
 private const val SEPARATOR = " · "
 
@@ -33,6 +33,7 @@ internal fun cardChips(
     tools: Boolean = false,
     thinking: Boolean = false,
     vision: Boolean = false,
+    noTemplate: Boolean = false,
     gated: Boolean = false,
     imported: Boolean = false,
 ): List<CardChip> = buildList {
@@ -41,6 +42,7 @@ internal fun cardChips(
     if (tools) add(CardChip.Tools)
     if (thinking) add(CardChip.Thinking)
     if (SHOW_VISION && vision) add(CardChip.Vision)
+    if (noTemplate) add(CardChip.NoTemplate)
     if (gated) add(CardChip.Gated)
     if (imported) add(CardChip.Imported)
 }

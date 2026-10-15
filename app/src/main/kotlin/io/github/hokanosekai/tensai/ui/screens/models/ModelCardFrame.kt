@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -174,6 +175,7 @@ internal fun CardChipBadge(chip: CardChip, modifier: Modifier = Modifier) {
         CardChip.Tools -> TensaiBadge(stringResource(R.string.discover_badge_tools), modifier, Icons.Default.Construction, TensaiBadgeTone.Neutral)
         CardChip.Thinking -> TensaiBadge(stringResource(R.string.discover_badge_thinking), modifier, Icons.Default.Psychology, TensaiBadgeTone.Neutral)
         CardChip.Vision -> TensaiBadge(stringResource(R.string.discover_badge_vision), modifier, Icons.Default.Visibility, TensaiBadgeTone.Neutral)
+        CardChip.NoTemplate -> TensaiBadge(stringResource(R.string.badge_no_chat_template), modifier, Icons.Default.Warning, TensaiBadgeTone.Warning)
         CardChip.Gated -> TensaiBadge(stringResource(R.string.discover_badge_gated), modifier, Icons.Default.Lock, TensaiBadgeTone.Warning)
         CardChip.Imported -> TensaiBadge(stringResource(R.string.onboarding_imported_badge), modifier, tone = TensaiBadgeTone.Neutral)
     }

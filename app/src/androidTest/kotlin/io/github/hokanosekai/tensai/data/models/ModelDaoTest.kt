@@ -83,11 +83,13 @@ class ModelDaoTest {
             kvShapeVersion = 2,
             supportsThinking = true,
             supportsTools = true,
+            hasChatTemplate = false,
         )
 
         val updated = checkNotNull(dao.getById("m1"))
         assertEquals(114_688L, updated.kvFullElementsPerToken)
         assertEquals(2L, updated.kvShapeVersion)
+        assertEquals(false, updated.hasChatTemplate)
         assertEquals(emptyList<ModelEntity>(), dao.withStaleKvCacheShape(2))
     }
 

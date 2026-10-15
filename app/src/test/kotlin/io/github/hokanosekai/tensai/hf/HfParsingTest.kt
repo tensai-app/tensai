@@ -112,6 +112,15 @@ class HfParsingTest {
     }
 
     @Test
+    fun `no chat template is flagged only when the Hub summarised the header`() {
+        fun has(body: String) = HfParser.parseDetail(body).hasChatTemplate
+        assertTrue(has("""{"id":"a/b","gguf":{"total":1,"chat_template":"{{ messages }}"}}"""))
+        assertFalse(has("""{"id":"a/b","gguf":{"total":1}}"""))
+        assertFalse(has("""{"id":"a/b","gguf":{"total":1,"chat_template":""}}"""))
+        assertTrue("no gguf block is unknown, not template-less", has("""{"id":"a/b"}"""))
+    }
+
+    @Test
     fun `commit sha is kept only when it is 40 hex`() {
         val good = "0123456789abcdef0123456789abcdef01234567"
         assertEquals(good, HfParser.parseDetail("""{"id":"a/b","sha":"$good","siblings":[]}""").sha)

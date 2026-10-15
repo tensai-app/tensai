@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Eject
 import androidx.compose.material.icons.filled.Error
@@ -132,6 +133,7 @@ fun ModelDetailScreen(
 
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showContextPicker by remember { mutableStateOf(false) }
+    var showChatTemplatePicker by remember { mutableStateOf(false) }
     // Null until DataStore delivers the preferences: the body is held back until then, like the backend
     // preference, so no row shows a verdict priced from guessed defaults.
     val contextPrefs by remember { RuntimeGraph.contextRepository.prefs }.collectAsState(initial = null)
@@ -271,7 +273,7 @@ fun ModelDetailScreen(
                                 if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
                             }
                             CardFacts(cardFacts(model.displayQuant, model.sizeBytes, if (exists) backend else null), modifier = Modifier.padding(top = 8.dp))
-                            CardChips(cardChips(tools = model.supportsTools, thinking = model.supportsThinking), modifier = Modifier.padding(top = 12.dp))
+                            CardChips(cardChips(tools = model.toolsAvailable, thinking = model.thinkingAvailable, noTemplate = !model.hasChatTemplate), modifier = Modifier.padding(top = 12.dp))
                             if (wontFit && exists) WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
                         }
 
@@ -307,6 +309,16 @@ fun ModelDetailScreen(
                                     Chevron()
                                 },
                             )
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Tune,
+                                title = stringResource(R.string.model_detail_chat_template_setting),
+                                onClick = { showChatTemplatePicker = true },
+                                trailing = {
+                                    ValueText(model.chatTemplateChoice?.label() ?: stringResource(R.string.chat_template_option_auto))
+                                    Chevron()
+                                },
+                            )
                             if (origin != null) {
                                 RowDivider()
                                 SourceRow(origin = origin)
@@ -321,7 +333,7 @@ fun ModelDetailScreen(
                                 trailing = {
                                     ValueText(
                                         stringResource(
-                                            if (model.supportsThinking) R.string.model_detail_supported else R.string.model_detail_not_supported,
+                                            if (model.thinkingAvailable) R.string.model_detail_supported else R.string.model_detail_not_supported,
                                         ),
                                     )
                                 },
@@ -333,10 +345,16 @@ fun ModelDetailScreen(
                                 trailing = {
                                     ValueText(
                                         stringResource(
-                                            if (model.supportsTools) R.string.model_detail_supported else R.string.model_detail_not_supported,
+                                            if (model.toolsAvailable) R.string.model_detail_supported else R.string.model_detail_not_supported,
                                         ),
                                     )
                                 },
+                            )
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Description,
+                                title = stringResource(R.string.model_detail_chat_template),
+                                trailing = { ValueText(chatTemplateStatus(model)) },
                             )
                         }
 
@@ -486,6 +504,20 @@ fun ModelDetailScreen(
                             ),
                             onDismiss = { showContextPicker = false },
                             note = stringResource(R.string.context_picker_note_model),
+                        )
+                    }
+
+                    if (showChatTemplatePicker) {
+                        PickerDialog(
+                            title = stringResource(R.string.model_detail_chat_template),
+                            options = chatTemplatePickerOptions(
+                                selected = model.chatTemplateChoice,
+                                onSelect = { choice ->
+                                    RuntimeGraph.applicationScope.launch { repository.setChatTemplate(model.id, choice) }
+                                },
+                            ),
+                            onDismiss = { showChatTemplatePicker = false },
+                            note = stringResource(R.string.chat_template_picker_note),
                         )
                     }
 

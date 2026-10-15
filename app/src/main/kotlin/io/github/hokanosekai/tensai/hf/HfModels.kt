@@ -71,6 +71,8 @@ data class HfQuantFile(
  * @param quants single-file GGUFs only (no split parts, no `mmproj`), smallest first.
  * @param supportsTools / [supportsThinking] read off the repo's chat template, see
  *   [io.github.hokanosekai.tensai.data.models.ChatTemplateCapabilities].
+ * @param hasChatTemplate false only when the Hub summarised the GGUF header and found no `chat_template` in it
+ *   (TEN-159): a repo with no `gguf` block at all is unknown, not template-less.
  * @param hasVision the repo ships an `mmproj` file (excluded from [quants]).
  * @param sha commit the listing describes (40 hex), null if the API gave none. Downloads pin their URL to it
  *   so the file cannot change between attempts.
@@ -82,6 +84,7 @@ data class HfRepoDetail(
     val contextLength: Long,
     val supportsTools: Boolean,
     val supportsThinking: Boolean = false,
+    val hasChatTemplate: Boolean = true,
     val hasVision: Boolean,
     val quants: List<HfQuantFile>,
     val sha: String? = null,
@@ -141,6 +144,12 @@ object QuantLabel {
 
     /** [fileName] is a GGUF whose quant is [isUnsupported]. */
     fun isUnsupportedFile(fileName: String) = isUnsupported(parse(fileName))
+
+    // About 2 bits per weight or less (IQ2_XXS is 2.06 and TQ2_0 2.06, but they break down the same way): a 7B at IQ1_S barely talks.
+    private val VERY_LOW_QUALITY = setOf("IQ1_S", "IQ1_M", "IQ2_XXS", "TQ1_0", "TQ2_0")
+
+    /** [label] (as [parse] returns it) is a quant too lossy to be worth running (TEN-159): listed with a warning, never recommended. */
+    fun isVeryLowQuality(label: String) = label in VERY_LOW_QUALITY
 
     fun isGguf(fileName: String) = fileName.endsWith(".gguf", ignoreCase = true)
 

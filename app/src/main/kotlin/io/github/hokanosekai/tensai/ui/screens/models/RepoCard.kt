@@ -64,7 +64,7 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
         status = { StatusIndicator(color = verdictColor(card.verdict), label = compatLabel(card.verdict)) },
         subtitle = cardSubtitle(card.author, params),
         facts = cardFacts(card.quant, card.sizeBytes, backend = null),
-        chips = cardChips(onDevice = onDevice, tools = card.tools, thinking = card.thinking, gated = card.gated),
+        chips = cardChips(onDevice = onDevice, tools = card.tools, thinking = card.thinking, noTemplate = card.noTemplate, gated = card.gated),
         modifier = modifier,
         onClick = onClick,
         extra = if (card.downloads != null && card.likes != null) {

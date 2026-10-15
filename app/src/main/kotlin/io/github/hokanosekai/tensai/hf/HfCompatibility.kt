@@ -101,7 +101,11 @@ object HfCompatibility {
         val rated = rate(detail, profile)
         val quant = pick(rated) ?: return null
         val verdict = rated.first { it.quant === quant }.compatibility
-        return HfRecommendation(quant, verdict, isRecommended = verdict.verdict == Verdict.RunsWell && quant.quant !in NON_PRESELECTABLE)
+        return HfRecommendation(
+            quant,
+            verdict,
+            isRecommended = verdict.verdict == Verdict.RunsWell && quant.quant !in NON_PRESELECTABLE && !QuantLabel.isVeryLowQuality(quant.quant),
+        )
     }
 
     /** [pick] without the verdict. Prefer [recommendation] in UI code, this one cannot tell "fits" from "nearest". */
@@ -116,14 +120,17 @@ object HfCompatibility {
      * family (K-quants and Q4 to Q6), else the biggest of any labelled quantized one (Q8_0 is the
      * ceiling: F16, BF16, F32 and unlabelled files are never preselected, however much RAM there is);
      * else, when nothing runs well, the smallest overall (the nearest to fitting, which the caller
-     * must not call "recommended", see [recommendation]).
+     * must not call "recommended", see [recommendation]). The very low quality quants ([QuantLabel.isVeryLowQuality])
+     * are skipped by every step, unless a repo has nothing else (TEN-159).
      */
     internal fun pick(rated: List<RatedQuant>): HfQuantFile? {
         val ok = rated.filter { it.compatibility.verdict == Verdict.RunsWell }
-        val candidates = ok.filter { it.quant.quant !in NON_PRESELECTABLE }
+        val candidates = ok.filter { it.quant.quant !in NON_PRESELECTABLE && !QuantLabel.isVeryLowQuality(it.quant.quant) }
         return candidates.firstOrNull { it.quant.quant == "Q4_K_M" }?.quant
             ?: candidates.filter { PREFERRED_FAMILY.matches(it.quant.quant) }.maxByOrNull { it.quant.sizeBytes }?.quant
             ?: candidates.maxByOrNull { it.quant.sizeBytes }?.quant
+            // Nearest to fitting: a very low quality quant is the smallest of any repo, so it only gets here as the last resort.
+            ?: rated.filter { !QuantLabel.isVeryLowQuality(it.quant.quant) }.minByOrNull { it.quant.sizeBytes }?.quant
             ?: rated.minByOrNull { it.quant.sizeBytes }?.quant
     }
 }

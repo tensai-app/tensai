@@ -252,6 +252,27 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v14 -> v15 (TEN-159): three columns for the chat template.
+     * - `models.hasChatTemplate`, derived from the header. `DEFAULT 1` (a template is there) so a row
+     *   shows no warning before it is re-read; the migration resets `kvShapeVersion` to 0 on every row
+     *   to make them all stale, and [KvCacheShapeBackfill] then re-reads each header once, as for v13.
+     * - `models.chatTemplateOverride`, the user's [io.github.hokanosekai.tensai.data.models.ChatTemplateChoice]
+     *   by id. Nullable, no default: every row reads null, "Auto", which is what they were doing.
+     * - `sessions.chatTemplate`, the template a saved session was prefilled under, part of the restore
+     *   key. `DEFAULT ''` is "the file's own", which is what every existing session was saved with.
+     *   Saved sessions of a model without a template are invalidated once: its key moves from ''
+     *   to the guessed template id (see [ModelEntity.chatTemplateToLoad]).
+     */
+    val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `hasChatTemplate` INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `chatTemplateOverride` TEXT")
+            db.execSQL("ALTER TABLE `sessions` ADD COLUMN `chatTemplate` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("UPDATE `models` SET `kvShapeVersion` = 0")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -267,5 +288,6 @@ object TensaiDbMigrations {
         MIGRATION_11_12,
         MIGRATION_12_13,
         MIGRATION_13_14,
+        MIGRATION_14_15,
     )
 }

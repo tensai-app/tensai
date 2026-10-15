@@ -213,6 +213,8 @@ class ModelDeleteGuardTest {
 
         override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
+        override suspend fun setChatTemplateOverride(id: String, chatTemplateOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             models.values.filter { it.kvShapeVersion != kvShapeVersion }
 
@@ -224,6 +226,7 @@ class ModelDeleteGuardTest {
             kvShapeVersion: Long,
             supportsThinking: Boolean,
             supportsTools: Boolean,
+            hasChatTemplate: Boolean,
         ) {
             val existing = models[id] ?: return
             models[id] = existing.copy(

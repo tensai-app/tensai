@@ -58,6 +58,8 @@ enum class KvCacheType {
  * @param name name to report on [LoadedModelInfo.name] in place of the GGUF header's own, which is
  *   often a hash or a placeholder (TEN-147). The app passes [io.github.hokanosekai.tensai.data.models.ModelEntity.shownName];
  *   `null` (the default) keeps the header name.
+ * @param chatTemplate the chat format to force on the model ([io.github.hokanosekai.tensai.data.models.ChatTemplateChoice.id]),
+ *   `null` (the default) keeps the template of the file (TEN-159). Part of the config, so a change reloads the model.
  */
 data class ModelLoadConfig(
     val path: String,
@@ -68,6 +70,7 @@ data class ModelLoadConfig(
     val onProgress: ((Float) -> Unit)? = null,
     val onStage: ((LoadStage) -> Unit)? = null,
     val name: String? = null,
+    val chatTemplate: String? = null,
 )
 
 /**
@@ -461,6 +464,8 @@ sealed class DecodeEvent {
  *   mmapped", and this type's own equality, which
  *   [io.github.hokanosekai.tensai.runtime.InferenceQueue.restoreSession] re-checks a model against
  *   under its lock (TEN-80).
+ * @param chatTemplate whatever [ModelLoadConfig.chatTemplate] the load was requested with, echoed back: part of the
+ *   session key (TEN-159), as a saved state was prefilled from a prompt rendered by that template.
  */
 data class LoadedModelInfo(
     val name: String,
@@ -468,6 +473,7 @@ data class LoadedModelInfo(
     val backend: String,
     val kvCacheType: KvCacheType,
     val modelId: String? = null,
+    val chatTemplate: String? = null,
 )
 
 /**

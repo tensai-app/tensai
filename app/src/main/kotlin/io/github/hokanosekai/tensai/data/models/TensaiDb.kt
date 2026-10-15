@@ -57,6 +57,9 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
  *
  * Version 14 added `contextOverride` (TEN-150): the model's own context setting, null = use the global one.
  *
+ * Version 15 added `models.hasChatTemplate` and `models.chatTemplateOverride` plus `sessions.chatTemplate` (TEN-159),
+ * see [TensaiDbMigrations.MIGRATION_14_15].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -70,7 +73,7 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         SessionEntity::class,
         DownloadEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

@@ -664,6 +664,8 @@ class ModelImporterTest {
 
         override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
+        override suspend fun setChatTemplateOverride(id: String, chatTemplateOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             rows.filter { it.kvShapeVersion != kvShapeVersion }
 
@@ -675,6 +677,7 @@ class ModelImporterTest {
             kvShapeVersion: Long,
             supportsThinking: Boolean,
             supportsTools: Boolean,
+            hasChatTemplate: Boolean,
         ) = Unit
 
         // Synchronized because the race test really does insert from two threads at once.

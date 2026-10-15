@@ -258,7 +258,8 @@ class SessionRepository(
         if (existingBeforeSave != null &&
             existingBeforeSave.modelId == key.modelId &&
             existingBeforeSave.nCtx == key.nCtx &&
-            existingBeforeSave.kvCacheType == key.kvCacheType.name
+            existingBeforeSave.kvCacheType == key.kvCacheType.name &&
+            existingBeforeSave.chatTemplate == key.chatTemplate
         ) {
             val liveTokenCount = currentTokenCount()
             if (liveTokenCount != null && liveTokenCount == existingBeforeSave.tokenCount) {
@@ -341,6 +342,7 @@ class SessionRepository(
                     filePath = finalFile.absolutePath,
                     nCtx = key.nCtx,
                     kvCacheType = key.kvCacheType.name,
+                    chatTemplate = key.chatTemplate,
                     backend = key.backend,
                     tokenCount = tokenCount,
                     sizeBytes = sizeBytes,
@@ -377,7 +379,9 @@ class SessionRepository(
         val epochAtStart = purgeEpoch.get()
         val entity = dao.getByConversation(conversationId) ?: return RestoreResult.NotFound
 
-        if (entity.modelId != key.modelId || entity.nCtx != key.nCtx || entity.kvCacheType != key.kvCacheType.name) {
+        if (entity.modelId != key.modelId || entity.nCtx != key.nCtx || entity.kvCacheType != key.kvCacheType.name ||
+            entity.chatTemplate != key.chatTemplate
+        ) {
             return RestoreResult.Mismatch(key, entity)
         }
 

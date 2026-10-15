@@ -163,6 +163,31 @@ class KvCacheShapeBackfillTest {
     }
 
     @Test
+    fun aStaleRowGetsHasChatTemplateFromTheHeader() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = 0))
+        dao.put(row(id = "m2", kvFull = 114_688, version = 0))
+
+        backfill(
+            shapeOf(
+                "m1" to header(kvFull = 114_688, version = currentVersion, template = "{{ messages }}"),
+                "m2" to header(kvFull = 114_688, version = currentVersion, template = ""),
+            ),
+        ).run()
+
+        assertTrue(dao.rows.getValue("m1").hasChatTemplate)
+        assertEquals(false, dao.rows.getValue("m2").hasChatTemplate)
+    }
+
+    @Test
+    fun theBackfillNeverTouchesTheUsersChatTemplateChoice() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = 0).copy(chatTemplateOverride = "mistral"))
+
+        backfill(shapeOf("m1" to header(kvFull = 114_688, version = currentVersion))).run()
+
+        assertEquals("mistral", dao.rows.getValue("m1").chatTemplateOverride)
+    }
+
+    @Test
     fun theThinkingFlagIsRefreshedFromTheHeaderToo() = runBlocking {
         dao.put(row(id = "m1", kvFull = 114_688, version = currentVersion - 1).copy(supportsThinking = false))
 
@@ -334,6 +359,8 @@ class KvCacheShapeBackfillTest {
 
         override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
+        override suspend fun setChatTemplateOverride(id: String, chatTemplateOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             rows.values.filter { it.kvShapeVersion != kvShapeVersion }
 
@@ -345,6 +372,7 @@ class KvCacheShapeBackfillTest {
             kvShapeVersion: Long,
             supportsThinking: Boolean,
             supportsTools: Boolean,
+            hasChatTemplate: Boolean,
         ) {
             val existing = rows[id] ?: return
             rows[id] = existing.copy(
@@ -354,6 +382,7 @@ class KvCacheShapeBackfillTest {
                 kvShapeVersion = kvShapeVersion,
                 supportsThinking = supportsThinking,
                 supportsTools = supportsTools,
+                hasChatTemplate = hasChatTemplate,
             )
             flow.value = rows.values.toList()
         }

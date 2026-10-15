@@ -230,6 +230,14 @@ class ModelRepository(
     }
 
     /**
+     * Sets [id]'s own chat template, `null` for Auto (TEN-159). Saved sessions are dropped the same way as
+     * for a context change: the template is part of the [io.github.hokanosekai.tensai.data.session.SessionModelKey].
+     */
+    suspend fun setChatTemplate(id: String, choice: ChatTemplateChoice?) = withContext(Dispatchers.IO) {
+        modelDao.setChatTemplateOverride(id, choice?.id)
+    }
+
+    /**
      * Deletes [id]'s file and row. Throws [ModelInUseException] (without deleting anything) if
      * the model is currently loaded — by [ModelEntity.id], so it is exactly this file that is
      * refused and not merely one sharing its name (see this class's KDoc). No-op if [id] doesn't

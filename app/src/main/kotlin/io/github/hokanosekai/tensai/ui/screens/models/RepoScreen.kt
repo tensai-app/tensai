@@ -227,7 +227,13 @@ private fun RepoBody(
             if (detail.contextLength > 0) {
                 TensaiMonoBadge(stringResource(R.string.repo_context, RepoLogic.formatContext(detail.contextLength)))
             }
-            cardChips(tools = detail.supportsTools, thinking = detail.supportsThinking, vision = detail.hasVision, gated = summary.isGated)
+            cardChips(
+                tools = detail.supportsTools,
+                thinking = detail.supportsThinking,
+                vision = detail.hasVision,
+                noTemplate = !detail.hasChatTemplate,
+                gated = summary.isGated,
+            )
                 .forEach { CardChipBadge(it) }
         }
 
@@ -326,6 +332,7 @@ private fun QuantRowItem(row: QuantRow, onClick: () -> Unit) {
                 Text(text = row.label, fontFamily = TensaiMono, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = center)
                 if (row.recommended) TensaiBadge(stringResource(R.string.repo_badge_recommended), modifier = center)
                 if (row.onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), modifier = center, icon = Icons.Default.Check, tone = TensaiBadgeTone.Neutral)
+                if (row.veryLowQuality) TensaiBadge(stringResource(R.string.repo_badge_very_low_quality), modifier = center, tone = TensaiBadgeTone.Warning)
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,

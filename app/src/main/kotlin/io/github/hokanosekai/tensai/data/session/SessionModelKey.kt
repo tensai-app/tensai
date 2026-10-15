@@ -16,10 +16,13 @@ import io.github.hokanosekai.tensai.engine.KvCacheType
  * @param kvCacheType the KV-cache precision currently in effect.
  * @param backend the compute backend currently in effect — recorded for [SessionEntity.backend],
  *   never checked by [SessionRepository.restore] (see that field's KDoc for why).
+ * @param chatTemplate the chat format forced on the load (`ChatTemplateChoice.id`), empty for the file's own
+ *   (TEN-159). The prompt a state was prefilled from depends on it, so it is part of the match.
  */
 data class SessionModelKey(
     val modelId: String,
     val nCtx: Int,
     val kvCacheType: KvCacheType,
     val backend: String,
+    val chatTemplate: String = "",
 )

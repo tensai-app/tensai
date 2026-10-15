@@ -38,7 +38,7 @@ interface ModelDao {
         "UPDATE models SET kvFullElementsPerToken = :kvFullElementsPerToken, " +
             "kvSwaElementsPerToken = :kvSwaElementsPerToken, slidingWindow = :slidingWindow, " +
             "kvShapeVersion = :kvShapeVersion, supportsThinking = :supportsThinking, " +
-            "supportsTools = :supportsTools WHERE id = :id",
+            "supportsTools = :supportsTools, hasChatTemplate = :hasChatTemplate WHERE id = :id",
     )
     suspend fun updateKvCacheShape(
         id: String,
@@ -48,6 +48,7 @@ interface ModelDao {
         kvShapeVersion: Long,
         supportsThinking: Boolean,
         supportsTools: Boolean,
+        hasChatTemplate: Boolean,
     )
 
     /**
@@ -57,6 +58,10 @@ interface ModelDao {
      */
     @Query("UPDATE models SET contextOverride = :contextOverride WHERE id = :id")
     suspend fun setContextOverride(id: String, contextOverride: String?)
+
+    /** Same as [setContextOverride], for [ModelEntity.chatTemplateOverride] (TEN-159). */
+    @Query("UPDATE models SET chatTemplateOverride = :chatTemplateOverride WHERE id = :id")
+    suspend fun setChatTemplateOverride(id: String, chatTemplateOverride: String?)
 
     /**
      * REPLACE, not ABORT: a re-import of a missing file relinks its row by inserting it again under

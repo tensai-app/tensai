@@ -35,6 +35,8 @@ import androidx.room.PrimaryKey
  *   ([io.github.hokanosekai.tensai.engine.LoadedModelInfo.backend]) — informational only, *not*
  *   checked by [SessionRepository.restore]: the on-disk KV-cache format doesn't depend on which
  *   backend ran it, only on [modelId]/[nCtx]/[kvCacheType].
+ * @param chatTemplate the forced chat format the state was prefilled under (TEN-159), empty for the file's own
+ *   template, part of the mismatch check: a different template renders a different prompt.
  * @param tokenCount number of tokens included in the saved state, as reported by
  *   [io.github.hokanosekai.tensai.engine.LlamaKtEngine.saveSession].
  * @param sizeBytes size of the file at [filePath] on disk, in bytes — feeds
@@ -52,6 +54,7 @@ data class SessionEntity(
     val nCtx: Int,
     val kvCacheType: String,
     val backend: String,
+    val chatTemplate: String = "",
     val tokenCount: Int,
     val sizeBytes: Long,
     val createdAt: Long,

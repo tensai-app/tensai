@@ -185,6 +185,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                 nCtx = config.nCtx,
                 onProgress = libProgress,
                 kvCacheType = kvCacheTypeArg,
+                chatTemplate = config.chatTemplate,
             )
         } catch (e: OutOfMemoryError) {
             throw OutOfMemoryException("Out of memory while loading model at ${config.path}", e)
@@ -213,6 +214,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
             backend = backend,
             kvCacheType = config.kvCacheType,
             modelId = config.modelId,
+            chatTemplate = config.chatTemplate,
         )
 
         refreshKvUsedCells()

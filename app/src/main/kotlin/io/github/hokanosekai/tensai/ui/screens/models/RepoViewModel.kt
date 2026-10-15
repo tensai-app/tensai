@@ -103,6 +103,7 @@ internal data class QuantRow(
     val selected: Boolean,
     val recommended: Boolean,
     val onDevice: Boolean,
+    val veryLowQuality: Boolean = false,
 )
 
 /**
@@ -147,6 +148,7 @@ internal data class RepoState(
                     selected = rated.quant.fileName == selected,
                     recommended = rated.quant.fileName == l.recommendedFile,
                     onDevice = onDeviceId(rated.quant) != null,
+                    veryLowQuality = QuantLabel.isVeryLowQuality(rated.quant.quant),
                 )
             }
         }

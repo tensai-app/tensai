@@ -19,8 +19,8 @@ import io.github.hokanosekai.tensai.engine.GgufInfo
  * Nothing here interprets the number.
  *
  * A stale row is re-read for its KV shape *and* its capabilities (`supportsThinking`, `supportsTools`,
- * TEN-154). A migration that adds a column derived from the header can therefore reset
- * `kvShapeVersion` to 0 to get every row re-read once, as [TensaiDbMigrations.MIGRATION_12_13] does.
+ * `hasChatTemplate`, TEN-154, TEN-159). A migration that adds a column derived from the header can therefore reset
+ * `kvShapeVersion` to 0 to get every row re-read once, as [TensaiDbMigrations.MIGRATION_12_13] and [TensaiDbMigrations.MIGRATION_14_15] do.
  *
  * **Why the version is not a constant in this file.** The derivation lives in `tensai_jni.cpp`, in
  * a pinned submodule; the C++ is what reads the header and applies the formula, and Kotlin only
@@ -93,6 +93,7 @@ internal class KvCacheShapeBackfill(
                 // The same re-read refreshes the capabilities (TEN-154), from the chat template.
                 supportsThinking = ChatTemplateCapabilities.supportsThinking(info),
                 supportsTools = ChatTemplateCapabilities.supportsTools(info),
+                hasChatTemplate = ChatTemplateCapabilities.hasChatTemplate(info),
             )
         }
     }

@@ -18,6 +18,7 @@ import java.util.Locale
  * @param id repo path, `author/name`.
  * @param paramCount 0 when unknown: the params part of the subtitle is dropped.
  * @param downloads / [likes] null for a catalog entry: it is shown offline, there is no count to show.
+ * @param noTemplate the Hub shows no chat template for the repo (TEN-159), a warning chip.
  */
 internal data class RepoCardModel(
     val id: String,
@@ -33,6 +34,7 @@ internal data class RepoCardModel(
     val gated: Boolean,
     val downloads: Long?,
     val likes: Long?,
+    val noTemplate: Boolean = false,
 )
 
 /** Pure rules behind the Discover home: no Android, no network, so they run on the JVM. */
@@ -98,6 +100,7 @@ internal object DiscoverLogic {
             gated = summary.isGated,
             downloads = summary.downloads,
             likes = summary.likes,
+            noTemplate = !detail.hasChatTemplate,
         )
     }
 

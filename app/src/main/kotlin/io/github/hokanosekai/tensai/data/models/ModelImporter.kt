@@ -240,6 +240,7 @@ internal class ModelImporter(
             blockCount = info.blockCount,
             supportsThinking = ChatTemplateCapabilities.supportsThinking(info),
             supportsTools = ChatTemplateCapabilities.supportsTools(info),
+            hasChatTemplate = ChatTemplateCapabilities.hasChatTemplate(info),
             importedAt = System.currentTimeMillis(),
             kvFullElementsPerToken = info.kvFullElementsPerToken,
             kvSwaElementsPerToken = info.kvSwaElementsPerToken,
@@ -267,7 +268,7 @@ internal class ModelImporter(
                 val toStore = if (target == null) {
                     entity
                 } else {
-                    entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt, contextOverride = target.contextOverride)
+                    entity.copy(id = target.id, displayName = target.displayName, importedAt = target.importedAt, contextOverride = target.contextOverride, chatTemplateOverride = target.chatTemplateOverride)
                         // A re-import of the same file keeps where it was first downloaded from.
                         .let { if (origin == null) it.withOrigin(target.origin) else it }
                 }

@@ -211,6 +211,14 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun restoreReturnsMismatchWhenTheChatTemplateDiffers() = runBlocking {
+        repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
+
+        assertTrue(repository.restore("c1", key.copy(chatTemplate = "mistral"), restored) is RestoreResult.Mismatch)
+        assertTrue("a mismatch must not delete the row", dao.getByConversation("c1") != null)
+    }
+
+    @Test
     fun restoreReturnsCorruptedAndDeletesTheRowWhenTheFileIsMissing() = runBlocking {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
         File(dao.getByConversation("c1")!!.filePath).delete()

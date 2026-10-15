@@ -56,6 +56,16 @@ class ModelCardPartsTest {
     }
 
     @Test
+    fun theNoTemplateWarningSitsBetweenTheCapabilitiesAndTheGate() {
+        assertEquals(
+            listOf(CardChip.Tools, CardChip.Thinking, CardChip.NoTemplate, CardChip.Gated),
+            cardChips(tools = true, thinking = true, noTemplate = true, gated = true),
+        )
+        assertEquals(listOf(CardChip.NoTemplate), cardChips(noTemplate = true))
+        assertEquals(emptyList<CardChip>(), cardChips(noTemplate = false))
+    }
+
+    @Test
     fun noChipMeansAnEmptyList() {
         assertEquals(emptyList<CardChip>(), cardChips())
     }

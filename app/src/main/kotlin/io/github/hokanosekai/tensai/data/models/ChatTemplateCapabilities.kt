@@ -15,6 +15,9 @@ object ChatTemplateCapabilities {
     /** The template references the `tools` variable. */
     fun supportsTools(template: String?): Boolean = !template.isNullOrEmpty() && TOOLS.containsMatchIn(template)
 
+    /** The GGUF carries a chat template of its own (TEN-159). Empty means llama.cpp will fall back to ChatML. */
+    fun hasChatTemplate(info: GgufInfo): Boolean = info.chatTemplate.isNotEmpty()
+
     /** An installed model: the default template takes tools, or the GGUF ships a separate `tool_use` template. */
     fun supportsTools(info: GgufInfo): Boolean = info.hasToolUseTemplate || supportsTools(info.chatTemplate)
 

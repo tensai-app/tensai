@@ -378,7 +378,7 @@ class ChatViewModel(
     val currentModelSupportsThinking: Flow<Boolean> =
         combine(inferenceQueue.state, modelRepository.models) { state, models ->
             val loadedId = state.residentModel?.modelId ?: return@combine false
-            models.any { it.id == loadedId && it.supportsThinking }
+            models.any { it.id == loadedId && it.thinkingAvailable }
         }
 
     /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
@@ -739,6 +739,7 @@ class ChatViewModel(
             nCtx = info.nCtxEffective,
             kvCacheType = info.kvCacheType,
             backend = info.backend,
+            chatTemplate = info.chatTemplate.orEmpty(),
         )
     }
 

@@ -506,6 +506,8 @@ class LoadModelContextTest {
 
         override suspend fun setContextOverride(id: String, contextOverride: String?) = Unit
 
+        override suspend fun setChatTemplateOverride(id: String, chatTemplateOverride: String?) = Unit
+
         override suspend fun withStaleKvCacheShape(kvShapeVersion: Long): List<ModelEntity> =
             models.values.filter { it.kvShapeVersion != kvShapeVersion }
 
@@ -517,6 +519,7 @@ class LoadModelContextTest {
             kvShapeVersion: Long,
             supportsThinking: Boolean,
             supportsTools: Boolean,
+            hasChatTemplate: Boolean,
         ) = Unit
 
         override suspend fun insert(model: ModelEntity) {

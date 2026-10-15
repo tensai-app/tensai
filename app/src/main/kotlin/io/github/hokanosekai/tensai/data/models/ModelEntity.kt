@@ -49,6 +49,11 @@ import io.github.hokanosekai.tensai.hf.QuantLabel
  *   what rows from before v13 hold until [KvCacheShapeBackfill] re-reads their header.
  * @param contextOverride this model's own [ContextSetting] by name, `null` = use the global one (TEN-150). Never
  *   written by the header backfill: it is the user's choice, not a derived figure.
+ * @param hasChatTemplate the GGUF ships a `tokenizer.chat_template` (TEN-159). `false` makes llama.cpp fall
+ *   back to ChatML, see [ChatTemplateGuess]. `true` is also what rows from before v15 hold until
+ *   [KvCacheShapeBackfill] re-reads their header, so no warning shows on a guess.
+ * @param chatTemplateOverride this model's own [ChatTemplateChoice] by [ChatTemplateChoice.id], `null` = Auto.
+ *   Like [contextOverride], the user's choice: never written by the header backfill.
  */
 @Entity(tableName = "models")
 data class ModelEntity(
@@ -77,10 +82,40 @@ data class ModelEntity(
     val downloadedAt: Long? = null,
     val supportsTools: Boolean = false,
     val contextOverride: String? = null,
+    val hasChatTemplate: Boolean = true,
+    val chatTemplateOverride: String? = null,
 ) {
     /** [contextOverride] as a [ContextSetting], `null` for none (or a name this build does not know). */
     val contextSettingOverride: ContextSetting?
         get() = ContextSetting.parse(contextOverride)
+
+    /** [chatTemplateOverride] as a [ChatTemplateChoice], `null` for Auto (or an id this build does not know). */
+    val chatTemplateChoice: ChatTemplateChoice?
+        get() = ChatTemplateChoice.parse(chatTemplateOverride)
+
+    /** What Auto picks for a file without a template of its own, see [ChatTemplateGuess]. */
+    val chatTemplateGuess: ChatTemplateChoice
+        get() = ChatTemplateGuess.of(architecture, displayName, sourceRepo, fileName)
+
+    /**
+     * The format a load forces (TEN-159), `null` to keep the file's own template: the user's choice
+     * first, then the guess when the file has none. This is what the native load gets, and what
+     * [io.github.hokanosekai.tensai.data.session.SessionModelKey] is told, so a change of either
+     * the choice or the file's fate drops the saved sessions.
+     */
+    val chatTemplateToLoad: ChatTemplateChoice?
+        get() = chatTemplateChoice ?: if (hasChatTemplate) null else chatTemplateGuess
+
+    /**
+     * [supportsThinking] and [supportsTools] read off the file's own template, so they only hold
+     * while that template is the one used: a forced or guessed one (see [chatTemplateToLoad]) has no
+     * thinking block and no tool_use part.
+     */
+    val thinkingAvailable: Boolean
+        get() = supportsThinking && chatTemplateToLoad == null
+
+    val toolsAvailable: Boolean
+        get() = supportsTools && chatTemplateToLoad == null
 
     /** Where this model was downloaded from, null for an import (or a row from before TEN-142). */
     val origin: ModelOrigin?
