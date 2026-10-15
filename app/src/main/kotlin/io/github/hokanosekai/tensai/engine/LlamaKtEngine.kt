@@ -17,6 +17,10 @@ package io.github.hokanosekai.tensai.engine
  * @param fileSizeBytes size of the GGUF file on disk, in bytes.
  * @param supportsThinking whether the model's chat template supports a
  *   thinking/reasoning mode (e.g. Qwen3).
+ * @param chatTemplate raw Jinja chat template from the header, empty when it has none. The app
+ *   derives its capability flags from it with
+ *   [io.github.hokanosekai.tensai.data.models.ChatTemplateCapabilities].
+ * @param hasToolUseTemplate the GGUF also carries a separate `tool_use` chat template, which counts as tool support.
  * @param kvFullElementsPerToken K+V cache elements one context token occupies
  *   across the layers whose cache is sized by `n_ctx`, summed the way
  *   llama.cpp allocates it (per-layer KV head count × head dimension) rather
@@ -49,6 +53,8 @@ data class GgufInfo(
     val vocabSize: Long,
     val fileSizeBytes: Long,
     val supportsThinking: Boolean,
+    val chatTemplate: String = "",
+    val hasToolUseTemplate: Boolean = false,
     val kvFullElementsPerToken: Long = 0,
     val kvSwaElementsPerToken: Long = 0,
     val slidingWindow: Long = 0,

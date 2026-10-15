@@ -227,6 +227,19 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v12 -> v13 (TEN-154): `models.supportsTools`. `DEFAULT 0` because SQLite needs one to add a
+     * NOT NULL column, so every existing row reads "no tools" until [KvCacheShapeBackfill] re-reads
+     * its header. The migration resets `kvShapeVersion` to 0 on every row to make them all stale: the
+     * backfill re-reads a stale row for its KV shape and its capabilities, once, and stamps it current.
+     */
+    val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `models` ADD COLUMN `supportsTools` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("UPDATE `models` SET `kvShapeVersion` = 0")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -240,5 +253,6 @@ object TensaiDbMigrations {
         MIGRATION_9_10,
         MIGRATION_10_11,
         MIGRATION_11_12,
+        MIGRATION_12_13,
     )
 }

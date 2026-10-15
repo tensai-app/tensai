@@ -23,10 +23,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Eject
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -278,7 +280,7 @@ internal fun EffectiveBackend.displayName(): String = when (this) {
     EffectiveBackend.Cpu -> stringResource(R.string.models_filter_cpu)
 }
 
-/** "Loaded" first, then quant, size, and the backend a load would use (none without a verdict). */
+/** "Loaded" first, then quant, size, the backend a load would use (none without a verdict), then Tools and Thinking (TEN-154). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelBadges(
@@ -302,6 +304,8 @@ internal fun ModelBadges(
                 icon = if (backend == EffectiveBackend.Cpu) Icons.Default.Memory else Icons.Default.Bolt,
             )
         }
+        if (model.supportsTools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
+        if (model.supportsThinking) TensaiBadge(stringResource(R.string.discover_badge_thinking), icon = Icons.Default.Psychology)
         extraBadge?.invoke()
     }
 }

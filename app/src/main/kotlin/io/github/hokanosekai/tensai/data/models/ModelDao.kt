@@ -17,7 +17,9 @@ interface ModelDao {
     suspend fun getById(id: String): ModelEntity?
 
     /**
-     * Rows whose KV-cache shape was derived by anything other than [kvShapeVersion] — see
+     * Rows whose header-derived data (KV-cache shape and capabilities) was produced by anything other
+     * than [kvShapeVersion]: the backfill re-reads them for both. A migration may reset the version
+     * to 0 to refresh capabilities. See
      * [KvCacheShapeBackfill], which is the only caller, and [TensaiDbMigrations.MIGRATION_7_8] for
      * where the pre-TEN-72 rows' `0` comes from.
      *
@@ -35,7 +37,8 @@ interface ModelDao {
     @Query(
         "UPDATE models SET kvFullElementsPerToken = :kvFullElementsPerToken, " +
             "kvSwaElementsPerToken = :kvSwaElementsPerToken, slidingWindow = :slidingWindow, " +
-            "kvShapeVersion = :kvShapeVersion WHERE id = :id",
+            "kvShapeVersion = :kvShapeVersion, supportsThinking = :supportsThinking, " +
+            "supportsTools = :supportsTools WHERE id = :id",
     )
     suspend fun updateKvCacheShape(
         id: String,
@@ -43,6 +46,8 @@ interface ModelDao {
         kvSwaElementsPerToken: Long,
         slidingWindow: Long,
         kvShapeVersion: Long,
+        supportsThinking: Boolean,
+        supportsTools: Boolean,
     )
 
     /**

@@ -200,6 +200,8 @@ class LoadModelRetryOnCpuTest {
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
             kvShapeVersion: Long,
+            supportsThinking: Boolean,
+            supportsTools: Boolean,
         ) = Unit
 
         override suspend fun insert(model: ModelEntity) {

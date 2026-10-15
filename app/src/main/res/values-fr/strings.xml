@@ -255,6 +255,7 @@
     <string name="discover_ram_badge">%1$s de RAM</string>
     <string name="discover_section_popular">Populaires sur Hugging Face</string>
     <string name="discover_badge_tools">Outils</string>
+    <string name="discover_badge_thinking">Réflexion</string>
     <string name="discover_badge_vision">Vision</string>
     <string name="discover_badge_gated">Restreint</string>
     <!-- %1$s est un compteur formaté (1.5k). -->
@@ -292,6 +293,7 @@
     <string name="models_import_progress">Copie du modèle · %1$s / %2$s</string>
     <string name="models_import_progress_unknown">Copie du modèle</string>
     <string name="model_detail_section_model">Modèle</string>
+    <string name="model_detail_section_capabilities">Capacités</string>
     <string name="model_detail_section_device">Sur cet appareil</string>
     <string name="model_detail_context_trained">%1$s entraînés</string>
     <string name="model_detail_context_used">%1$s utilisés</string>
@@ -330,6 +332,7 @@
     <string name="model_detail_context_length">Longueur de contexte</string>
     <string name="model_detail_file_size">Taille du fichier</string>
     <string name="model_detail_thinking">Mode réflexion</string>
+    <string name="model_detail_tools">Outils</string>
     <string name="model_detail_supported">Pris en charge</string>
     <string name="model_detail_not_supported">Non pris en charge</string>
     <string name="model_detail_backend">Backend</string>

@@ -44,6 +44,8 @@ import io.github.hokanosekai.tensai.hf.QuantLabel
  * @param sourceSha256 the hash the Hub announced for it, null when it did not.
  * @param sourceCommit the repo commit the download was pinned to, null when it fell back to `main`.
  * @param downloadedAt epoch millis when the download was registered as this model.
+ * @param supportsTools the chat template takes tools, see [ChatTemplateCapabilities] (TEN-154). `false` is also
+ *   what rows from before v13 hold until [KvCacheShapeBackfill] re-reads their header.
  */
 @Entity(tableName = "models")
 data class ModelEntity(
@@ -70,6 +72,7 @@ data class ModelEntity(
     val sourceSha256: String? = null,
     val sourceCommit: String? = null,
     val downloadedAt: Long? = null,
+    val supportsTools: Boolean = false,
 ) {
     /** Where this model was downloaded from, null for an import (or a row from before TEN-142). */
     val origin: ModelOrigin?

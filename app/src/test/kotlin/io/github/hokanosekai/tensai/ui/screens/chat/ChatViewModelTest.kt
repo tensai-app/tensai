@@ -1685,6 +1685,8 @@ class ChatViewModelTest {
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
             kvShapeVersion: Long,
+            supportsThinking: Boolean,
+            supportsTools: Boolean,
         ) {
             val existing = models[id] ?: return
             models[id] = existing.copy(

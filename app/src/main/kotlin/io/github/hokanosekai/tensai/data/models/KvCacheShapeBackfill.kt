@@ -18,6 +18,10 @@ import io.github.hokanosekai.tensai.engine.GgufInfo
  * So the row records which formula produced it, and this class re-reads whatever doesn't match.
  * Nothing here interprets the number.
  *
+ * A stale row is re-read for its KV shape *and* its capabilities (`supportsThinking`, `supportsTools`,
+ * TEN-154). A migration that adds a column derived from the header can therefore reset
+ * `kvShapeVersion` to 0 to get every row re-read once, as [TensaiDbMigrations.MIGRATION_12_13] does.
+ *
  * **Why the version is not a constant in this file.** The derivation lives in `tensai_jni.cpp`, in
  * a pinned submodule; the C++ is what reads the header and applies the formula, and Kotlin only
  * copies the result out of a JSON field. A constant here would be a number somebody has to
@@ -86,6 +90,9 @@ internal class KvCacheShapeBackfill(
                 // What the read itself reported, not `version`. Same number in any single process,
                 // but this is the one that actually produced the three figures above it.
                 kvShapeVersion = info.kvShapeVersion,
+                // The same re-read refreshes the capabilities (TEN-154), from the chat template.
+                supportsThinking = ChatTemplateCapabilities.supportsThinking(info),
+                supportsTools = ChatTemplateCapabilities.supportsTools(info),
             )
         }
     }

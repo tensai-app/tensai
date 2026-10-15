@@ -332,6 +332,8 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         vocabSize = vocabSize,
         fileSizeBytes = fileSizeBytes,
         supportsThinking = supportsThinking,
+        chatTemplate = chatTemplate,
+        hasToolUseTemplate = hasToolUseTemplate,
         kvFullElementsPerToken = kvFullElementsPerToken,
         kvSwaElementsPerToken = kvSwaElementsPerToken,
         slidingWindow = slidingWindow,

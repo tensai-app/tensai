@@ -69,7 +69,7 @@ class TensaiDbMigrationSqlTest {
         val all = TensaiDbMigrations.ALL.sortedBy { it.startVersion }
         all.zipWithNext { a, b -> assertEquals("a gap after v${a.endVersion}", a.endVersion, b.startVersion) }
         assertEquals(1, all.first().startVersion)
-        assertEquals(schema(12).getJSONObject("database").getInt("version"), all.last().endVersion)
+        assertEquals(schema(13).getJSONObject("database").getInt("version"), all.last().endVersion)
     }
 
     @Test
@@ -107,11 +107,11 @@ class TensaiDbMigrationSqlTest {
     }
 
     @Test
-    fun theEntityFieldsAreTheV12Columns() {
-        val twelve = modelColumns(schema(12)).map { it.name }.toSet()
+    fun theEntityFieldsAreTheV13Columns() {
+        val current = modelColumns(schema(13)).map { it.name }.toSet()
         val entity = ModelEntity::class.java.declaredFields.map { it.name }
             .filter { it != "Companion" && !it.startsWith("$") }.toSet()
 
-        assertEquals("ModelEntity and 12.json drifted apart, rebuild to re-export the schema", twelve, entity)
+        assertEquals("ModelEntity and 13.json drifted apart, rebuild to re-export the schema", current, entity)
     }
 }

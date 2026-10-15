@@ -130,6 +130,57 @@ class KvCacheShapeBackfillTest {
         assertEquals(114_688L, dao.rows.getValue("fresh").kvFullElementsPerToken)
     }
 
+    // ---- capabilities (TEN-154) ----
+
+    /**
+     * A row from before v13 holds `supportsTools = false` because the column did not exist, not
+     * because the model has no tools: the pass reads the template and corrects it, in the same
+     * re-read as the shape.
+     */
+    @Test
+    fun aStaleRowGetsItsToolsFromTheChatTemplate() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = currentVersion - 1))
+        dao.put(row(id = "m2", kvFull = 114_688, version = currentVersion - 1))
+
+        backfill(
+            shapeOf(
+                "m1" to header(kvFull = 114_688, version = currentVersion, template = "{%- if tools %}x{%- endif %}"),
+                "m2" to header(kvFull = 114_688, version = currentVersion, template = "{{ messages }}"),
+            ),
+        ).run()
+
+        assertTrue(dao.rows.getValue("m1").supportsTools)
+        assertEquals(false, dao.rows.getValue("m2").supportsTools)
+    }
+
+    @Test
+    fun aSeparateToolUseTemplateCountsAsToolSupport() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = 0))
+
+        backfill(shapeOf("m1" to header(kvFull = 114_688, version = currentVersion, template = "{{ messages }}", toolUse = true))).run()
+
+        assertTrue(dao.rows.getValue("m1").supportsTools)
+    }
+
+    @Test
+    fun theThinkingFlagIsRefreshedFromTheHeaderToo() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = currentVersion - 1).copy(supportsThinking = false))
+
+        backfill(shapeOf("m1" to header(kvFull = 114_688, version = currentVersion, thinking = true))).run()
+
+        assertTrue(dao.rows.getValue("m1").supportsThinking)
+    }
+
+    @Test
+    fun aRowAlreadyOnTheCurrentVersionKeepsItsCapabilities() = runBlocking {
+        dao.put(row(id = "m1", kvFull = 114_688, version = currentVersion).copy(supportsTools = true))
+
+        backfill(shapeOf("m1" to header(kvFull = 114_688, version = currentVersion, template = ""))).run()
+
+        assertTrue(readPaths.isEmpty())
+        assertTrue(dao.rows.getValue("m1").supportsTools)
+    }
+
     // ---- the pass must not repeat itself ----
 
     /**
@@ -229,7 +280,7 @@ class KvCacheShapeBackfillTest {
         }
     }
 
-    private fun header(kvFull: Long, version: Long) = GgufInfo(
+    private fun header(kvFull: Long, version: Long, template: String = "", thinking: Boolean = true, toolUse: Boolean = false) = GgufInfo(
         architecture = "qwen3",
         name = "Qwen3 1.7B",
         quantLabel = "Q4_K_M",
@@ -239,7 +290,9 @@ class KvCacheShapeBackfillTest {
         paramCount = 1_700_000_000,
         vocabSize = 151_936,
         fileSizeBytes = 0,
-        supportsThinking = true,
+        supportsThinking = thinking,
+        chatTemplate = template,
+        hasToolUseTemplate = toolUse,
         kvFullElementsPerToken = kvFull,
         kvShapeVersion = version,
     )
@@ -288,6 +341,8 @@ class KvCacheShapeBackfillTest {
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
             kvShapeVersion: Long,
+            supportsThinking: Boolean,
+            supportsTools: Boolean,
         ) {
             val existing = rows[id] ?: return
             rows[id] = existing.copy(
@@ -295,6 +350,8 @@ class KvCacheShapeBackfillTest {
                 kvSwaElementsPerToken = kvSwaElementsPerToken,
                 slidingWindow = slidingWindow,
                 kvShapeVersion = kvShapeVersion,
+                supportsThinking = supportsThinking,
+                supportsTools = supportsTools,
             )
             flow.value = rows.values.toList()
         }

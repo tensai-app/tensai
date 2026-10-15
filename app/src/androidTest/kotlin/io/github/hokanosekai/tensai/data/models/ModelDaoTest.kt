@@ -81,6 +81,8 @@ class ModelDaoTest {
             kvSwaElementsPerToken = 0,
             slidingWindow = 0,
             kvShapeVersion = 2,
+            supportsThinking = true,
+            supportsTools = true,
         )
 
         val updated = checkNotNull(dao.getById("m1"))

@@ -320,6 +320,7 @@
     <string name="discover_section_popular">Popular on Hugging Face</string>
     <string name="discover_author_params" translatable="false">%1$s · %2$s</string>
     <string name="discover_badge_tools">Tools</string>
+    <string name="discover_badge_thinking">Thinking</string>
     <string name="discover_badge_vision">Vision</string>
     <string name="discover_badge_gated">Gated</string>
     <!-- %1$s is a formatted count (1.5k). -->
@@ -359,6 +360,7 @@
     <string name="models_import_progress">Copying model · %1$s / %2$s</string>
     <string name="models_import_progress_unknown">Copying model</string>
     <string name="model_detail_section_model">Model</string>
+    <string name="model_detail_section_capabilities">Capabilities</string>
     <string name="model_detail_section_device">On this device</string>
     <!-- %1$s is a token count. -->
     <string name="model_detail_context_trained">%1$s trained</string>
@@ -402,6 +404,7 @@
     <string name="model_detail_context_length">Context length</string>
     <string name="model_detail_file_size">File size</string>
     <string name="model_detail_thinking">Thinking mode</string>
+    <string name="model_detail_tools">Tools</string>
     <string name="model_detail_supported">Supported</string>
     <string name="model_detail_not_supported">Not supported</string>
     <string name="model_detail_backend">Backend</string>

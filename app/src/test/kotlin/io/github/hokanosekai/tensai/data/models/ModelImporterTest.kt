@@ -381,6 +381,25 @@ class ModelImporterTest {
         override fun read(): Int = throw UnsupportedOperationException("the copy reads in buffers")
     }
 
+    // ---- capabilities (TEN-154) ----
+
+    @Test
+    fun aNewModelGetsItsToolsAndThinkingFromTheHeader() = runBlocking {
+        importer = newImporter(readMetadata = { ggufInfo(template = "{%- if tools %}{{ enable_thinking }}{%- endif %}") })
+
+        val stored = importMine()
+
+        assertTrue(stored.supportsTools)
+        assertTrue(stored.supportsThinking)
+    }
+
+    @Test
+    fun aTemplateWithoutToolsLeavesTheFlagOff() = runBlocking {
+        importer = newImporter(readMetadata = { ggufInfo(template = "{{ messages }}") })
+
+        assertEquals(false, importMine().supportsTools)
+    }
+
     // ---- re-import of a missing file (TEN-122) ----
 
     private suspend fun importMine(using: ModelImporter = importer) =
@@ -638,6 +657,8 @@ class ModelImporterTest {
             kvSwaElementsPerToken: Long,
             slidingWindow: Long,
             kvShapeVersion: Long,
+            supportsThinking: Boolean,
+            supportsTools: Boolean,
         ) = Unit
 
         // Synchronized because the race test really does insert from two threads at once.
@@ -655,7 +676,7 @@ class ModelImporterTest {
         }
     }
 
-    private fun ggufInfo(paramCount: Long = 1_700_000_000, blockCount: Long = 28) = GgufInfo(
+    private fun ggufInfo(paramCount: Long = 1_700_000_000, blockCount: Long = 28, template: String = "") = GgufInfo(
         architecture = "qwen3",
         name = "",
         quantLabel = "Q4_K_M",
@@ -666,6 +687,7 @@ class ModelImporterTest {
         vocabSize = 151_936,
         fileSizeBytes = 0,
         supportsThinking = true,
+        chatTemplate = template,
         kvFullElementsPerToken = 114_688,
         kvShapeVersion = SHAPE_VERSION,
     )

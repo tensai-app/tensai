@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Eject
@@ -281,7 +282,14 @@ fun ModelDetailScreen(
                                 },
                                 trailing = { MonoText(stringResource(R.string.model_detail_context_used, groupedNumber(plannedCtx.toLong()))) },
                             )
-                            RowDivider()
+                            if (origin != null) {
+                                RowDivider()
+                                SourceRow(origin = origin)
+                            }
+                        }
+
+                        SectionLabel(stringResource(R.string.model_detail_section_capabilities))
+                        SectionCard {
                             SettingsRow(
                                 icon = Icons.Default.Psychology,
                                 title = stringResource(R.string.model_detail_thinking),
@@ -293,10 +301,18 @@ fun ModelDetailScreen(
                                     )
                                 },
                             )
-                            if (origin != null) {
-                                RowDivider()
-                                SourceRow(origin = origin)
-                            }
+                            RowDivider()
+                            SettingsRow(
+                                icon = Icons.Default.Construction,
+                                title = stringResource(R.string.model_detail_tools),
+                                trailing = {
+                                    ValueText(
+                                        stringResource(
+                                            if (model.supportsTools) R.string.model_detail_supported else R.string.model_detail_not_supported,
+                                        ),
+                                    )
+                                },
+                            )
                         }
 
                         SectionLabel(stringResource(R.string.model_detail_section_device))

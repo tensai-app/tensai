@@ -66,7 +66,7 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         SessionEntity::class,
         DownloadEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
