@@ -312,8 +312,6 @@
     <string name="models_tab_device">On device</string>
     <string name="models_tab_discover">Discover</string>
     <string name="model_open_details">Open model details</string>
-    <string name="model_options">Model options</string>
-    <string name="model_details_menu">Model details</string>
     <!-- Discover tab (TEN-137). %1$s in discover_ram_badge is the phone's memory, a formatted size. -->
     <string name="discover_search_hint">Search Hugging Face…</string>
     <string name="discover_search_clear">Clear search</string>

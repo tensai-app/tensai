@@ -248,8 +248,6 @@
     <string name="models_tab_device">Sur l\'appareil</string>
     <string name="models_tab_discover">Découvrir</string>
     <string name="model_open_details">Ouvrir les détails du modèle</string>
-    <string name="model_options">Options du modèle</string>
-    <string name="model_details_menu">Détails du modèle</string>
     <!-- Onglet Découvrir (TEN-137). %1$s dans discover_ram_badge est la mémoire du téléphone, une taille formatée. -->
     <string name="discover_search_hint">Rechercher sur Hugging Face…</string>
     <string name="discover_search_clear">Effacer la recherche</string>

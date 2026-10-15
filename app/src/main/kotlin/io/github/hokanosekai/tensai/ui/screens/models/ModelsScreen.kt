@@ -342,7 +342,6 @@ fun ModelsScreen(
                                 isLoaded = model.id == loadedModelId,
                                 onClick = { onModelClick(model.id) },
                                 onLoadClick = { onLoadModelClick(model.id) },
-                                onDetailsClick = { onModelClick(model.id) },
                                 onUnloadClick = {
                                     // applicationScope like the notification action: the unload may
                                     // save a session first and must outlive this screen.

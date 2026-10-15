@@ -25,14 +25,9 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Eject
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,7 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -90,14 +84,14 @@ import kotlinx.coroutines.flow.map
  * - file missing ([fileExists] false): error dot and label instead of the verdict, no backend
  *   badge, error-tonal "Unload" (still resident, TEN-107) or "Remove"
  *
- * The overflow menu (details, delete) replaces the old trash icon. [onDeleteClick] gets the file's
- * current existence so the caller can decide whether a confirmation is warranted.
+ * No overflow menu (TEN-155): the tap opens the details, which hold Delete. [onDeleteClick] is the
+ * "Remove" of a missing file.
  *
  * [backend] is what a load would use (see [backendTag]), resolved by the caller from one hoisted
  * preference collector; `null` shows no backend badge.
  *
- * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button, the overflow
- * menu and the tap target, [link] adds a mono "open in the browser" row, and [extraBadge] is one
+ * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button and the tap
+ * target, [link] adds a mono "open in the browser" row, and [extraBadge] is one
  * more badge after the others ("Imported"). The click callbacks are then unused, hence their defaults.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -113,7 +107,6 @@ internal fun ModelCard(
     onLoadClick: () -> Unit = {},
     onDeleteClick: (fileExists: Boolean) -> Unit = {},
     onUnloadClick: () -> Unit = {},
-    onDetailsClick: () -> Unit = {},
     link: ModelCardLink? = null,
     noAction: Boolean = false,
     extraBadge: (@Composable () -> Unit)? = null,
@@ -171,13 +164,6 @@ internal fun ModelCard(
                     )
                 }
                 ModelStatus(compatibility, modifier = Modifier.padding(top = 2.dp).widthIn(max = 140.dp))
-                if (!noAction) {
-                    ModelOverflowMenu(
-                        modelName = model.shownName,
-                        onDetails = onDetailsClick,
-                        onDelete = { onDeleteClick(fileExists) },
-                    )
-                }
             }
 
             ModelBadges(model, backend, isLoaded, modifier = Modifier.padding(top = 12.dp), extraBadge = extraBadge)
@@ -389,74 +375,6 @@ internal fun ModelActionButton(
             contentColor = error,
             modifier = modifier,
         )
-    }
-}
-
-/** more_vert trigger (48dp target) and its menu: surface, hairline, radius 16, "Model details" / "Delete model". */
-@Composable
-private fun ModelOverflowMenu(modelName: String, onDetails: () -> Unit, onDelete: () -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    // Takes only the icon's 24dp in the header row, so the dots sit on the status line and against
-    // the card's padding instead of a 48dp box pushing them down and in (TEN-132). The 48dp touch
-    // target still overhangs that slot by 12dp on each side.
-    Box(
-        modifier = Modifier.layout { measurable, constraints ->
-            val placeable = measurable.measure(constraints)
-            val slot = 24.dp.roundToPx()
-            val overhang = (placeable.width - slot) / 2
-            layout(slot, slot) { placeable.place(-overhang, -overhang) }
-        },
-    ) {
-        IconButton(onClick = { open = true }, modifier = Modifier.size(48.dp)) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = stringResource(R.string.model_options),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            shape = TensaiShapes.medium,
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            shadowElevation = 8.dp,
-            border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outline),
-            modifier = Modifier.widthIn(min = 196.dp),
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.model_details_menu), fontSize = 14.5.sp, fontWeight = FontWeight.Medium) },
-                leadingIcon = {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp))
-                },
-                onClick = {
-                    open = false
-                    onDetails()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(R.string.model_delete),
-                        fontSize = 14.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp),
-                    )
-                },
-                onClick = {
-                    open = false
-                    onDelete()
-                },
-            )
-        }
     }
 }
 
