@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -497,6 +498,34 @@ class ChatViewModel(
      * for everything else that wants the engine (see [InferenceQueue.warmUp]).
      */
     private var warmUpJob: Job? = null
+
+    /**
+     * Keeps this instance honest about its row: run from the screen's composition (cancelled with it).
+     * When the row it is bound to is gone (deleted from the Chats page while this screen sat under it
+     * on the back stack, or already gone when the screen came back), it stops what it owns and falls
+     * back to a fresh draft, so nothing is written for a deleted id and a later send starts a new
+     * conversation. A draft has no row to watch and emits nothing here.
+     */
+    suspend fun watchConversation() {
+        _conversationId
+            .flatMapLatest { id -> if (id == null) emptyFlow() else chatRepository.observeConversation(id).map { id to it } }
+            .collect { (id, row) -> if (row == null) dropDeletedConversation(id) }
+    }
+
+    private suspend fun dropDeletedConversation(id: String) = draftMutex.withLock {
+        if (_conversationId.value != id) return@withLock
+        // Before the reset, and the pointer cleared with it: a reply of ours still streaming would
+        // otherwise leave the deleted id in ActiveSessionTracker for the next save to pick up.
+        if (ActiveSessionTracker.current.value?.first == id) {
+            inferenceQueue.cancelActive()
+            ActiveSessionTracker.clear()
+        }
+        generationJob?.cancel()
+        warmUpJob?.cancel()
+        _error.value = null
+        draft.value = ConversationSettings()
+        _conversationId.value = null
+    }
 
     /**
      * To be called when the screen showing this conversation goes away (a different conversation,

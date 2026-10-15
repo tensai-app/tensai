@@ -59,7 +59,8 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     route == TensaiDestination.Device.route -> TensaiChrome.Detail
     route == TensaiDestination.Licenses.route -> TensaiChrome.Detail
     route == TensaiDestination.Server.route -> TensaiChrome.Detail
-    else -> TensaiChrome.None // loading, onboarding
+    // Chats draws its own bar, which turns into the selection bar in place.
+    else -> TensaiChrome.None // loading, onboarding, chats
 }
 
 @StringRes

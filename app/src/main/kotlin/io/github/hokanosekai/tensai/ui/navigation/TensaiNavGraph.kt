@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
+import io.github.hokanosekai.tensai.ui.screens.chats.ChatsScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ContextRingState
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
@@ -152,6 +153,16 @@ fun TensaiNavGraph(
                 contextRequests = chatContextRequests,
                 onContextRingState = onChatContextRingState,
                 onConversationCreated = { onChatConversationCreated(backStackEntry.id, it) },
+            )
+        }
+
+        // Pushed like every other destination: a conversation opened from here lands on top of this
+        // page, so back returns to the list (TEN-165). It draws its own top bar (selection mode).
+        composable(TensaiDestination.Chats.route) {
+            ChatsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenConversation = { navController.navigate(TensaiDestination.Chat.route(it)) },
+                onNewChat = { navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) },
             )
         }
 

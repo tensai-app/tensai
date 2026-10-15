@@ -8,7 +8,7 @@
      and inside « ». Technical terms French developers use as-is stay as-is (GGUF, token, prompt,
      backend, CPU, GPU, Vulkan, KV cache).
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Greetings. -->
     <string name="home_greeting_morning">Bonjour.</string>
@@ -206,6 +206,40 @@
     <string name="nav_server">Serveur</string>
     <string name="drawer_new_chat">Nouvelle discussion</string>
     <string name="drawer_recents">Récentes</string>
+    <string name="nav_chats">Discussions</string>
+    <string name="drawer_all_chats">Toutes les discussions</string>
+
+    <!-- Chats page (TEN-165). Group labels are shown uppercase. -->
+    <string name="chats_search_placeholder">Rechercher une discussion</string>
+    <string name="chats_search_clear">Effacer la recherche</string>
+    <string name="chats_no_match">Aucune discussion ne correspond à « %1$s »</string>
+    <string name="chats_group_today">Aujourd\'hui</string>
+    <string name="chats_group_yesterday">Hier</string>
+    <string name="chats_group_previous_7_days">7 derniers jours</string>
+    <string name="chats_group_this_month">Ce mois-ci</string>
+    <string name="chats_exit_selection">Quitter la sélection</string>
+    <!-- French "one" covers 0 and 1. -->
+    <plurals name="chats_selected_count">
+        <item quantity="one">%1$d sélectionnée</item>
+        <item quantity="many">%1$d sélectionnées</item>
+        <item quantity="other">%1$d sélectionnées</item>
+    </plurals>
+    <string name="chats_select_all">Tout sélectionner</string>
+    <string name="chats_select_none">Tout désélectionner</string>
+    <string name="chats_delete">Supprimer</string>
+    <plurals name="chats_delete_title">
+        <item quantity="one">Supprimer %1$d discussion ?</item>
+        <item quantity="many">Supprimer %1$d discussions ?</item>
+        <item quantity="other">Supprimer %1$d discussions ?</item>
+    </plurals>
+    <plurals name="chats_delete_body" tools:ignore="ImpliedQuantity">
+        <item quantity="one">Ses messages et sa session enregistrée sont supprimés de ce téléphone.</item>
+        <item quantity="many">Leurs messages et les sessions enregistrées sont supprimés de ce téléphone.</item>
+        <item quantity="other">Leurs messages et les sessions enregistrées sont supprimés de ce téléphone.</item>
+    </plurals>
+    <string name="chats_long_click_label">Sélectionner</string>
+    <string name="chats_state_selected">Sélectionnée</string>
+    <string name="chats_state_not_selected">Non sélectionnée</string>
     <string name="top_bar_no_model">aucun modèle</string>
     <string name="top_bar_open_menu">Ouvrir le menu</string>
 

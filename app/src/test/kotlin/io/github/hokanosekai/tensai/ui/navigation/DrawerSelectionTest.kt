@@ -13,6 +13,11 @@ class DrawerSelectionTest {
     }
 
     @Test
+    fun chatsRouteSelectsChatsRow() {
+        assertEquals("chats", drawerSelectedKey(TensaiDestination.Chats.route, null))
+    }
+
+    @Test
     fun savedChatSelectsItsRecentRow() {
         assertEquals(recentKey("abc"), drawerSelectedKey(TensaiDestination.Chat.route, "abc"))
     }

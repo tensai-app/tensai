@@ -43,12 +43,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -1533,6 +1535,33 @@ class ChatViewModelTest {
         withTimeout(5_000) { awaitGeneration() }
 
         assertEquals(1, engine.warmUpInterrupted)
+    }
+
+    @Test
+    fun aDeletedConversationFallsBackToAFreshDraft() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(10)
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+        viewModel.send("hi")
+        withTimeout(5_000) { awaitGeneration() }
+        assertEquals(conversation, ActiveSessionTracker.current.value?.first)
+
+        val watcher = launch { viewModel.watchConversation() }
+        chatRepository.deleteConversation(conversation)
+        withTimeout(5_000) { viewModel.currentConversationId.first { it == null } }
+
+        assertNull("no pointer left on the deleted id", ActiveSessionTracker.current.value)
+        assertTrue(viewModel.messages.first().isEmpty())
+
+        viewModel.send("again")
+        withTimeout(5_000) { awaitGeneration() }
+        val fresh = viewModel.currentConversationId.value
+        watcher.cancel()
+
+        assertNotNull(fresh)
+        assertNotEquals("a new row, not the deleted one", conversation, fresh)
+        assertTrue("nothing written under the deleted id", chatRepository.observeMessages(conversation).first().isEmpty())
     }
 
     @Test

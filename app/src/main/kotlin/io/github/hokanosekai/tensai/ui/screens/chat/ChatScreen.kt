@@ -113,9 +113,11 @@ fun ChatScreen(
     // that was preparing for the user's next message here. Keyed on the instance, so switching
     // conversations disposes the outgoing one's. The reply itself is not touched, see ChatViewModel.leave.
     DisposableEffect(viewModel) { onDispose { viewModel.leave() } }
+    // Its row deleted from the Chats page while this screen was beneath it: back to a fresh draft.
+    LaunchedEffect(viewModel) { viewModel.watchConversation() }
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     LaunchedEffect(currentConversationId) {
-        if (conversationId == null && currentConversationId != null) createdConversationId = currentConversationId
+        if (conversationId == null) createdConversationId = currentConversationId
         // The route keeps saying "new" after the first send; the shell's drawer needs the real id
         // to highlight this chat's row (TEN-116). Replacing the route instead would rebuild this
         // screen's view model, see the remember(conversationId) above.

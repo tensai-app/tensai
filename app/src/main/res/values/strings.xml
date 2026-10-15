@@ -278,6 +278,36 @@
     <string name="nav_server">Server</string>
     <string name="drawer_new_chat">New chat</string>
     <string name="drawer_recents">Recents</string>
+    <string name="nav_chats">Chats</string>
+    <string name="drawer_all_chats">All chats</string>
+
+    <!-- Chats page (TEN-165). Group labels are shown uppercase. -->
+    <string name="chats_search_placeholder">Search chats</string>
+    <string name="chats_search_clear">Clear search</string>
+    <string name="chats_no_match">No chats match “%1$s”</string>
+    <string name="chats_group_today">Today</string>
+    <string name="chats_group_yesterday">Yesterday</string>
+    <string name="chats_group_previous_7_days">Previous 7 days</string>
+    <string name="chats_group_this_month">This month</string>
+    <string name="chats_exit_selection">Exit selection</string>
+    <plurals name="chats_selected_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="chats_select_all">Select all</string>
+    <string name="chats_select_none">Select none</string>
+    <string name="chats_delete">Delete</string>
+    <plurals name="chats_delete_title">
+        <item quantity="one">Delete %1$d chat?</item>
+        <item quantity="other">Delete %1$d chats?</item>
+    </plurals>
+    <plurals name="chats_delete_body">
+        <item quantity="one">Its messages and saved session are removed from this phone.</item>
+        <item quantity="other">Their messages and saved sessions are removed from this phone.</item>
+    </plurals>
+    <string name="chats_long_click_label">Select</string>
+    <string name="chats_state_selected">Selected</string>
+    <string name="chats_state_not_selected">Not selected</string>
     <string name="top_bar_no_model">no model</string>
     <string name="top_bar_open_menu">Open menu</string>
 

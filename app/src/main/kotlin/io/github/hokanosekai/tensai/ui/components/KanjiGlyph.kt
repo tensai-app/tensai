@@ -63,8 +63,13 @@ private const val GlyphTranslateY = -143.5f
 /** Side of the square viewport the transformed path sits in (matches the vector drawable). */
 private const val GlyphViewportSize = 432f
 
-/** Zoom applied to the viewport-sized glyph so it fills ~87% of the box width, like 天 in a font of that size. */
-private const val GlyphZoom = 2.0f
+/**
+ * Zoom applied to the viewport-sized glyph so the box is the font size, as in the design (TEN-166).
+ * The path is in a 1000-unit em (ink about 0.92 wide, 0.88 tall) drawn at GlyphScaleX per unit, so
+ * one em spans `1000 * GlyphScaleX` viewport units: zooming by viewport / that makes the em fill
+ * the box. The former flat 2.0 stopped about 4% short.
+ */
+private const val GlyphZoom = GlyphViewportSize / (1000f * GlyphScaleX)
 
 private fun buildGlyphPath(): Path {
     val androidPath = PathParser.createPathFromPathData(GlyphPathData)
@@ -121,11 +126,7 @@ fun KanjiGlyph(
             .clearAndSetSemantics {},
     ) {
         val scaleFactor = this.size.width / GlyphViewportSize
-        // The drawn glyph only fills about 44% of the viewport (it comes from an adaptive-icon
-        // foreground, whose safe zone leaves wide margins). The design's `size` is the kanji's
-        // own font size, so the glyph is re-centred and scaled up until it fills about the same
-        // share of the box as 天 does in a font of that size.
-        val zoom = GlyphZoom
+        // Re-centred on its own bounds and zoomed so the glyph's em fills the box, see [GlyphZoom].
 
         if (glow) {
             val glowRadius = this.size.width * 0.62f
@@ -145,7 +146,7 @@ fun KanjiGlyph(
                 left = center.x - glyphBounds.center.x * scaleFactor,
                 top = center.y - glyphBounds.center.y * scaleFactor,
             )
-            scale(zoom, pivot = center)
+            scale(GlyphZoom, pivot = center)
         }) {
             scale(scaleFactor, pivot = Offset.Zero) {
                 // Reveal over the glyph's own height, so progress 0.5 shows half of the kanji
