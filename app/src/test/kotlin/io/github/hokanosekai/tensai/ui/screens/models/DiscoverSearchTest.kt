@@ -494,8 +494,9 @@ class DiscoverSearchTest {
         var stalled = false
         var guard = 0
         while (!stalled && guard++ < 20) {
-            vm.loadMore(auto = true)
+            // Read before asking: the page can land before the next line runs.
             val size = results(vm.state.value)!!.repos.size
+            vm.loadMore(auto = true)
             vm.await { s -> results(s)!!.repos.size > size || results(s)!!.stalled }
             stalled = results(vm.state.value)!!.stalled
         }
