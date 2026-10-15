@@ -23,6 +23,16 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        // Short commit of the llama.kt submodule this build compiles (TEN-158, "This device"),
+        // "" when git or the checkout is not there (source tarball).
+        val llamaKtCommit = runCatching {
+            providers.exec {
+                commandLine("git", "-C", rootProject.file("third_party/llama.kt").path, "rev-parse", "--short", "HEAD")
+                isIgnoreExitValue = true
+            }.standardOutput.asText.get().trim()
+        }.getOrDefault("")
+        buildConfigField("String", "LLAMA_KT_COMMIT", "\"$llamaKtCommit\"")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -77,6 +87,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     sourceSets {

@@ -22,6 +22,7 @@ import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
 import io.github.hokanosekai.tensai.ui.screens.models.RepoScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
+import io.github.hokanosekai.tensai.ui.screens.settings.DeviceScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
 
@@ -33,6 +34,8 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
  *   to [ModelsScreen], which owns the picker.
  * @param chatSettingsRequests taps on the chat top bar's params button (owned by [TensaiShell]),
  *   forwarded to [ChatScreen], which owns the sheet.
+ * @param deviceCopyRequests taps on the "This device" top bar's copy icon (owned by [TensaiShell]),
+ *   forwarded to [DeviceScreen], which owns the report.
  * @param onChatConversationCreated a chat opened as a draft got its row: back stack entry id and the
  *   new conversation id, for the drawer's selection.
  * @param onboardingStartStep step the onboarding opens at when [startDestination] is it — see
@@ -46,6 +49,7 @@ fun TensaiNavGraph(
     onboardingStartStep: OnboardingStep = OnboardingStep.Welcome,
     modelsImportRequests: Flow<Unit> = emptyFlow(),
     chatSettingsRequests: Flow<Unit> = emptyFlow(),
+    deviceCopyRequests: Flow<Unit> = emptyFlow(),
     onChatConversationCreated: (entryId: String, conversationId: String) -> Unit = { _, _ -> },
 ) {
     // Set by "Open Settings" on the repo screen: Settings opens with the token sheet up, once.
@@ -204,9 +208,14 @@ fun TensaiNavGraph(
                 // from.
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
+                onNavigateToDevice = { navController.navigate(TensaiDestination.Device.route) },
                 openTokenSheet = openTokenSheet,
                 onTokenSheetOpened = { openTokenSheet = false },
             )
+        }
+
+        composable(TensaiDestination.Device.route) {
+            DeviceScreen(copyRequests = deviceCopyRequests)
         }
 
         composable(TensaiDestination.Licenses.route) {

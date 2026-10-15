@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Percent
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
@@ -98,6 +99,7 @@ import kotlinx.coroutines.launch
  *
  * @param onNavigateToModels where "Manage models" goes.
  * @param onNavigateToLicenses where the open-source licenses row goes.
+ * @param onNavigateToDevice where the "This device" row goes.
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  */
@@ -105,6 +107,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToLicenses: () -> Unit,
+    onNavigateToDevice: () -> Unit,
     modifier: Modifier = Modifier,
     openTokenSheet: Boolean = false,
     onTokenSheetOpened: () -> Unit = {},
@@ -185,6 +188,13 @@ fun SettingsScreen(
                         )
                         Chevron()
                     },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.PhoneAndroid,
+                    title = stringResource(R.string.device_title),
+                    onClick = onNavigateToDevice,
+                    trailing = { Chevron() },
                 )
             }
 
@@ -862,7 +872,7 @@ private val AppLanguage.titleRes: Int
         AppLanguage.French -> R.string.settings_language_french
     }
 
-private val BackendPreference.titleRes: Int
+internal val BackendPreference.titleRes: Int
     get() = when (this) {
         BackendPreference.Auto -> R.string.settings_backend_auto
         BackendPreference.Cpu -> R.string.settings_backend_cpu

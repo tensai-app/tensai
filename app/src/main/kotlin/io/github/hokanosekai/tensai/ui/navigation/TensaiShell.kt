@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +52,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     route?.startsWith("model/") == true -> TensaiChrome.Detail
     route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> TensaiChrome.Detail
     route == TensaiDestination.Settings.route -> TensaiChrome.Detail
+    route == TensaiDestination.Device.route -> TensaiChrome.Detail
     route == TensaiDestination.Licenses.route -> TensaiChrome.Detail
     route == TensaiDestination.Server.route -> TensaiChrome.Detail
     else -> TensaiChrome.None // loading, onboarding
@@ -62,6 +64,7 @@ private fun detailTitleForRoute(route: String?): Int? = when {
     route?.startsWith("model/") == true -> R.string.nav_model_details
     route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> R.string.nav_hugging_face
     route == TensaiDestination.Settings.route -> R.string.nav_settings
+    route == TensaiDestination.Device.route -> R.string.device_title
     route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Server.route -> R.string.nav_server
     else -> null
@@ -116,6 +119,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     // Same shape for the chat's params button (TEN-115): the button is top-bar chrome, the sheet it
     // opens belongs to ChatScreen's scope.
     val chatSettingsRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    val deviceCopyRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     // Draft chats that got their row, by back stack entry id: their route still says "new".
     // Not pruned when an entry leaves the back stack: the only way to list live entries is
@@ -213,6 +217,11 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                         title = detailTitleForRoute(currentRoute)?.let { stringResource(it) }.orEmpty(),
                         onBackClick = { navController.popBackStack() },
                         actions = {
+                            if (currentRoute == TensaiDestination.Device.route) {
+                                IconButton(onClick = { deviceCopyRequests.tryEmit(Unit) }) {
+                                    Icon(imageVector = Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.device_copy))
+                                }
+                            }
                             if (currentRoute == TensaiDestination.Models.route) {
                                 IconButton(onClick = { modelsImportRequests.tryEmit(Unit) }) {
                                     Icon(imageVector = Icons.Default.Add, contentDescription = stringResource(R.string.models_add))
@@ -231,6 +240,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 onboardingStartStep = onboardingStartStep,
                 modelsImportRequests = modelsImportRequests,
                 chatSettingsRequests = chatSettingsRequests,
+                deviceCopyRequests = deviceCopyRequests,
                 onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
                 modifier = Modifier.padding(innerPadding),
             )

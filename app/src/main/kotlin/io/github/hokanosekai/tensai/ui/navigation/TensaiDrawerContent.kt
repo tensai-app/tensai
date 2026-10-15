@@ -1,8 +1,5 @@
 package io.github.hokanosekai.tensai.ui.navigation
 
-import android.app.ActivityManager
-import android.content.Context
-import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +16,6 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -29,11 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.font.FontWeight
@@ -45,12 +39,10 @@ import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
-import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
-import kotlin.math.roundToInt
 
 /**
- * Drawer content: brand header, new chat, destinations, recents, device footer (order per the
+ * Drawer content: brand header, new chat, destinations, recents (order per the
  * design's DrawerOverlay, TEN-116).
  *
  * @param currentRoute / currentConversationId / createdConversationId the active destination, which decides the selected
@@ -164,8 +156,8 @@ fun TensaiDrawerContent(
 
             // Recents is the only part that grows without bound, so it is the only part that
             // scrolls: the destinations above stay pinned and reachable however many
-            // conversations pile up (TEN-59, order per TEN-116). weight(1f) keeps the device
-            // footer against the bottom edge when there are only a handful.
+            // conversations pile up (TEN-59, order per TEN-116). weight(1f) keeps the recents
+            // list against the bottom edge when there are only a handful.
             val currentConversations = conversations
             val untitledLabel = stringResource(R.string.drawer_new_chat)
             LazyColumn(modifier = Modifier.weight(1f)) {
@@ -191,13 +183,6 @@ fun TensaiDrawerContent(
                     }
                 }
             }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 24.dp),
-                color = MaterialTheme.tensaiTints.outline,
-            )
-
-            DeviceFooter(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
         }
     }
 }
@@ -266,29 +251,4 @@ private fun EmptyRecentsState(modifier: Modifier = Modifier) {
             modifier = Modifier.padding(top = 8.dp),
         )
     }
-}
-
-/** Real device chip: SoC (API 31+) or hardware string, plus total RAM rounded to the nearest GB. */
-@Composable
-private fun DeviceFooter(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val label = remember(context) { deviceChipLabel(context) }
-    Text(
-        text = label,
-        style = MaterialTheme.typography.bodySmall.copy(fontFamily = TensaiMono),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier,
-    )
-}
-
-private fun deviceChipLabel(context: Context): String {
-    val soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN } ?: Build.HARDWARE
-    } else {
-        Build.HARDWARE
-    }
-    val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-    val memoryInfo = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
-    val totalGb = (memoryInfo.totalMem / (1024.0 * 1024.0 * 1024.0)).roundToInt()
-    return "$soc · $totalGb GB"
 }
