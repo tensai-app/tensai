@@ -311,6 +311,15 @@
     <string name="context_sheet_expand">Show the breakdown</string>
     <string name="context_sheet_collapse">Hide the breakdown</string>
     <string name="context_sheet_col_tokens">tokens</string>
+
+    <!-- Model picker (TEN-163), opened from the input pill's model chip. -->
+    <string name="picker_title">Select model</string>
+    <string name="picker_close">Close</string>
+    <string name="picker_loaded">Loaded</string>
+    <string name="picker_wait_reply">Wait for the reply to finish</string>
+    <string name="picker_wait_load">Wait for the model to load</string>
+    <string name="picker_manage">Manage models</string>
+    <string name="picker_discover">Discover models</string>
     <string name="context_part_system">System prompt</string>
     <string name="context_part_user">Messages · you</string>
     <string name="context_part_assistant">Messages · assistant</string>

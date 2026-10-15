@@ -63,6 +63,8 @@ fun TensaiNavGraph(
     var openTokenSheet by remember { mutableStateOf(false) }
     // Set by the onboarding's "Browse Hugging Face": the next Models entry opens on Discover, once.
     var modelsOnDiscover by remember { mutableStateOf(false) }
+    // Set by the chat model picker's "Import a GGUF file": the next Models entry opens the file picker, once.
+    var modelsOnImport by remember { mutableStateOf(false) }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -132,7 +134,19 @@ fun TensaiNavGraph(
                 conversationId = conversationId.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID },
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToSettings = { navController.navigate(TensaiDestination.Settings.route) },
-                onNavigateToLoad = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                // returnToChat: the load comes back to this conversation, not to a new chat.
+                // singleTop: two quick picks must not stack two loading screens over the chat.
+                onNavigateToLoad = { modelId ->
+                    navController.navigate(TensaiDestination.Loading.route(modelId, returnToChat = true)) { launchSingleTop = true }
+                },
+                onNavigateToDiscover = {
+                    modelsOnDiscover = true
+                    navController.navigate(TensaiDestination.Models.route)
+                },
+                onNavigateToImport = {
+                    modelsOnImport = true
+                    navController.navigate(TensaiDestination.Models.route)
+                },
                 initialPrompt = initialPrompt,
                 settingsRequests = chatSettingsRequests,
                 contextRequests = chatContextRequests,
@@ -143,9 +157,14 @@ fun TensaiNavGraph(
 
         composable(TensaiDestination.Models.route) {
             val startOnDiscover = remember { modelsOnDiscover }
-            LaunchedEffect(Unit) { modelsOnDiscover = false }
+            val startImport = remember { modelsOnImport }
+            LaunchedEffect(Unit) {
+                modelsOnDiscover = false
+                modelsOnImport = false
+            }
             ModelsScreen(
                 startOnDiscover = startOnDiscover,
+                startImport = startImport,
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
                 onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
                 // singleTop: a double tap on a card must not stack two copies of the screen.
@@ -205,22 +224,40 @@ fun TensaiNavGraph(
 
         composable(
             route = TensaiDestination.Loading.route,
-            arguments = listOf(navArgument(TensaiDestination.Loading.ARG_MODEL_ID) { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument(TensaiDestination.Loading.ARG_MODEL_ID) { type = NavType.StringType },
+                navArgument(TensaiDestination.Loading.ARG_RETURN_TO_CHAT) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
         ) { backStackEntry ->
             val modelId = backStackEntry.arguments
                 ?.getString(TensaiDestination.Loading.ARG_MODEL_ID)
                 .orEmpty()
+            val returnToChat = backStackEntry.arguments?.getBoolean(TensaiDestination.Loading.ARG_RETURN_TO_CHAT) == true
             LoadingScreen(
                 modelId = modelId,
                 onLoaded = {
-                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
-                        popUpTo(TensaiDestination.Loading.route) { inclusive = true }
+                    if (returnToChat) {
+                        navController.popBackStack()
+                    } else {
+                        navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
+                            popUpTo(TensaiDestination.Loading.route) { inclusive = true }
+                        }
                     }
                 },
                 onBack = { navController.popBackStack() },
                 onSeeSmallerModels = {
-                    val poppedToModels = navController.popBackStack(TensaiDestination.Models.route, false)
-                    if (!poppedToModels) navController.popBackStack()
+                    // From a chat, the Models entry further down may sit under that conversation:
+                    // popping to it would lose the chat, so the list opens on top of it instead.
+                    if (returnToChat) {
+                        navController.popBackStack()
+                        navController.navigate(TensaiDestination.Models.route) { launchSingleTop = true }
+                    } else {
+                        val poppedToModels = navController.popBackStack(TensaiDestination.Models.route, false)
+                        if (!poppedToModels) navController.popBackStack()
+                    }
                 },
             )
         }

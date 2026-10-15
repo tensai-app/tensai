@@ -60,8 +60,16 @@ sealed class TensaiDestination(val route: String) {
     }
 
     /** Drives [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel] for [ARG_MODEL_ID]. */
-    data object Loading : TensaiDestination("loading/{modelId}") {
+    data object Loading : TensaiDestination("loading/{modelId}?returnToChat={returnToChat}") {
         const val ARG_MODEL_ID = "modelId"
-        fun route(modelId: String) = "loading/$modelId"
+
+        /**
+         * Optional: the load was started from a chat that is still on the stack. Success then pops
+         * back to that conversation instead of landing on a new chat.
+         */
+        const val ARG_RETURN_TO_CHAT = "returnToChat"
+
+        fun route(modelId: String, returnToChat: Boolean = false) =
+            "loading/$modelId" + if (returnToChat) "?$ARG_RETURN_TO_CHAT=true" else ""
     }
 }

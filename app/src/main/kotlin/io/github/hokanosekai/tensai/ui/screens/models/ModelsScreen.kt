@@ -97,6 +97,7 @@ internal val GgufMimeTypes = arrayOf("application/octet-stream", "*/*")
  *   name to preselect, null unless the link pointed at a file.
  * @param startOnDiscover open on the Discover tab (the onboarding's "Browse Hugging Face"); read once, a
  *   restored screen keeps the tab it was on.
+ * @param startImport open the file picker on arrival (the chat model picker's empty state), read once.
  * @param importRequests taps on the shell top bar's "+" (TEN-108). Each one opens the "Add a model"
  *   sheet (TEN-138), whose "From this phone" row starts the picker, as the empty state's link and
  *   the failure dialog's "Try again" do.
@@ -111,6 +112,7 @@ fun ModelsScreen(
     onOpenRepo: (String, String?) -> Unit = { _, _ -> },
     importRequests: Flow<Unit> = emptyFlow(),
     startOnDiscover: Boolean = false,
+    startImport: Boolean = false,
     repository: ModelRepository = RuntimeGraph.modelRepository,
 ) {
     val models by repository.models.collectAsState(initial = null)
@@ -198,6 +200,9 @@ fun ModelsScreen(
     LaunchedEffect(importRequests) {
         importRequests.collect { showAddSheet = true }
     }
+
+    // Not rememberSaveable: a restored screen must not reopen the picker.
+    LaunchedEffect(Unit) { if (startImport) launchImport() }
 
     val currentModels = models
     val onDeviceRepos = remember(currentModels) { DiscoverLogic.onDeviceRepos(currentModels.orEmpty()) }

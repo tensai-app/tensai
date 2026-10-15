@@ -239,6 +239,15 @@
     <string name="context_sheet_expand">Afficher le détail</string>
     <string name="context_sheet_collapse">Masquer le détail</string>
     <string name="context_sheet_col_tokens">tokens</string>
+
+    <!-- Sélecteur de modèle (TEN-163), ouvert par la puce modèle du champ de saisie. -->
+    <string name="picker_title">Choisir un modèle</string>
+    <string name="picker_close">Fermer</string>
+    <string name="picker_loaded">Chargé</string>
+    <string name="picker_wait_reply">Attendre la fin de la réponse</string>
+    <string name="picker_wait_load">Attendre la fin du chargement</string>
+    <string name="picker_manage">Gérer les modèles</string>
+    <string name="picker_discover">Découvrir des modèles</string>
     <string name="context_part_system">Prompt système</string>
     <string name="context_part_user">Messages · toi</string>
     <string name="context_part_assistant">Messages · assistant</string>

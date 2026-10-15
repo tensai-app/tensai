@@ -75,7 +75,10 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
  * @param onNavigateToModels used by [ChatError.NoModelLoaded]'s banner.
  * @param onNavigateToSettings the context sheet's way to the context length setting (TEN-161).
- * @param onNavigateToLoad the context sheet's "Load": loads the model the conversation was started on.
+ * @param onNavigateToLoad the context sheet's "Load" (the model the conversation was started on) and the
+ *   model picker's pick. The caller makes the load come back to this conversation.
+ * @param onNavigateToDiscover the model picker's way to Discover.
+ * @param onNavigateToImport the model picker's empty state, to the Models screen's file picker.
  * @param onConversationCreated the draft got its real id (first send), reported for the drawer.
  * @param contextRequests taps on the top bar's context ring (owned by `TensaiShell`).
  * @param onContextRingState the ring's figure and busy flag, for the shell's top bar to draw (TEN-160).
@@ -91,6 +94,8 @@ fun ChatScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToSettings: () -> Unit = {},
     onNavigateToLoad: (modelId: String) -> Unit = {},
+    onNavigateToDiscover: () -> Unit = {},
+    onNavigateToImport: () -> Unit = {},
     modifier: Modifier = Modifier,
     initialPrompt: String? = null,
     settingsRequests: Flow<Unit> = emptyFlow(),
@@ -137,6 +142,7 @@ fun ChatScreen(
 
     var input by rememberSaveable { mutableStateOf("") }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var pickerOpen by rememberSaveable { mutableStateOf(false) }
     // The params button lives in the shell's top bar (TEN-115), so it only signals; this screen owns
     // the sheet and its state. Same pattern as the Models "+" import request.
     // Two guards, both about a tap that must not be queued: only the screen on top reacts (during a
@@ -306,7 +312,7 @@ fun ChatScreen(
                     isGenerating = isGenerating,
                     canStop = canStop,
                     modelLabel = modelInfo?.name ?: stringResource(R.string.top_bar_no_model),
-                    onModelClick = onNavigateToModels,
+                    onModelClick = { pickerOpen = true },
                     translucent = true,
                     // Scrim: transparent at the pill's vertical center, fully background by its bottom
                     // edge and solid below, so text fades out under the pill's lower half and never
@@ -347,6 +353,30 @@ fun ChatScreen(
                 onNavigateToSettings()
             },
             onDismiss = viewModel::closeContextSheet,
+        )
+    }
+
+    if (pickerOpen) {
+        ModelPickerSheet(
+            loadedModelId = modelInfo?.modelId,
+            busy = pickerBusy(queueState),
+            onPick = { modelId ->
+                pickerOpen = false
+                onNavigateToLoad(modelId)
+            },
+            onManage = {
+                pickerOpen = false
+                onNavigateToModels()
+            },
+            onDiscover = {
+                pickerOpen = false
+                onNavigateToDiscover()
+            },
+            onImport = {
+                pickerOpen = false
+                onNavigateToImport()
+            },
+            onDismiss = { pickerOpen = false },
         )
     }
 

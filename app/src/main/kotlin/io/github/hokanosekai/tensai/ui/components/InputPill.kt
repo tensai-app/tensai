@@ -72,7 +72,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  * toggle the same way [KanjiGlyph] does — reduced motion gets a static ring, not a spinning one.
  *
  * @param modelLabel the resident model's name, or the "no model" label (TEN-129).
- * @param onModelClick tap on the model chip: opens the Models screen.
+ * @param onModelClick tap on the model chip: opens the model picker (TEN-163).
  * @param isGenerating a generation is running — app-wide, not necessarily this screen's. Shows the
  *   ring and blocks sending: the queue runs one generation at a time, and a send issued now would
  *   only be rejected.
