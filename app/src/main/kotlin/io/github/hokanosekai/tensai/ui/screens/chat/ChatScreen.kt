@@ -75,6 +75,8 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
  * @param onNavigateToModels used by [ChatError.NoModelLoaded]'s banner.
  * @param onConversationCreated the draft got its real id (first send), reported for the drawer.
+ * @param contextRequests taps on the top bar's context ring (owned by `TensaiShell`).
+ * @param onContextRingState the ring's figure and busy flag, for the shell's top bar to draw (TEN-160).
  * @param settingsRequests taps on the top bar's params button (owned by `TensaiShell`), which open
  *   [ChatSettingsSheet].
  * @param initialPrompt a first turn handed over by Home (TEN-37), sent once on arrival — see
@@ -89,6 +91,8 @@ fun ChatScreen(
     initialPrompt: String? = null,
     settingsRequests: Flow<Unit> = emptyFlow(),
     onConversationCreated: (String) -> Unit = {},
+    contextRequests: Flow<Unit> = emptyFlow(),
+    onContextRingState: (ContextRingState) -> Unit = {},
 ) {
     // A draft's row, once its first send created it (TEN-106). Saved so a screen rebuilt after
     // process death reopens that conversation instead of an empty draft, the route itself still
@@ -142,6 +146,19 @@ fun ChatScreen(
     LaunchedEffect(settingsRequests, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             settingsRequests.collect { if (settingsLoaded) settingsOpen = true }
+        }
+    }
+
+    // The ring lives in the shell's top bar like the params button, so this screen feeds it: the
+    // view model re-reads the cache whenever the queue moves (load, swap, unload, generation) or
+    // the draft gets its id, and the figure goes up with the busy flag. A tap goes the other way.
+    val contextUsage by viewModel.contextUsage.collectAsState()
+    val busy by viewModel.busy.collectAsState(initial = false)
+    LaunchedEffect(viewModel, queueState, currentConversationId) { viewModel.refreshContextUsage() }
+    LaunchedEffect(contextUsage, busy) { onContextRingState(ContextRingState(contextUsage, busy)) }
+    LaunchedEffect(contextRequests, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            contextRequests.collect { viewModel.openContextSheet() }
         }
     }
 

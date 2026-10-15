@@ -611,6 +611,58 @@ class ChatViewModel(
      */
     fun kvUsedPercent(): Float? = inferenceQueue.kvUsedPercent()
 
+    private val _contextUsage = MutableStateFlow<ContextUsageState>(ContextUsageState.NoModel)
+
+    /**
+     * The context ring's figure (TEN-160): the resident model's KV-cache fill over its window. Not
+     * observed, refreshed by [refreshContextUsage]: here after a restore, a generation (ended,
+     * stopped or failed) and a warm-up, and by [ChatScreen] whenever [queueState] moves (model load,
+     * swap, unload) or this instance's conversation gets its id.
+     */
+    val contextUsage: StateFlow<ContextUsageState> = _contextUsage.asStateFlow()
+
+    /** Model loading or a reply generating: the ring spins. App-wide like [queueState], the cache is one. */
+    val busy: Flow<Boolean> = inferenceQueue.state.map { it is QueueState.Loading || it is QueueState.Generating }
+
+    private val _contextSheetOpen = MutableStateFlow(false)
+
+    /** Set by a tap on the ring. Nothing renders it yet, TEN-161's sheet will. */
+    val contextSheetOpen: StateFlow<Boolean> = _contextSheetOpen.asStateFlow()
+
+    fun openContextSheet() {
+        _contextSheetOpen.value = true
+    }
+
+    fun closeContextSheet() {
+        _contextSheetOpen.value = false
+    }
+
+    init {
+        refreshContextUsage()
+    }
+
+    /**
+     * Re-reads [contextUsage] off the queue. The cache is the engine's one, not this conversation's:
+     * when [ActiveSessionTracker] says another conversation owns it, this one has nothing in it yet
+     * (a restore happens on its first send) and reads as empty rather than showing someone else's fill.
+     * With no owner reported the cache is taken as this one's.
+     */
+    fun refreshContextUsage() {
+        val info = inferenceQueue.state.value.residentModel
+        val length = info?.nCtxEffective ?: 0
+        _contextUsage.value = if (info == null || length <= 0) {
+            ContextUsageState.NoModel
+        } else {
+            val owner = ActiveSessionTracker.current.value?.first
+            val used = if (owner == null || owner == _conversationId.value) {
+                inferenceQueue.currentKvTokenCount() ?: 0
+            } else {
+                0
+            }
+            ContextUsageState.Loaded(used, length)
+        }
+    }
+
     /**
      * Starts a fresh assistant message and streams into it — the shared tail of [send] and
      * [regenerate].
@@ -640,6 +692,7 @@ class ChatViewModel(
         inferenceQueue.cancelWarmUp()
         syncSessionForConversationSwitch(conversationId)
         reportActiveSession(conversationId)
+        refreshContextUsage()
         // The model this reply is generated on, which is what a warm-up behind it must find loaded.
         val model = inferenceQueue.state.value.residentModel
 
@@ -702,6 +755,7 @@ class ChatViewModel(
                 enableThinking = conversation.enableThinking,
                 expectedModel = model,
             )
+            refreshContextUsage()
         }
     }
 
@@ -920,6 +974,7 @@ class ChatViewModel(
             // Dropped before the row is written, not after: this only ever gates the stop button
             // (see [canStop]), and the generation it could act on is over the moment collection is.
             _generatingHere.value = false
+            refreshContextUsage()
             parser.finish()
             val content = parser.content
             val kept = hasPersistableContent(content, parser.thinking)

@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.ui.navigation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
@@ -27,7 +28,7 @@ import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 
 /**
  * Top bar for [TensaiDestination.Home] and [TensaiDestination.Chat] — hamburger opens the drawer,
- * the centered title is display only (TEN-129): the conversation's title on a chat, the 天 glyph
+ * the title is display only (TEN-129): the conversation's title on a chat, left-aligned, the 天 glyph
  * and "tensai" on Home. The model moved to the input pill's chip.
  *
  * @param title the chat's title, one line, ellipsized; null on Home, which shows the brand instead.
@@ -41,15 +42,16 @@ fun TensaiTopBar(
     title: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    CenterAlignedTopAppBar(
-        modifier = modifier,
-        navigationIcon = {
-            IconButton(onClick = onMenuClick) {
-                Icon(imageVector = Icons.Default.Menu, contentDescription = stringResource(R.string.top_bar_open_menu))
-            }
-        },
-        title = {
-            if (title == null) {
+    val menu: @Composable () -> Unit = {
+        IconButton(onClick = onMenuClick) {
+            Icon(imageVector = Icons.Default.Menu, contentDescription = stringResource(R.string.top_bar_open_menu))
+        }
+    }
+    if (title == null) {
+        CenterAlignedTopAppBar(
+            modifier = modifier,
+            navigationIcon = menu,
+            title = {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -60,20 +62,32 @@ fun TensaiTopBar(
                         style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
                     )
                 }
-            } else {
+            },
+            actions = actions,
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background,
+            ),
+        )
+    } else {
+        // Left-aligned next to the menu: the title takes what the actions leave and ellipsizes (TEN-160).
+        TopAppBar(
+            modifier = modifier,
+            navigationIcon = menu,
+            title = {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 6.dp),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-        },
-        actions = actions,
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = MaterialTheme.colorScheme.background,
-        ),
-    )
+            },
+            actions = actions,
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background,
+            ),
+        )
+    }
 }
 
 /**

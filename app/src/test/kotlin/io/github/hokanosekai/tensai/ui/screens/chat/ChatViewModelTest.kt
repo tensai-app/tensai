@@ -1741,6 +1741,42 @@ class ChatViewModelTest {
         }
     }
 
+    @Test
+    fun theContextRingReadsNoModelUntilOneIsLoaded() = runBlocking {
+        val viewModel = newViewModel(chatRepository.createConversation(modelId = null))
+        assertEquals(ContextUsageState.NoModel, viewModel.contextUsage.value)
+
+        loadFakeModel()
+        viewModel.refreshContextUsage()
+
+        assertEquals(ContextUsageState.Loaded(used = 0, length = NCTX), viewModel.contextUsage.value)
+    }
+
+    @Test
+    fun theContextRingIsRefreshedWhenAGenerationEnds() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversationId)
+
+        viewModel.send("hi")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+
+        assertEquals(ContextUsageState.Loaded(used = TOKENS_PER_TURN, length = NCTX), viewModel.contextUsage.value)
+    }
+
+    @Test
+    fun aConversationDoesNotShowTheCacheAnotherOneOwns() = runBlocking {
+        loadFakeModel()
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+
+        val viewModelB = newViewModel(conversationB)
+
+        assertEquals(ContextUsageState.Loaded(used = 0, length = NCTX), viewModelB.contextUsage.value)
+    }
+
     /**
      * A [LlamaKtEngine] fake whose [kvCacheUsedCells] grows with every completed [decode] — lets
      * tests drive [io.github.hokanosekai.tensai.runtime.InferenceQueue.kvUsedPercent] from empty to

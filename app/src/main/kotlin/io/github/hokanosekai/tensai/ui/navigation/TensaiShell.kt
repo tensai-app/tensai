@@ -20,7 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
@@ -33,6 +35,8 @@ import androidx.navigation.compose.rememberNavController
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.download.LoadRequests
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import io.github.hokanosekai.tensai.ui.screens.chat.ContextRing
+import io.github.hokanosekai.tensai.ui.screens.chat.ContextRingState
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingEntry
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
@@ -119,6 +123,9 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     // Same shape for the chat's params button (TEN-115): the button is top-bar chrome, the sheet it
     // opens belongs to ChatScreen's scope.
     val chatSettingsRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    val chatContextRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    // What the open chat reports for the ring (TEN-160); the screen on top is the one that writes it.
+    var chatContextRing by remember { mutableStateOf(ContextRingState()) }
     val deviceCopyRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     // Draft chats that got their row, by back stack entry id: their route still says "new".
@@ -203,6 +210,11 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                         title = chatTitle,
                         actions = {
                             if (currentRoute?.startsWith("chat/") == true) {
+                                ContextRing(
+                                    state = chatContextRing.usage,
+                                    busy = chatContextRing.busy,
+                                    onClick = { chatContextRequests.tryEmit(Unit) },
+                                )
                                 IconButton(onClick = { chatSettingsRequests.tryEmit(Unit) }) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
@@ -240,6 +252,8 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 onboardingStartStep = onboardingStartStep,
                 modelsImportRequests = modelsImportRequests,
                 chatSettingsRequests = chatSettingsRequests,
+                chatContextRequests = chatContextRequests,
+                onChatContextRingState = { chatContextRing = it },
                 deviceCopyRequests = deviceCopyRequests,
                 onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
                 modifier = Modifier.padding(innerPadding),

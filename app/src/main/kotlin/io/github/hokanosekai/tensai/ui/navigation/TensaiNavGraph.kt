@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
+import io.github.hokanosekai.tensai.ui.screens.chat.ContextRingState
 import io.github.hokanosekai.tensai.ui.screens.loading.LoadingScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelDetailScreen
 import io.github.hokanosekai.tensai.ui.screens.models.ModelsScreen
@@ -35,6 +36,9 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
  *   to [ModelsScreen], which owns the picker.
  * @param chatSettingsRequests taps on the chat top bar's params button (owned by [TensaiShell]),
  *   forwarded to [ChatScreen], which owns the sheet.
+ * @param chatContextRequests taps on the chat top bar's context ring (owned by [TensaiShell]),
+ *   forwarded to [ChatScreen].
+ * @param onChatContextRingState what [ChatScreen] reports for [TensaiShell] to draw the ring with.
  * @param deviceCopyRequests taps on the "This device" top bar's copy icon (owned by [TensaiShell]),
  *   forwarded to [DeviceScreen], which owns the report.
  * @param onChatConversationCreated a chat opened as a draft got its row: back stack entry id and the
@@ -50,6 +54,8 @@ fun TensaiNavGraph(
     onboardingStartStep: OnboardingStep = OnboardingStep.Welcome,
     modelsImportRequests: Flow<Unit> = emptyFlow(),
     chatSettingsRequests: Flow<Unit> = emptyFlow(),
+    chatContextRequests: Flow<Unit> = emptyFlow(),
+    onChatContextRingState: (ContextRingState) -> Unit = {},
     deviceCopyRequests: Flow<Unit> = emptyFlow(),
     onChatConversationCreated: (entryId: String, conversationId: String) -> Unit = { _, _ -> },
 ) {
@@ -127,6 +133,8 @@ fun TensaiNavGraph(
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 initialPrompt = initialPrompt,
                 settingsRequests = chatSettingsRequests,
+                contextRequests = chatContextRequests,
+                onContextRingState = onChatContextRingState,
                 onConversationCreated = { onChatConversationCreated(backStackEntry.id, it) },
             )
         }
