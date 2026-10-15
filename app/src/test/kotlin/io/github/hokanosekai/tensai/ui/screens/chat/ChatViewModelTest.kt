@@ -1637,6 +1637,17 @@ class ChatViewModelTest {
             }
         }
 
+        override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) {
+            for (list in messages.values) {
+                val index = list.indexOfFirst { it.id == id }
+                if (index >= 0) {
+                    list[index] = list[index].copy(tokenCount = tokenCount, tokenCountModelId = modelId)
+                    messagesFlow.value = messages.mapValues { it.value.toList() }
+                    return
+                }
+            }
+        }
+
         override suspend fun deleteMessagesForConversation(conversationId: String) {
             messages.remove(conversationId)
             messagesFlow.value = messages.mapValues { it.value.toList() }
@@ -1777,6 +1788,115 @@ class ChatViewModelTest {
         assertEquals(ContextUsageState.Loaded(used = 0, length = NCTX), viewModelB.contextUsage.value)
     }
 
+    private suspend fun ChatViewModel.openSheet(): ContextSheetState {
+        openContextSheet()
+        awaitGeneration()
+        return checkNotNull(contextSheet.value) { "the sheet was not built" }
+    }
+
+    @Test
+    fun theContextSheetIsBuiltWhenItOpensAndItsCountsAreKept() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null, systemPrompt = "be brief")
+        val viewModel = newViewModel(conversationId)
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+        assertNull(viewModel.contextSheet.value)
+
+        val state = viewModel.openSheet()
+
+        assertTrue(viewModel.contextSheetOpen.value)
+        val breakdown = state.breakdown
+        assertEquals(NCTX, breakdown.length)
+        // One token per character in the fake: "be brief", "hello" and the reply's "hi".
+        val tokens = breakdown.rows.associate { it.part to it.tokens }
+        assertEquals(8, tokens[ContextPart.System])
+        assertEquals(5, tokens[ContextPart.User])
+        assertEquals(2, tokens[ContextPart.Assistant])
+        // The cache holds 10, the counted parts 15: not this conversation's cache yet, so an estimate.
+        assertTrue(breakdown.estimate)
+        assertEquals(15, breakdown.used)
+        val stored = chatRepository.observeMessages(conversationId).first()
+        assertEquals(listOf(5, 2), stored.map { it.tokenCount })
+        assertEquals(listOf(MODEL_ID, MODEL_ID), stored.map { it.tokenCountModelId })
+        val runtime = state.runtime as ContextRuntime.Loaded
+        assertEquals("$MODEL_NAME · F16", runtime.model)
+        assertEquals(NCTX, runtime.nCtx)
+
+        viewModel.closeContextSheet()
+        assertFalse(viewModel.contextSheetOpen.value)
+        assertNull(viewModel.contextSheet.value)
+    }
+
+    @Test
+    fun theSheetSplitsTheCacheIntoPartsAndOverhead() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversationId)
+        engine.tokenizer = { 1 }
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+
+        val breakdown = viewModel.openSheet().breakdown
+
+        assertFalse(breakdown.estimate)
+        val tokens = breakdown.rows.associate { it.part to it.tokens }
+        assertEquals(1, tokens[ContextPart.User])
+        assertEquals(1, tokens[ContextPart.Assistant])
+        assertEquals(TOKENS_PER_TURN - 2, tokens[ContextPart.Overhead])
+        assertEquals(16, tokens[ContextPart.Reserved])
+        assertEquals(NCTX, breakdown.rows.sumOf { it.tokens })
+        assertNull("reasoning is not replayed into the prompt", tokens[ContextPart.Thinking])
+    }
+
+    @Test
+    fun theCountsAreInvalidatedWhenTheModelChanges() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversationId)
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+        viewModel.openSheet()
+        viewModel.closeContextSheet()
+        assertEquals(listOf(MODEL_ID, MODEL_ID), chatRepository.observeMessages(conversationId).first().map { it.tokenCountModelId })
+
+        // Another tokenizer, another model.
+        engine.tokenizer = { it.length * 2 }
+        importModel(id = OLDER_MODEL_ID, fileName = "older.gguf", importedAt = -1L)
+        loadImportedModel(OLDER_MODEL_ID)
+        viewModel.openSheet()
+
+        val stored = chatRepository.observeMessages(conversationId).first()
+        assertEquals(listOf(10, 4), stored.map { it.tokenCount })
+        assertEquals(listOf(OLDER_MODEL_ID, OLDER_MODEL_ID), stored.map { it.tokenCountModelId })
+    }
+
+    @Test
+    fun withoutAModelTheSheetIsAnEstimateFromTheStoredCounts() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = MODEL_ID)
+        val viewModel = newViewModel(conversationId)
+        engine.tokenizer = { 3 }
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+        viewModel.openSheet()
+        viewModel.closeContextSheet()
+
+        inferenceQueue.unloadModel()
+        val state = viewModel.openSheet()
+
+        assertEquals(ContextRuntime.NoModel(MODEL_ID), state.runtime)
+        val breakdown = state.breakdown
+        assertTrue(breakdown.estimate)
+        assertEquals(NCTX, breakdown.length)
+        val tokens = breakdown.rows.associate { it.part to it.tokens }
+        assertEquals(3, tokens[ContextPart.User])
+        assertEquals(3, tokens[ContextPart.Assistant])
+        // The overhead measured while the model was there.
+        assertEquals(TOKENS_PER_TURN - 6, tokens[ContextPart.Overhead])
+        assertEquals(TOKENS_PER_TURN, breakdown.used)
+    }
+
     /**
      * A [LlamaKtEngine] fake whose [kvCacheUsedCells] grows with every completed [decode] — lets
      * tests drive [io.github.hokanosekai.tensai.runtime.InferenceQueue.kvUsedPercent] from empty to
@@ -1794,6 +1914,9 @@ class ChatViewModelTest {
         var saveShouldFail = false
         var scriptedEvents: List<DecodeEvent>? = null
         var hangBeforeTerminal = false
+
+        /** What [LoadedModel.tokenize] answers, one token per character by default. */
+        var tokenizer: (String) -> Int = { it.length }
 
         /**
          * How many times a session file was actually handed to the engine — the only way to tell a
@@ -1860,7 +1983,7 @@ class ChatViewModelTest {
                 return true
             }
 
-            override suspend fun tokenize(text: String): Int = 0
+            override suspend fun tokenize(text: String): Int = tokenizer(text)
 
             override suspend fun free() = Unit
         }

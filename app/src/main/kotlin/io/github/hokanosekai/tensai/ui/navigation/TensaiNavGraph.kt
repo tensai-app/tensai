@@ -131,6 +131,8 @@ fun TensaiNavGraph(
             ChatScreen(
                 conversationId = conversationId.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID },
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
+                onNavigateToSettings = { navController.navigate(TensaiDestination.Settings.route) },
+                onNavigateToLoad = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
                 initialPrompt = initialPrompt,
                 settingsRequests = chatSettingsRequests,
                 contextRequests = chatContextRequests,

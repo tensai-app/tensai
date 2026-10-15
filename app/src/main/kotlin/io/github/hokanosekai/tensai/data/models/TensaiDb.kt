@@ -60,6 +60,8 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
  * Version 15 added `models.hasChatTemplate` and `models.chatTemplateOverride` plus `sessions.chatTemplate` (TEN-159),
  * see [TensaiDbMigrations.MIGRATION_14_15].
  *
+ * Version 16 added `messages.tokenCount` and `messages.tokenCountModelId` (TEN-161), see [TensaiDbMigrations.MIGRATION_15_16].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -73,7 +75,7 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         SessionEntity::class,
         DownloadEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

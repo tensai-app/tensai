@@ -105,6 +105,8 @@ class ChatRepositoryTitleTest {
             stopReason: String?,
         ) = Unit
 
+        override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) = Unit
+
         override suspend fun deleteMessagesForConversation(conversationId: String) {
             messages.remove(conversationId)
         }

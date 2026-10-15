@@ -32,6 +32,13 @@ internal object ContextBudget {
     const val MinResponseTokens = 8
 
     /**
+     * What the window keeps back from the prompt: a send is refused once [available] drops under
+     * [MinResponseTokens], i.e. once the prompt passes `nCtxEffective - ReservedTokens`. The context
+     * sheet (TEN-161) shows it as "Reserved for reply".
+     */
+    const val ReservedTokens = SafetyMarginTokens + MinResponseTokens
+
+    /**
      * Tokens actually available to generate into, given [nCtxEffective] and [promptTokens] — never
      * negative, even if [promptTokens] alone already exceeds [nCtxEffective].
      */

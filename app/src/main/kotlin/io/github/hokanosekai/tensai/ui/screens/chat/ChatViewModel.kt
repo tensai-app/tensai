@@ -6,10 +6,12 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter
 import io.github.hokanosekai.tensai.data.chat.SamplingJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
+import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.session.SaveResult
 import io.github.hokanosekai.tensai.data.session.SessionModelKey
 import io.github.hokanosekai.tensai.data.session.SessionRepository
+import io.github.hokanosekai.tensai.engine.ContextBudget
 import io.github.hokanosekai.tensai.engine.DecodeEvent
 import io.github.hokanosekai.tensai.engine.DecodeRequest
 import io.github.hokanosekai.tensai.engine.DecodeStats
@@ -626,15 +628,98 @@ class ChatViewModel(
 
     private val _contextSheetOpen = MutableStateFlow(false)
 
-    /** Set by a tap on the ring. Nothing renders it yet, TEN-161's sheet will. */
+    /** Set by a tap on the ring, cleared by [closeContextSheet]. The sheet renders once [contextSheet] is built. */
     val contextSheetOpen: StateFlow<Boolean> = _contextSheetOpen.asStateFlow()
+
+    private val _contextSheet = MutableStateFlow<ContextSheetState?>(null)
+
+    /** What the context sheet shows (TEN-161), built by [openContextSheet]; `null` while closed or still counting. */
+    val contextSheet: StateFlow<ContextSheetState?> = _contextSheet.asStateFlow()
+
+    // What an estimate falls back on once nothing is loaded to measure: the last window, template
+    // overhead and system prompt count seen with a model resident. In memory only, per instance.
+    private var lastWindow = 0
+    private var lastOverhead: Int? = null
+    private var lastSystemCount: Pair<String, Int>? = null
 
     fun openContextSheet() {
         _contextSheetOpen.value = true
+        scope.launch {
+            val state = buildContextSheet()
+            if (_contextSheetOpen.value) _contextSheet.value = state
+        }
     }
 
     fun closeContextSheet() {
         _contextSheetOpen.value = false
+        _contextSheet.value = null
+    }
+
+    /**
+     * Builds the sheet's figures. With a model resident, the messages without a token count, or
+     * counted under another model ([MessageEntity.tokenCountModelId]), are counted now and persisted;
+     * without one the stored counts are all there is and the breakdown is an estimate (see
+     * [contextBreakdown]). Reasoning is not counted: [ChatRepository.toEngineMessages] drops it from
+     * every prompt, so [ContextPart.Thinking] stays empty.
+     */
+    private suspend fun buildContextSheet(): ContextSheetState {
+        val info = inferenceQueue.state.value.residentModel
+        val id = _conversationId.value
+        val conversation = id?.let { chatRepository.getConversation(it) }
+        var history = id?.let { chatRepository.observeMessages(it).first() }.orEmpty()
+        val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
+
+        if (info != null) {
+            val countedWith = info.modelId ?: info.name
+            val stale = history.filter {
+                (it.role == "user" || it.role == "assistant") && it.content.isNotEmpty() &&
+                    (it.tokenCount == null || it.tokenCountModelId != countedWith)
+            }
+            val texts = stale.map { it.content } + listOfNotNull(systemPrompt)
+            val counted = if (texts.isEmpty()) emptyList() else inferenceQueue.countTokens(texts)
+            if (counted != null) {
+                stale.forEachIndexed { i, message -> chatRepository.setTokenCount(message.id, counted[i], countedWith) }
+                if (systemPrompt != null) lastSystemCount = systemPrompt to counted.last()
+                if (stale.isNotEmpty() && id != null) history = chatRepository.observeMessages(id).first()
+            }
+        }
+
+        val inPrompt = history.filter { it.content.isNotEmpty() }
+        val counts = ContextCounts(
+            system = systemPrompt?.let { prompt -> lastSystemCount?.takeIf { it.first == prompt }?.second } ?: 0,
+            user = inPrompt.filter { it.role == "user" }.sumOf { it.tokenCount ?: 0 },
+            assistant = inPrompt.filter { it.role == "assistant" }.sumOf { it.tokenCount ?: 0 },
+        )
+        if (info != null) lastWindow = info.nCtxEffective
+        val owner = ActiveSessionTracker.current.value?.first
+        val cacheUsed = if (info != null && (owner == null || owner == id)) inferenceQueue.currentKvTokenCount() ?: 0 else null
+        val breakdown = contextBreakdown(
+            length = info?.nCtxEffective ?: lastWindow,
+            cacheUsed = cacheUsed,
+            counts = counts,
+            reserve = ContextBudget.ReservedTokens,
+            lastOverhead = lastOverhead,
+        )
+        if (!breakdown.estimate) {
+            lastOverhead = breakdown.rows.firstOrNull { it.part == ContextPart.Overhead }?.tokens ?: 0
+        }
+
+        val runtime = if (info == null) {
+            ContextRuntime.NoModel(conversation?.modelId)
+        } else {
+            val model = info.modelId?.let { modelId -> modelRepository.models.first().firstOrNull { it.id == modelId } }
+            ContextRuntime.Loaded(
+                model = listOfNotNull(model?.shownName ?: info.name, model?.quantLabel?.takeIf { it.isNotBlank() })
+                    .joinToString(" · "),
+                backend = info.backend,
+                nCtx = info.nCtxEffective,
+                contextSetting = model?.contextSettingOverride,
+                kvCacheType = info.kvCacheType,
+                kvCacheBytes = model?.let { KvCacheSize.bytesAt(it, info.nCtxEffective.toLong(), info.kvCacheType) },
+                lastReply = history.lastOrNull { it.role == "assistant" && it.tokPerSec != null }?.toUi()?.stats,
+            )
+        }
+        return ContextSheetState(breakdown, runtime)
     }
 
     init {

@@ -75,6 +75,10 @@ interface ChatDao {
         stopReason: String?,
     )
 
+    /** Records [tokenCount] for [id], counted with [modelId], see [MessageEntity.tokenCount]. */
+    @Query("UPDATE messages SET tokenCount = :tokenCount, tokenCountModelId = :modelId WHERE id = :id")
+    suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String)
+
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun deleteMessagesForConversation(conversationId: String)
 

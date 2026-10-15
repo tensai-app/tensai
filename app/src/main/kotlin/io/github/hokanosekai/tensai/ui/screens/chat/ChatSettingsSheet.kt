@@ -152,6 +152,23 @@ internal fun DrawScope.drawTopHairline(color: Color) {
     }
 }
 
+/** The sheets' drag handle: a 32dp bar under a hairline along the top edge. */
+@Composable
+internal fun SheetDragHandle() {
+    val hairline = MaterialTheme.tensaiTints.outline
+    Box(
+        contentAlignment = Alignment.TopCenter,
+        modifier = Modifier.fillMaxWidth().drawBehind { drawTopHairline(hairline) },
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 10.dp, bottom = 2.dp)
+                .size(width = 32.dp, height = 4.dp)
+                .background(MaterialTheme.tensaiTints.outlineStrong, RoundedCornerShape(2.dp)),
+        )
+    }
+}
+
 /**
  * Per-conversation settings (TEN-35, redesigned in TEN-119), as a bottom sheet over the chat.
  *
@@ -205,20 +222,7 @@ fun ChatSettingsSheet(
         shape = SheetShape,
         containerColor = MaterialTheme.colorScheme.background,
         scrimColor = MaterialTheme.tensaiTints.scrim,
-        dragHandle = {
-            val hairline = MaterialTheme.tensaiTints.outline
-            Box(
-                contentAlignment = Alignment.TopCenter,
-                modifier = Modifier.fillMaxWidth().drawBehind { drawTopHairline(hairline) },
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 10.dp, bottom = 2.dp)
-                        .size(width = 32.dp, height = 4.dp)
-                        .background(MaterialTheme.tensaiTints.outlineStrong, RoundedCornerShape(2.dp)),
-                )
-            }
-        },
+        dragHandle = { SheetDragHandle() },
     ) {
         // Deliberately unkeyed, see the KDoc's "why the sheet keeps its own draft".
         var draft by remember { mutableStateOf(config) }
@@ -467,7 +471,7 @@ private fun Modifier.bringIntoViewOnFocus(): Modifier {
 
 /** Uppercase eyebrow over a block, 12sp 600 with 0.06em tracking. */
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
+internal fun Section(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = title.uppercase(),
@@ -483,7 +487,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 
 /** Kit `Card` with no padding: surface fill, hairline border, 20dp radius. */
 @Composable
-private fun SheetCard(content: @Composable () -> Unit) {
+internal fun SheetCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,

@@ -168,6 +168,9 @@ class ChatRepository(private val dao: ChatDao) {
     /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */
     suspend fun getConversation(conversationId: String): ConversationEntity? = dao.getConversation(conversationId)
 
+    /** Persists [tokenCount] on [id], counted with [modelId], see [MessageEntity.tokenCount]. */
+    suspend fun setTokenCount(id: String, tokenCount: Int, modelId: String) = dao.updateTokenCount(id, tokenCount, modelId)
+
     /** Deletes a single message by [id] — used by [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.regenerate] to drop the assistant reply being redone. */
     suspend fun deleteMessage(id: String) = dao.deleteMessage(id)
 

@@ -273,6 +273,19 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v15 -> v16 (TEN-161): `messages.tokenCount` and `messages.tokenCountModelId`, what the context
+     * sheet counted a message at and with which model. Both nullable with no default: every existing
+     * row reads "not counted yet", and the sheet counts it the first time it is opened with a model
+     * loaded. Nothing to backfill here.
+     */
+    val MIGRATION_15_16 = object : Migration(15, 16) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `tokenCount` INTEGER")
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `tokenCountModelId` TEXT")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -289,5 +302,6 @@ object TensaiDbMigrations {
         MIGRATION_12_13,
         MIGRATION_13_14,
         MIGRATION_14_15,
+        MIGRATION_15_16,
     )
 }

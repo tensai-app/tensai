@@ -74,6 +74,8 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  * @param conversationId an existing conversation, or `null` for a new chat: a draft that gets its
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
  * @param onNavigateToModels used by [ChatError.NoModelLoaded]'s banner.
+ * @param onNavigateToSettings the context sheet's way to the context length setting (TEN-161).
+ * @param onNavigateToLoad the context sheet's "Load": loads the model the conversation was started on.
  * @param onConversationCreated the draft got its real id (first send), reported for the drawer.
  * @param contextRequests taps on the top bar's context ring (owned by `TensaiShell`).
  * @param onContextRingState the ring's figure and busy flag, for the shell's top bar to draw (TEN-160).
@@ -87,6 +89,8 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 fun ChatScreen(
     conversationId: String?,
     onNavigateToModels: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToLoad: (modelId: String) -> Unit = {},
     modifier: Modifier = Modifier,
     initialPrompt: String? = null,
     settingsRequests: Flow<Unit> = emptyFlow(),
@@ -326,6 +330,24 @@ fun ChatScreen(
                 )
             }
         }
+    }
+
+    val contextSheetOpen by viewModel.contextSheetOpen.collectAsState()
+    val contextSheet by viewModel.contextSheet.collectAsState()
+    val currentContextSheet = contextSheet
+    if (contextSheetOpen && currentContextSheet != null) {
+        ContextSheet(
+            state = currentContextSheet,
+            onLoad = { modelId ->
+                viewModel.closeContextSheet()
+                if (modelId != null) onNavigateToLoad(modelId) else onNavigateToModels()
+            },
+            onOpenSettings = {
+                viewModel.closeContextSheet()
+                onNavigateToSettings()
+            },
+            onDismiss = viewModel::closeContextSheet,
+        )
     }
 
     val currentSampling = sampling

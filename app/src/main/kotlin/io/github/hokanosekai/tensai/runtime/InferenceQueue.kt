@@ -693,6 +693,18 @@ class InferenceQueue(private val engine: InferenceEngine) {
     }
 
     /**
+     * Token counts of [texts] under the loaded model's tokenizer (TEN-161), in order, or `null` when
+     * there is nothing to count with: no model loaded, or a generation running (the engine thread is
+     * busy with it and the answer would wait out the reply). Counting is the model's own, so the
+     * figures are only comparable with [LoadedModelInfo.modelId]'s.
+     */
+    suspend fun countTokens(texts: List<String>): List<Int>? = mutex.withLock {
+        if (_state.value !is QueueState.ModelReady) return@withLock null
+        val model = loadedModel ?: return@withLock null
+        texts.map { model.tokenize(it) }
+    }
+
+    /**
      * Persists the currently loaded model's KV-cache/prompt state to [path] — TEN-34's
      * app-triggered save (e.g. the app going to background), as opposed to [onBeforeModelSwap]'s
      * save-before-swap.
