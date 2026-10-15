@@ -331,7 +331,9 @@ internal class DiscoverViewModel(
     private fun loadMore(kind: Kind, auto: Boolean) {
         val feed = _state.value.feedOf(kind) as? FeedState.Loaded ?: return
         val cursor = feed.next ?: return
-        if (feed.loadingMore || moreJobs[kind]?.isActive == true) return
+        // `loadingMore` only: it is cleared in the same update that appends the page, while the job
+        // can still read as active for a moment after it, which dropped the next automatic ask.
+        if (feed.loadingMore) return
         val ready = readyCards(_state.value, kind)
         if (auto) {
             // Once per page count, and only while pages keep adding cards.
