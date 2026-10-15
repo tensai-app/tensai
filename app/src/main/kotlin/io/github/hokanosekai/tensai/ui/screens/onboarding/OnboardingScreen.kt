@@ -114,6 +114,7 @@ import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
 import io.github.hokanosekai.tensai.ui.screens.models.formatGigabytes
 import io.github.hokanosekai.tensai.ui.screens.models.importFailureBody
 import io.github.hokanosekai.tensai.ui.screens.models.modelCompatibility
+import io.github.hokanosekai.tensai.ui.screens.models.rememberBackendTag
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
@@ -576,6 +577,7 @@ private fun ColumnScope.ModelStep(
                     model = imported,
                     // One check, read once per composition, see modelCompatibility's KDoc.
                     compatibility = modelCompatibility(imported),
+                    backend = rememberBackendTag(modelCompatibility(imported)),
                     noAction = true,
                     extraBadge = { TensaiBadge(stringResource(R.string.onboarding_imported_badge)) },
                 )
@@ -600,6 +602,7 @@ private fun ColumnScope.ModelStep(
                 ModelCard(
                     model = reco.model.toDisplayEntity(),
                     compatibility = reco.compatibility,
+                    backend = rememberBackendTag(reco.compatibility),
                     link = ModelCardLink(reco.model.linkLabel, reco.model.linkUrl),
                     noAction = true,
                 )

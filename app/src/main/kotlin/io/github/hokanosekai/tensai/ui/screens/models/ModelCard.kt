@@ -37,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,8 +61,10 @@ import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
+import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.models.ModelEntity
+import io.github.hokanosekai.tensai.runtime.EffectiveBackend
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.TensaiBadge
 import io.github.hokanosekai.tensai.ui.components.TensaiButton
@@ -74,6 +77,7 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import kotlinx.coroutines.flow.map
 
 /**
  * Card for a single imported model: name, params, status top-right, badges, and one full-width
@@ -89,6 +93,9 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  * The overflow menu (details, delete) replaces the old trash icon. [onDeleteClick] gets the file's
  * current existence so the caller can decide whether a confirmation is warranted.
  *
+ * [backend] is what a load would use (see [backendTag]), resolved by the caller from one hoisted
+ * preference collector; `null` shows no backend badge.
+ *
  * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button, the overflow
  * menu and the tap target, [link] adds a mono "open in the browser" row, and [extraBadge] is one
  * more badge after the others ("Imported"). The click callbacks are then unused, hence their defaults.
@@ -98,6 +105,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 internal fun ModelCard(
     model: ModelEntity,
     compatibility: Compatibility?,
+    backend: EffectiveBackend?,
     modifier: Modifier = Modifier,
     fileExists: Boolean = true,
     isLoaded: Boolean = false,
@@ -172,7 +180,7 @@ internal fun ModelCard(
                 }
             }
 
-            ModelBadges(model, compatibility, isLoaded, modifier = Modifier.padding(top = 12.dp), extraBadge = extraBadge)
+            ModelBadges(model, backend, isLoaded, modifier = Modifier.padding(top = 12.dp), extraBadge = extraBadge)
 
             if (link != null) {
                 ModelLinkRow(link, modifier = Modifier.padding(top = 4.dp))
@@ -253,12 +261,43 @@ internal fun ModelStatus(compatibility: Compatibility?, modifier: Modifier = Mod
     }
 }
 
-/** "Loaded" first, then quant, size, and the recommended backend (none without a verdict). */
+/**
+ * The Settings backend preference, `null` until DataStore has delivered it (not a guessed Auto: a
+ * wrong badge for a frame is worse than none). One collector per screen, hoisted by the caller.
+ */
+@Composable
+internal fun rememberBackendPreference(): BackendPreference? {
+    val flow = remember { RuntimeGraph.backendRepository.preference.map<BackendPreference, BackendPreference?> { it } }
+    val preference by flow.collectAsState(initial = null)
+    return preference
+}
+
+/**
+ * [backendTag] for this device off the live Settings preference, `null` until that is loaded or
+ * when there is no verdict. For screens showing a single model; the Models list collects the
+ * preference once itself and calls [backendTag] per model.
+ */
+@Composable
+internal fun rememberBackendTag(compatibility: Compatibility?): EffectiveBackend? {
+    val preference = rememberBackendPreference() ?: return null
+    val profile = remember { RuntimeGraph.deviceProfiler.profile() }
+    return backendTag(compatibility, preference, profile.hasVulkan, profile.hasOpenCl)
+}
+
+/** Display name of a backend, shared by the card badge and the detail row. */
+@Composable
+internal fun EffectiveBackend.displayName(): String = when (this) {
+    EffectiveBackend.Vulkan -> stringResource(R.string.models_filter_vulkan)
+    EffectiveBackend.OpenCl -> label
+    EffectiveBackend.Cpu -> stringResource(R.string.models_filter_cpu)
+}
+
+/** "Loaded" first, then quant, size, and the backend a load would use (none without a verdict). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelBadges(
     model: ModelEntity,
-    compatibility: Compatibility?,
+    backend: EffectiveBackend?,
     isLoaded: Boolean,
     modifier: Modifier = Modifier,
     extraBadge: (@Composable () -> Unit)? = null,
@@ -271,10 +310,11 @@ internal fun ModelBadges(
         if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
         TensaiMonoBadge(model.quantLabel)
         TensaiMonoBadge(formatFileSize(model.sizeBytes))
-        when (backendTag(compatibility)) {
-            ModelFilter.Vulkan -> TensaiBadge(stringResource(R.string.models_filter_vulkan), icon = Icons.Default.Bolt)
-            ModelFilter.Cpu -> TensaiBadge(stringResource(R.string.models_filter_cpu), icon = Icons.Default.Memory)
-            else -> Unit
+        if (backend != null) {
+            TensaiBadge(
+                backend.displayName(),
+                icon = if (backend == EffectiveBackend.Cpu) Icons.Default.Memory else Icons.Default.Bolt,
+            )
         }
         extraBadge?.invoke()
     }

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
+import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelInUseException
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -238,11 +239,16 @@ fun ModelsScreen(
             model.id to if (existence[model.id] == true) CompatibilityChecker.check(model, profile) else null
         }
     }
-    val hasVulkan = remember { RuntimeGraph.deviceProfiler.profile().hasVulkan }
+    // One collector for the list (null until DataStore delivers it): the list is held back until then,
+    // like `existenceReady`, so no card or chip shows a guessed backend. Chips and cards both go
+    // through backendTag, so they cannot disagree.
+    val backendPreference = rememberBackendPreference()
+    val deviceProfile = remember { RuntimeGraph.deviceProfiler.profile() }
+    val hasVulkan = deviceProfile.hasVulkan
     var selectedFilter by rememberSaveable { mutableStateOf(ModelFilter.All) }
     // A saved Vulkan selection on a device that no longer offers the chip falls back to All.
     val filter = if (selectedFilter in availableFilters(hasVulkan)) selectedFilter else ModelFilter.All
-    val shown = filterModels(currentModels.orEmpty(), verdicts, filter)
+    val shown = filterModels(currentModels.orEmpty(), verdicts, filter, backendPreference ?: BackendPreference.Auto, hasVulkan, deviceProfile.hasOpenCl)
 
     Column(modifier = modifier.fillMaxSize()) {
         ModelTabs(selected = tab, onSelect = { tab = it })
@@ -291,7 +297,7 @@ fun ModelsScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                !existenceReady -> Unit // stat() pass still running, see above.
+                !existenceReady || backendPreference == null -> Unit // stat() pass or preference load still running, see above.
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -332,6 +338,7 @@ fun ModelsScreen(
                                 model = model,
                                 fileExists = existence[model.id] == true,
                                 compatibility = verdicts[model.id],
+                                backend = backendTag(verdicts[model.id], backendPreference, hasVulkan, deviceProfile.hasOpenCl),
                                 isLoaded = model.id == loadedModelId,
                                 onClick = { onModelClick(model.id) },
                                 onLoadClick = { onLoadModelClick(model.id) },

@@ -2,13 +2,19 @@ package io.github.hokanosekai.tensai.ui.screens.models
 
 import io.github.hokanosekai.tensai.compat.Compatibility
 import io.github.hokanosekai.tensai.compat.Verdict
+import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.engine.BackendHint
+import io.github.hokanosekai.tensai.runtime.EffectiveBackend
+import io.github.hokanosekai.tensai.runtime.LoadProgressMap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** TEN-121: the Models filter and the card badge read the same verdict, so they cannot disagree. */
+/**
+ * TEN-121, TEN-146: the Models filter and the card badge resolve the same backend the loader will use
+ * (preference, then device), through one function, so they cannot disagree.
+ */
 class ModelFilterTest {
 
     private fun model(id: String) = ModelEntity(
@@ -24,6 +30,9 @@ class ModelFilterTest {
     private val auto = model("auto")
     private val missing = model("missing")
     private val all = listOf(gpu, cpu, auto, missing)
+    private fun filter(models: List<ModelEntity>, filter: ModelFilter, preference: BackendPreference = BackendPreference.Auto, hasVulkan: Boolean = true, hasOpenCl: Boolean = false) =
+        filterModels(models, verdicts, filter, preference, hasVulkan, hasOpenCl)
+
     private val verdicts = mapOf(
         gpu.id to verdict(BackendHint.Gpu),
         cpu.id to verdict(BackendHint.Cpu),
@@ -33,44 +42,132 @@ class ModelFilterTest {
 
     @Test
     fun allKeepsEverythingIncludingMissingFileModels() {
-        assertEquals(all, filterModels(all, verdicts, ModelFilter.All))
+        assertEquals(all, filter(all, ModelFilter.All))
     }
 
     @Test
-    fun vulkanKeepsOnlyGpuRecommendedModels() {
-        assertEquals(listOf(gpu), filterModels(all, verdicts, ModelFilter.Vulkan))
+    fun vulkanKeepsGpuAndAutoModelsOnAVulkanDevice() {
+        assertEquals(listOf(gpu, auto), filter(all, ModelFilter.Vulkan))
     }
 
     @Test
-    fun cpuKeepsCpuAndAutoButNotMissingFileModels() {
-        assertEquals(listOf(cpu, auto), filterModels(all, verdicts, ModelFilter.Cpu))
+    fun cpuKeepsOnlyCpuRecommendedModelsOnAVulkanDevice() {
+        assertEquals(listOf(cpu), filter(all, ModelFilter.Cpu))
+    }
+
+    @Test
+    fun withoutAGpuBackendEveryModelWithAVerdictIsCpu() {
+        assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.Vulkan, hasVulkan = false))
+        assertEquals(listOf(gpu, cpu, auto), filter(all, ModelFilter.Cpu, hasVulkan = false))
+    }
+
+    @Test
+    fun forcedCpuPreferenceMovesEverythingToCpu() {
+        assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.Vulkan, BackendPreference.Cpu))
+        assertEquals(listOf(gpu, cpu, auto), filter(all, ModelFilter.Cpu, BackendPreference.Cpu))
+    }
+
+    @Test
+    fun forcedGpuPreferenceMovesEverythingToVulkan() {
+        assertEquals(listOf(gpu, cpu, auto), filter(all, ModelFilter.Vulkan, BackendPreference.Gpu))
+        assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.Cpu, BackendPreference.Gpu))
     }
 
     @Test
     fun missingFileModelsOnlyShowUnderAll() {
-        assertEquals(emptyList<ModelEntity>(), filterModels(listOf(missing), verdicts, ModelFilter.Vulkan))
-        assertEquals(emptyList<ModelEntity>(), filterModels(listOf(missing), verdicts, ModelFilter.Cpu))
-        assertEquals(listOf(missing), filterModels(listOf(missing), verdicts, ModelFilter.All))
+        assertEquals(emptyList<ModelEntity>(), filter(listOf(missing), ModelFilter.Vulkan))
+        assertEquals(emptyList<ModelEntity>(), filter(listOf(missing), ModelFilter.Cpu))
+        assertEquals(listOf(missing), filter(listOf(missing), ModelFilter.All))
     }
 
     @Test
     fun modelWithoutAVerdictEntryCountsAsMissing() {
-        assertEquals(emptyList<ModelEntity>(), filterModels(listOf(gpu), emptyMap(), ModelFilter.Vulkan))
+        assertEquals(emptyList<ModelEntity>(), filterModels(listOf(gpu), emptyMap(), ModelFilter.Vulkan, BackendPreference.Auto, true, false))
     }
 
     @Test
     fun filterWithNoMatchIsEmptyAndKeepsOrderOtherwise() {
-        assertEquals(emptyList<ModelEntity>(), filterModels(listOf(cpu), verdicts, ModelFilter.Vulkan))
-        assertEquals(listOf(auto, cpu), filterModels(listOf(auto, cpu), verdicts, ModelFilter.Cpu))
+        assertEquals(emptyList<ModelEntity>(), filter(listOf(cpu), ModelFilter.Vulkan))
+        assertEquals(listOf(cpu), filter(listOf(auto, cpu), ModelFilter.Cpu))
     }
 
     @Test
-    fun badgeTagMatchesTheFilterBucket() {
-        assertEquals(ModelFilter.Vulkan, backendTag(verdict(BackendHint.Gpu)))
-        assertEquals(ModelFilter.Cpu, backendTag(verdict(BackendHint.Cpu)))
-        assertEquals(ModelFilter.Cpu, backendTag(verdict(BackendHint.Auto)))
-        assertNull(backendTag(null))
+    fun autoRecommendationFollowsTheDevice() {
+        assertEquals(EffectiveBackend.Vulkan, tag(BackendHint.Auto, hasVulkan = true))
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Auto, hasVulkan = false))
+        assertEquals(EffectiveBackend.OpenCl, tag(BackendHint.Auto, hasVulkan = false, hasOpenCl = true))
     }
+
+    @Test
+    fun gpuRecommendationWithAutoPreferenceIsVulkan() {
+        assertEquals(EffectiveBackend.Vulkan, tag(BackendHint.Gpu))
+    }
+
+    @Test
+    fun cpuRecommendationWithAutoPreferenceStaysCpu() {
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Cpu))
+    }
+
+    @Test
+    fun cpuPreferenceForcesCpu() {
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Gpu, BackendPreference.Cpu))
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Auto, BackendPreference.Cpu))
+    }
+
+    @Test
+    fun gpuPreferenceFallsBackToCpuWithoutAGpuBackend() {
+        assertEquals(EffectiveBackend.Vulkan, tag(BackendHint.Cpu, BackendPreference.Gpu))
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Cpu, BackendPreference.Gpu, hasVulkan = false))
+    }
+
+    @Test
+    fun noVerdictMeansNoBackend() {
+        assertNull(backendTag(null, BackendPreference.Auto, hasVulkan = true, hasOpenCl = true))
+    }
+
+    @Test
+    fun vulkanWinsOverOpenClWhenBothArePresent() {
+        assertEquals(EffectiveBackend.Vulkan, tag(BackendHint.Auto, hasVulkan = true, hasOpenCl = true))
+    }
+
+    @Test
+    fun cpuHintAndCpuPreferenceStayCpuOnAnOpenClDevice() {
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Cpu, hasVulkan = false, hasOpenCl = true))
+        assertEquals(EffectiveBackend.Cpu, tag(BackendHint.Gpu, BackendPreference.Cpu, hasVulkan = false, hasOpenCl = true))
+    }
+
+    @Test
+    fun openClModelsOnlyShowUnderAll() {
+        assertEquals(all, filter(all, ModelFilter.All, hasVulkan = false, hasOpenCl = true))
+        assertEquals(listOf(cpu), filter(all, ModelFilter.Cpu, hasVulkan = false, hasOpenCl = true))
+        assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.Vulkan, hasVulkan = false, hasOpenCl = true))
+    }
+
+    @Test
+    fun forcedCpuPreferenceOnAnOpenClDeviceIsAllCpu() {
+        assertEquals(listOf(gpu, cpu, auto), filter(all, ModelFilter.Cpu, BackendPreference.Cpu, hasVulkan = false, hasOpenCl = true))
+    }
+
+    @Test
+    fun tagLabelMatchesTheLoaderLabelForEveryCombination() {
+        for (preference in BackendPreference.entries) for (recommended in BackendHint.entries) {
+            for (hasVulkan in listOf(false, true)) for (hasOpenCl in listOf(false, true)) {
+                val loaderLabel = LoadProgressMap.backendLabel(preference.resolve(recommended), hasVulkan, hasOpenCl)
+                assertEquals(
+                    "$preference $recommended vulkan=$hasVulkan opencl=$hasOpenCl",
+                    loaderLabel,
+                    tag(recommended, preference, hasVulkan, hasOpenCl)?.label,
+                )
+            }
+        }
+    }
+
+    private fun tag(
+        recommended: BackendHint,
+        preference: BackendPreference = BackendPreference.Auto,
+        hasVulkan: Boolean = true,
+        hasOpenCl: Boolean = false,
+    ) = backendTag(verdict(recommended), preference, hasVulkan, hasOpenCl)
 
     @Test
     fun vulkanChipIsHiddenWithoutVulkan() {

@@ -57,14 +57,27 @@ object LoadProgressMap {
     }
 
     /**
-     * The backend name for the "Warming up ..." label. Predicted from the same inputs the engine
-     * resolves its offload with (hint, then what the device exposes), since the engine only names
-     * the backend it ended up on once the load is over.
+     * The backend a load with [hint] ends up on, predicted from the same inputs the engine resolves
+     * its offload with (hint, then what the device exposes): [BackendHint.Cpu] is CPU, anything else
+     * is the device's GPU backend (Vulkan before OpenCL) and CPU when it has none. [BackendHint.Auto]
+     * is not CPU: the engine offloads fully whenever a GPU backend exists. The single rule behind the
+     * warm-up label and the Models badges and filters.
      */
-    fun backendLabel(hint: BackendHint, hasVulkan: Boolean, hasOpenCl: Boolean): String = when {
-        hint == BackendHint.Cpu -> "CPU"
-        hasVulkan -> "Vulkan"
-        hasOpenCl -> "OpenCL"
-        else -> "CPU"
+    fun effectiveBackend(hint: BackendHint, hasVulkan: Boolean, hasOpenCl: Boolean): EffectiveBackend = when {
+        hint == BackendHint.Cpu -> EffectiveBackend.Cpu
+        hasVulkan -> EffectiveBackend.Vulkan
+        hasOpenCl -> EffectiveBackend.OpenCl
+        else -> EffectiveBackend.Cpu
     }
+
+    /** The backend name for the "Warming up ..." label, see [effectiveBackend]. */
+    fun backendLabel(hint: BackendHint, hasVulkan: Boolean, hasOpenCl: Boolean): String =
+        effectiveBackend(hint, hasVulkan, hasOpenCl).label
+}
+
+/** The backend a model load actually runs on, see [LoadProgressMap.effectiveBackend]. */
+enum class EffectiveBackend(val label: String) {
+    Cpu("CPU"),
+    Vulkan("Vulkan"),
+    OpenCl("OpenCL"),
 }

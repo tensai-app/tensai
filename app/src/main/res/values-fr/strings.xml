@@ -334,7 +334,7 @@
     <string name="model_detail_thinking">Mode réflexion</string>
     <string name="model_detail_supported">Pris en charge</string>
     <string name="model_detail_not_supported">Non pris en charge</string>
-    <string name="model_detail_recommended_backend">Backend recommandé</string>
+    <string name="model_detail_backend">Backend</string>
     <string name="model_detail_estimated_memory">Mémoire estimée</string>
     <string name="model_detail_saved_sessions">Sessions enregistrées</string>
 

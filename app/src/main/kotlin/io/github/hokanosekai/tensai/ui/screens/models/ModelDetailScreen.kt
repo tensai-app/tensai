@@ -205,6 +205,7 @@ fun ModelDetailScreen(
                 fileExists == null -> Unit
                 else -> {
                     val exists = fileExists == true
+                    // One preference collector for the whole screen; null until loaded, so no wrong backend shows.
                     val profile = remember(model) { RuntimeGraph.deviceProfiler.profile() }
                     val compatibility = remember(model, profile) { CompatibilityChecker.check(model, profile) }
                     val plannedCtx = remember(model, profile) {
@@ -213,6 +214,7 @@ fun ModelDetailScreen(
                             is LoadPlan.Infeasible -> plan.floor.nCtx
                         }
                     }
+                    val backend = rememberBackendTag(compatibility)
                     val wontFit = compatibility.verdict == Verdict.WontFit && !isLoaded
                     Column(
                         modifier = Modifier
@@ -256,7 +258,7 @@ fun ModelDetailScreen(
                                 ModelStatus(if (exists) compatibility else null, fontSize = 12.5f)
                                 if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
                             }
-                            ModelBadges(model, if (exists) compatibility else null, isLoaded = false, modifier = Modifier.padding(top = 12.dp))
+                            ModelBadges(model, if (exists) backend else null, isLoaded = false, modifier = Modifier.padding(top = 12.dp))
                             if (wontFit && exists) WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
                         }
 
@@ -319,19 +321,14 @@ fun ModelDetailScreen(
                                     )
                                 }
                             }
-                            RowDivider()
-                            SettingsRow(
-                                icon = Icons.Default.Bolt,
-                                title = stringResource(R.string.model_detail_recommended_backend),
-                                trailing = {
-                                    ValueText(
-                                        stringResource(
-                                            if (backendTag(compatibility) == ModelFilter.Vulkan) R.string.models_filter_vulkan
-                                            else R.string.models_filter_cpu,
-                                        ),
-                                    )
-                                },
-                            )
+                            if (backend != null) {
+                                RowDivider()
+                                SettingsRow(
+                                    icon = Icons.Default.Bolt,
+                                    title = stringResource(R.string.model_detail_backend),
+                                    trailing = { ValueText(backend.displayName()) },
+                                )
+                            }
                             RowDivider()
                             FileLocationRow(path = model.filePath)
                         }

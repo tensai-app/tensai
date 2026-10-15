@@ -406,7 +406,7 @@
     <string name="model_detail_thinking">Thinking mode</string>
     <string name="model_detail_supported">Supported</string>
     <string name="model_detail_not_supported">Not supported</string>
-    <string name="model_detail_recommended_backend">Recommended backend</string>
+    <string name="model_detail_backend">Backend</string>
     <string name="model_detail_estimated_memory">Estimated memory</string>
     <string name="model_detail_saved_sessions">Saved sessions</string>
 
