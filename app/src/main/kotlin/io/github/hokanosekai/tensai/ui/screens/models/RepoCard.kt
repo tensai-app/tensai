@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -129,7 +130,7 @@ internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifi
 @Composable
 internal fun FlowRowScope.RepoBadges(card: RepoCardModel, onDevice: Boolean = false) {
     if (onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), icon = Icons.Default.Check)
-    RepoBadges(card.tools, card.vision, card.gated)
+    RepoBadges(card.tools, card.vision, card.gated, card.thinking)
 }
 
 /**
@@ -140,8 +141,9 @@ internal const val SHOW_VISION = false
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun FlowRowScope.RepoBadges(tools: Boolean, vision: Boolean, gated: Boolean) {
+internal fun FlowRowScope.RepoBadges(tools: Boolean, vision: Boolean, gated: Boolean, thinking: Boolean = false) {
     if (tools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
+    if (thinking) TensaiBadge(stringResource(R.string.discover_badge_thinking), icon = Icons.Default.Psychology)
     if (SHOW_VISION && vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
     if (gated) TensaiBadge(stringResource(R.string.discover_badge_gated), icon = Icons.Default.Lock, warning = true)
 }

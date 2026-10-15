@@ -94,10 +94,21 @@ class HfParsingTest {
             """{"id":"a/b","gguf":{"total":1,"chat_template":${tpl?.let { "\"$it\"" } ?: "null"}}}""",
         ).supportsTools
         assertTrue(tools("{%- if tools %}x{%- endif %}"))
-        assertTrue(tools("<tool_call>"))
+        assertFalse(tools("<tool_call> {{ m.tool_calls }}"))
         assertFalse(tools("{{ messages }} nothing special"))
         assertFalse(tools("toolset and toolbox only"))
         assertFalse(tools(null))
+    }
+
+    @Test
+    fun `thinking detection reads the chat template`() {
+        fun thinking(tpl: String?) = HfParser.parseDetail(
+            """{"id":"a/b","gguf":{"total":1,"chat_template":${tpl?.let { "\"$it\"" } ?: "null"}}}""",
+        ).supportsThinking
+        assertTrue(thinking("{%- if enable_thinking %}x{%- endif %}"))
+        assertTrue(thinking("<|im_start|>assistant\\n<think>"))
+        assertFalse(thinking("{{ messages }} nothing special"))
+        assertFalse(thinking(null))
     }
 
     @Test

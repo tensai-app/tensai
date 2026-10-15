@@ -69,6 +69,8 @@ data class HfQuantFile(
  *
  * @param paramCount total parameters from the GGUF header, 0 when the API had no `gguf` block.
  * @param quants single-file GGUFs only (no split parts, no `mmproj`), smallest first.
+ * @param supportsTools / [supportsThinking] read off the repo's chat template, see
+ *   [io.github.hokanosekai.tensai.data.models.ChatTemplateCapabilities].
  * @param hasVision the repo ships an `mmproj` file (excluded from [quants]).
  * @param sha commit the listing describes (40 hex), null if the API gave none. Downloads pin their URL to it
  *   so the file cannot change between attempts.
@@ -79,6 +81,7 @@ data class HfRepoDetail(
     val architecture: String,
     val contextLength: Long,
     val supportsTools: Boolean,
+    val supportsThinking: Boolean = false,
     val hasVision: Boolean,
     val quants: List<HfQuantFile>,
     val sha: String? = null,

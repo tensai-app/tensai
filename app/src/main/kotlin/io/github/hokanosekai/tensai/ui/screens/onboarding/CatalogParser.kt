@@ -28,6 +28,7 @@ internal data class CatalogEntryDto(
     val kvHeads: Long,
     val headDim: Long,
     val tools: Boolean = false,
+    val thinking: Boolean = false,
     val onboarding: Boolean = false,
 )
 
@@ -82,6 +83,7 @@ internal object CatalogParser {
             ),
             fileName = file,
             supportsTools = tools,
+            supportsThinking = thinking,
             onboarding = onboarding,
         )
     }

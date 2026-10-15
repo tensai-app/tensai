@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.hf
 
+import io.github.hokanosekai.tensai.data.models.ChatTemplateCapabilities
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -54,8 +55,6 @@ internal data class LfsDto(val sha256: String? = null)
 
 internal object HfParser {
     val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
-
-    private val TOOLS = Regex("\\btools\\b|tool_call")
 
     fun parseSearch(body: String): List<HfRepoSummary> =
         json.decodeFromString<List<SearchItemDto>>(body).map { it.toSummary() }
@@ -125,13 +124,16 @@ internal object HfParser {
             .map { HfQuantFile(it.rfilename, QuantLabel.parse(it.rfilename), it.size ?: 0, it.lfs?.sha256) }
             .let { plausibleQuants(it, gguf?.total ?: 0) }
             .sortedBy { it.sizeBytes }
+        // Tools and Thinking are read off the Hub's default chat template: both are false when the
+        // detail carries no gguf.chat_template (a repo the Hub did not summarise, or one without a template).
         val template = gguf?.chat_template.orEmpty()
         return HfRepoDetail(
             summary = summary(id, downloads, likes, lastModified, tags, gated, licenseOf(cardData)),
             paramCount = gguf?.total ?: 0,
             architecture = gguf?.architecture.orEmpty(),
             contextLength = gguf?.context_length ?: 0,
-            supportsTools = TOOLS.containsMatchIn(template),
+            supportsTools = ChatTemplateCapabilities.supportsTools(template),
+            supportsThinking = ChatTemplateCapabilities.supportsThinking(template),
             hasVision = files.any { QuantLabel.isMmproj(it.rfilename) },
             quants = quants,
             sha = sha?.takeIf { COMMIT_SHA.matches(it) },

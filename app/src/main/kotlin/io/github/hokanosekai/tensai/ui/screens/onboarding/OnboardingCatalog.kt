@@ -15,6 +15,7 @@ import io.github.hokanosekai.tensai.data.models.ModelEntity
  * @param hfPath repository path under huggingface.co, shown as `hf.co/<hfPath>` and opened as a link.
  * @param fileName the GGUF file of that quant in the repo.
  * @param supportsTools its chat template takes tools (checked against the Hub when the entry was added).
+ * @param supportsThinking its chat template has a thinking mode (`enable_thinking`, TEN-149).
  * @param onboarding offered by the first-run onboarding (the three it has always offered); the rest
  *   only shows in Discover's "Recommended for your device".
  */
@@ -25,6 +26,7 @@ internal data class CatalogModel(
     val facts: ModelFacts,
     val fileName: String = "",
     val supportsTools: Boolean = false,
+    val supportsThinking: Boolean = false,
     val onboarding: Boolean = false,
 ) {
     val linkLabel: String get() = "hf.co/$hfPath"
@@ -43,7 +45,8 @@ internal data class CatalogModel(
         contextLength = facts.contextLength,
         embeddingLength = facts.embeddingLength,
         blockCount = facts.blockCount,
-        supportsThinking = false,
+        supportsThinking = supportsThinking,
+        supportsTools = supportsTools,
         importedAt = 0,
         kvFullElementsPerToken = facts.kvFullElementsPerToken,
         kvSwaElementsPerToken = facts.kvSwaElementsPerToken,

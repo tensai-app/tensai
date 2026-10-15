@@ -75,18 +75,20 @@ class DiscoverLogicTest {
         assertNull(card.downloads)
         assertNull(card.likes)
         assertTrue(card.tools)
+        assertTrue(card.thinking)
     }
 
     private fun summary(gate: HfGate = HfGate.None) =
         HfRepoSummary("unsloth/Qwen3-4B-GGUF", "unsloth", "Qwen3-4B-GGUF", 512_000, 204, null, null, gate)
 
-    private fun detail(vararg quants: HfQuantFile, params: Long = 2_031_739_904, tools: Boolean = true, vision: Boolean = false) =
+    private fun detail(vararg quants: HfQuantFile, params: Long = 2_031_739_904, tools: Boolean = true, thinking: Boolean = false, vision: Boolean = false) =
         HfRepoDetail(
             summary = summary(),
             paramCount = params,
             architecture = "qwen3",
             contextLength = 32_768,
             supportsTools = tools,
+            supportsThinking = thinking,
             hasVision = vision,
             quants = quants.sortedBy { it.sizeBytes },
         )
@@ -114,6 +116,15 @@ class DiscoverLogicTest {
         assertTrue(card.tools)
         assertTrue(card.vision)
         assertEquals(false, card.gated)
+    }
+
+    @Test
+    fun aRepoCardCarriesTheThinkingFlagOfItsDetail() {
+        fun thinking(on: Boolean) =
+            DiscoverLogic.cardFor(summary(), detail(quant("Q4_K_M", 1200), thinking = on), device(totalGb = 8))?.thinking
+
+        assertEquals(true, thinking(true))
+        assertEquals(false, thinking(false))
     }
 
     @Test

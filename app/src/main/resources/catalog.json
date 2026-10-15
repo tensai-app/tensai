@@ -31,6 +31,7 @@
       "kvHeads": 8,
       "headDim": 128,
       "tools": true,
+      "thinking": true,
       "onboarding": true
     },
     {
@@ -47,6 +48,7 @@
       "kvHeads": 8,
       "headDim": 128,
       "tools": true,
+      "thinking": true,
       "onboarding": true
     },
     {
@@ -62,7 +64,8 @@
       "blockCount": 28,
       "kvHeads": 8,
       "headDim": 128,
-      "tools": true
+      "tools": true,
+      "thinking": true
     },
     {
       "repo": "bartowski/Qwen2.5-1.5B-Instruct-GGUF",

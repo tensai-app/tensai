@@ -18,7 +18,7 @@ class DiscoverFiltersTest {
         vision: Boolean = false,
     ) = RepoCardModel(
         id, id.substringAfter('/'), id.substringBefore('/'), 2_000_000_000, verdict, "Q4_K_M",
-        sizeMib * 1024 * 1024, tools, vision, false, 10, 1,
+        sizeMib * 1024 * 1024, tools, false, vision, false, 10, 1,
     )
 
     private fun repo(id: String) =

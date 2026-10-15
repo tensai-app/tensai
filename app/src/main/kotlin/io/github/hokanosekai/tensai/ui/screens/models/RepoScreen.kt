@@ -226,7 +226,12 @@ private fun RepoBody(
             if (detail.contextLength > 0) {
                 TensaiMonoBadge(stringResource(R.string.repo_context, RepoLogic.formatContext(detail.contextLength)))
             }
-            RepoBadges(tools = detail.supportsTools, vision = detail.hasVision, gated = summary.isGated)
+            RepoBadges(
+                tools = detail.supportsTools,
+                vision = detail.hasVision,
+                gated = summary.isGated,
+                thinking = detail.supportsThinking,
+            )
         }
 
         Eyebrow(stringResource(R.string.repo_choose_file))
