@@ -79,6 +79,7 @@ import io.github.hokanosekai.tensai.hf.HfRepoDetail
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.MarkdownText
 import io.github.hokanosekai.tensai.ui.components.TensaiBadge
+import io.github.hokanosekai.tensai.ui.components.TensaiBadgeTone
 import io.github.hokanosekai.tensai.ui.components.TensaiButton
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
@@ -226,12 +227,8 @@ private fun RepoBody(
             if (detail.contextLength > 0) {
                 TensaiMonoBadge(stringResource(R.string.repo_context, RepoLogic.formatContext(detail.contextLength)))
             }
-            RepoBadges(
-                tools = detail.supportsTools,
-                vision = detail.hasVision,
-                gated = summary.isGated,
-                thinking = detail.supportsThinking,
-            )
+            cardChips(tools = detail.supportsTools, thinking = detail.supportsThinking, vision = detail.hasVision, gated = summary.isGated)
+                .forEach { CardChipBadge(it) }
         }
 
         Eyebrow(stringResource(R.string.repo_choose_file))
@@ -328,7 +325,7 @@ private fun QuantRowItem(row: QuantRow, onClick: () -> Unit) {
                 val center = Modifier.align(Alignment.CenterVertically)
                 Text(text = row.label, fontFamily = TensaiMono, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = center)
                 if (row.recommended) TensaiBadge(stringResource(R.string.repo_badge_recommended), modifier = center)
-                if (row.onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), modifier = center, icon = Icons.Default.Check)
+                if (row.onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), modifier = center, icon = Icons.Default.Check, tone = TensaiBadgeTone.Neutral)
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,

@@ -13,6 +13,7 @@ internal enum class ModelFilter(@StringRes val labelRes: Int) {
     All(R.string.models_filter_all),
     Vulkan(R.string.models_filter_vulkan),
     Cpu(R.string.models_filter_cpu),
+    OpenCl(R.string.models_filter_opencl),
 }
 
 /**
@@ -20,8 +21,8 @@ internal enum class ModelFilter(@StringRes val labelRes: Int) {
  * gone (no verdict, so no backend); the two backend filters keep only models whose [verdicts] entry
  * resolves to that backend through [backendTag] (same [preference] and device flags as the badge),
  * which drops missing-file ones. A model absent from [verdicts] counts as having no verdict. An
- * OpenCL model matches neither backend filter (there is no OpenCL chip, no OpenCL-only build ships,
- * TEN-19) and only shows under [ModelFilter.All]. Order is preserved.
+ * OpenCL model matches [ModelFilter.OpenCl], which is only offered on a phone that has the backend
+ * ([availableFilters]). Order is preserved.
  */
 internal fun filterModels(
     models: List<ModelEntity>,
@@ -37,6 +38,7 @@ internal fun filterModels(
         when (filter) {
             ModelFilter.Vulkan -> tag == EffectiveBackend.Vulkan
             ModelFilter.Cpu -> tag == EffectiveBackend.Cpu
+            ModelFilter.OpenCl -> tag == EffectiveBackend.OpenCl
             ModelFilter.All -> true
         }
     }
@@ -59,9 +61,10 @@ internal fun backendTag(
     LoadProgressMap.effectiveBackend(preference.resolve(it.recommendedBackend), hasVulkan, hasOpenCl)
 }
 
-/**
- * Filters offered for this device: Vulkan only when it has Vulkan. There is no OpenCL chip, so a
- * model that resolves to OpenCL only shows under [ModelFilter.All] (TEN-19).
- */
-internal fun availableFilters(hasVulkan: Boolean): List<ModelFilter> =
-    if (hasVulkan) ModelFilter.entries else listOf(ModelFilter.All, ModelFilter.Cpu)
+/** Filters offered for this device: All and CPU, Vulkan and OpenCL only when the phone has them. */
+internal fun availableFilters(hasVulkan: Boolean, hasOpenCl: Boolean = false): List<ModelFilter> = buildList {
+    add(ModelFilter.All)
+    if (hasVulkan) add(ModelFilter.Vulkan)
+    add(ModelFilter.Cpu)
+    if (hasOpenCl) add(ModelFilter.OpenCl)
+}

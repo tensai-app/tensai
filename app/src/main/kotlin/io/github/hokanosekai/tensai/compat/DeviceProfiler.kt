@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.compat
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
+import com.tensai.llamakt.BackendInfo
 import com.tensai.llamakt.LlamaEngine
 
 /**
@@ -26,6 +27,12 @@ data class DeviceProfile(
     val bigCoreCount: Int,
     val hasVulkan: Boolean,
     val hasOpenCl: Boolean,
+    /** ggml device name of the Vulkan backend ("Mali-G68 MC4"), `null` when absent or unnamed. */
+    val vulkanDeviceName: String? = null,
+    /** ggml device name of the OpenCL backend, `null` when absent or unnamed. */
+    val openClDeviceName: String? = null,
+    /** Logical cores the JVM sees, 0 when unknown. */
+    val cpuCoreCount: Int = 0,
 ) {
 
     /**
@@ -95,6 +102,9 @@ class DeviceProfiler(context: Context) {
             bigCoreCount = staticFacts.bigCoreCount,
             hasVulkan = staticFacts.hasVulkan,
             hasOpenCl = staticFacts.hasOpenCl,
+            vulkanDeviceName = staticFacts.vulkanDeviceName,
+            openClDeviceName = staticFacts.openClDeviceName,
+            cpuCoreCount = Runtime.getRuntime().availableProcessors(),
         )
     }
 
@@ -103,7 +113,13 @@ class DeviceProfiler(context: Context) {
         val bigCoreCount: Int,
         val hasVulkan: Boolean,
         val hasOpenCl: Boolean,
+        val vulkanDeviceName: String?,
+        val openClDeviceName: String?,
     )
+
+    /** The driver's hardware name, `null` when blank or just the ggml id ("Vulkan0"). */
+    private fun BackendInfo.hardwareName(): String? =
+        deviceDescription.trim().takeIf { it.isNotEmpty() && !it.equals(name, ignoreCase = true) }
 
     private fun computeStaticFacts(): StaticFacts {
         val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -137,9 +153,12 @@ class DeviceProfiler(context: Context) {
         } finally {
             runCatching { engine.free() }
         }
-        val hasVulkan = backends.any { it.description.equals("Vulkan", ignoreCase = true) }
-        val hasOpenCl = backends.any { it.description.equals("OpenCL", ignoreCase = true) }
+        val vulkan = backends.firstOrNull { it.description.equals("Vulkan", ignoreCase = true) }
+        val openCl = backends.firstOrNull { it.description.equals("OpenCL", ignoreCase = true) }
 
-        return StaticFacts(socModel, bigCoreCount, hasVulkan, hasOpenCl)
+        return StaticFacts(
+            socModel, bigCoreCount, vulkan != null, openCl != null,
+            vulkan?.hardwareName(), openCl?.hardwareName(),
+        )
     }
 }

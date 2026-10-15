@@ -98,6 +98,7 @@ import io.github.hokanosekai.tensai.runtime.rememberNotificationAskState
 import io.github.hokanosekai.tensai.runtime.rememberNotificationPermissionRequester
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.TensaiBadge
+import io.github.hokanosekai.tensai.ui.components.TensaiBadgeTone
 import io.github.hokanosekai.tensai.ui.components.TensaiButton
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
 import io.github.hokanosekai.tensai.ui.components.TensaiChip
@@ -580,7 +581,7 @@ private fun ColumnScope.ModelStep(
                     compatibility = importedCompatibility,
                     backend = rememberBackendTag(importedCompatibility),
                     noAction = true,
-                    extraBadge = { TensaiBadge(stringResource(R.string.onboarding_imported_badge)) },
+                    imported = true,
                 )
             }
             copying -> {
@@ -672,7 +673,7 @@ private fun ColumnScope.ModelStep(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            TensaiBadge(stringResource(R.string.onboarding_coming_soon))
+            TensaiBadge(stringResource(R.string.onboarding_coming_soon), tone = TensaiBadgeTone.Neutral)
         }
     }
 }

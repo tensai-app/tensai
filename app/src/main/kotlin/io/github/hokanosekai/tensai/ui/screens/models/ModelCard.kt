@@ -76,27 +76,27 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.flow.map
 
 /**
- * Card for a single imported model: name, params, status top-right, badges, and one full-width
- * action chosen by [modelAction]. Bordered in primary and badged "Loaded" when [isLoaded].
+ * Card for a single imported model on the shared [ModelCardFrame]: name, fit status top-right,
+ * "author · params", "Q4_K_M · 1.9 GB · CPU", the chips, and one full-width action chosen by
+ * [modelAction]. Bordered in primary and chipped "Loaded" when [isLoaded].
  *
  * - normal: tonal "Load model"
  * - loaded: outlined "Unload"
  * - won't fit (and not loaded): a "Needs X, phone has Y" line and an outlined "Load anyway". Not
  *   disabled, the estimate is an estimate; `LoadingScreen` asks again before it really loads
- * - file missing ([fileExists] false): error dot and label instead of the verdict, no backend
- *   badge, error-tonal "Unload" (still resident, TEN-107) or "Remove"
+ * - file missing ([fileExists] false): error dot and label instead of the verdict, no backend in
+ *   the facts, error-tonal "Unload" (still resident, TEN-107) or "Remove"
  *
  * No overflow menu (TEN-155): the tap opens the details, which hold Delete. [onDeleteClick] is the
  * "Remove" of a missing file.
  *
  * [backend] is what a load would use (see [backendTag]), resolved by the caller from one hoisted
- * preference collector; `null` shows no backend badge.
+ * preference collector; `null` shows none.
  *
  * The onboarding uses it as a read-only card (TEN-118): [noAction] drops the button and the tap
- * target, [link] adds a mono "open in the browser" row, and [extraBadge] is one
- * more badge after the others ("Imported"). The click callbacks are then unused, hence their defaults.
+ * target, [link] adds a mono "open in the browser" row, and [imported] adds the "Imported" chip.
+ * The click callbacks are then unused, hence their defaults.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelCard(
     model: ModelEntity,
@@ -111,84 +111,38 @@ internal fun ModelCard(
     onUnloadClick: () -> Unit = {},
     link: ModelCardLink? = null,
     noAction: Boolean = false,
-    extraBadge: (@Composable () -> Unit)? = null,
+    imported: Boolean = false,
 ) {
-    // No ripple on a card this big: a press just settles it to 0.99, like the kit's ModelCard.
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val reducedMotion = rememberReducedMotion()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.99f else 1f,
-        animationSpec = if (reducedMotion) snap() else spring(),
-        label = "modelCardScale",
-    )
-    val openDetails = stringResource(R.string.model_open_details)
     val wontFit = compatibility?.verdict == Verdict.WontFit && !isLoaded
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(TensaiShapes.large)
-            .then(
-                if (noAction) {
-                    Modifier
-                } else {
-                    Modifier.clickable(
-                        interactionSource = interaction,
-                        indication = null,
-                        onClickLabel = openDetails,
-                        role = Role.Button,
-                        onClick = onClick,
-                    )
-                },
-            ),
-        shape = TensaiShapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (isLoaded) MaterialTheme.colorScheme.primary else MaterialTheme.tensaiTints.outline),
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = model.shownName,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        lineHeight = 22.sp,
-                    )
-                    Text(
-                        text = formatParamCount(model.paramCount),
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
+    val params = if (model.paramCount > 0) formatParamCount(model.paramCount) else null
+    ModelCardFrame(
+        title = model.shownName,
+        status = { ModelStatus(compatibility, fileExists) },
+        subtitle = cardSubtitle(repoOwner(model.sourceRepo), params),
+        facts = cardFacts(model.displayQuant, model.sizeBytes, if (fileExists) backend else null),
+        chips = cardChips(loaded = isLoaded, tools = model.supportsTools, thinking = model.supportsThinking, imported = imported),
+        modifier = modifier,
+        highlighted = isLoaded,
+        onClick = if (noAction) null else onClick,
+        onClickLabel = stringResource(R.string.model_open_details),
+        extra = link?.let { { ModelLinkRow(it, modifier = Modifier.padding(top = 4.dp)) } },
+        footer = if (noAction) {
+            null
+        } else {
+            {
+                if (wontFit && compatibility != null) {
+                    WontFitLine(compatibility, modifier = Modifier.padding(bottom = 8.dp))
                 }
-                ModelStatus(compatibility, modifier = Modifier.padding(top = 2.dp).widthIn(max = 140.dp))
-            }
-
-            ModelBadges(model, backend, isLoaded, modifier = Modifier.padding(top = 12.dp), extraBadge = extraBadge)
-
-            if (link != null) {
-                ModelLinkRow(link, modifier = Modifier.padding(top = 4.dp))
-            }
-
-            if (wontFit && compatibility != null) {
-                WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
-            }
-
-            if (!noAction) {
                 ModelActionButton(
                     action = modelAction(isLoaded, fileExists, wontFit),
                     onLoad = onLoadClick,
                     onUnload = onUnloadClick,
                     onRemove = { onDeleteClick(false) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-        }
-    }
+        },
+    )
 }
 
 /** A web page a [ModelCard] points at: [label] is what is shown (no scheme), [url] what is opened. */
@@ -223,15 +177,20 @@ internal fun ModelLinkRow(link: ModelCardLink, modifier: Modifier = Modifier) {
             imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
 
-/** Header status slot: the verdict, or "File missing" in error color when there is no verdict. */
+/**
+ * Header status slot, keyed on [fileExists]: a missing file shows the error dot and "File missing"
+ * whatever the verdict. With the file there, a null [compatibility] (preferences not loaded yet)
+ * shows nothing rather than a guessed status.
+ */
 @Composable
-internal fun ModelStatus(compatibility: Compatibility?, modifier: Modifier = Modifier, fontSize: Float = 12f) {
-    if (compatibility != null) {
+internal fun ModelStatus(compatibility: Compatibility?, fileExists: Boolean, modifier: Modifier = Modifier, fontSize: Float = 12f) {
+    if (fileExists) {
+        if (compatibility == null) return
         StatusIndicator(
             color = verdictColor(compatibility.verdict),
             label = compatLabel(compatibility.verdict),
@@ -280,36 +239,6 @@ internal fun EffectiveBackend.displayName(): String = when (this) {
     EffectiveBackend.Cpu -> stringResource(R.string.models_filter_cpu)
 }
 
-/** "Loaded" first, then quant, size, the backend a load would use (none without a verdict), then Tools and Thinking (TEN-154). */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun ModelBadges(
-    model: ModelEntity,
-    backend: EffectiveBackend?,
-    isLoaded: Boolean,
-    modifier: Modifier = Modifier,
-    extraBadge: (@Composable () -> Unit)? = null,
-) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = modifier,
-    ) {
-        if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
-        TensaiMonoBadge(model.displayQuant)
-        TensaiMonoBadge(formatFileSize(model.sizeBytes))
-        if (backend != null) {
-            TensaiBadge(
-                backend.displayName(),
-                icon = if (backend == EffectiveBackend.Cpu) Icons.Default.Memory else Icons.Default.Bolt,
-            )
-        }
-        if (model.supportsTools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
-        if (model.supportsThinking) TensaiBadge(stringResource(R.string.discover_badge_thinking), icon = Icons.Default.Psychology)
-        extraBadge?.invoke()
-    }
-}
-
 /**
  * "Needs X, phone has Y" under the badges of a model that won't fit, figures in mono. Both come
  * off the [Compatibility] that produced the verdict (the total RAM, not the free RAM: that is what
@@ -321,8 +250,8 @@ internal fun WontFitLine(compatibility: Compatibility, modifier: Modifier = Modi
     val has = formatGigabytes(compatibility.deviceRamBytes)
     Text(
         text = monoFigures(stringResource(R.string.model_compat_needs, needs, has), listOf(needs, has)),
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier,
     )

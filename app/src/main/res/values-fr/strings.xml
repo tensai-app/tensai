@@ -72,11 +72,11 @@
 
     <string name="settings_backend">Backend par défaut</string>
     <string name="settings_backend_auto">Auto</string>
-    <string name="settings_backend_auto_subtitle">Recommandé : choisit CPU ou GPU selon le modèle</string>
+    <string name="settings_backend_auto_subtitle">Recommandé : choisit CPU ou Vulkan selon le modèle</string>
     <string name="settings_backend_cpu">CPU</string>
     <string name="settings_backend_cpu_subtitle">Le plus rapide pour la plupart des modèles denses sur cette gamme de téléphones</string>
     <string name="settings_backend_gpu">Vulkan</string>
-    <string name="settings_backend_gpu_subtitle">Calcul déporté sur le GPU, si l\'appareil le prend en charge</string>
+    <string name="settings_backend_gpu_subtitle">Exécute le modèle via Vulkan quand le téléphone le prend en charge</string>
 
     <string name="settings_context_size">Taille du contexte</string>
     <plurals name="settings_context_size_value">
@@ -335,6 +335,7 @@
     <string name="models_filter_all">Tous</string>
     <string name="models_filter_empty_vulkan">Aucun modèle Vulkan</string>
     <string name="models_filter_empty_cpu">Aucun modèle CPU</string>
+    <string name="models_filter_empty_opencl">Aucun modèle OpenCL</string>
     <string name="model_load">Charger le modèle</string>
     <string name="model_delete">Supprimer le modèle</string>
     <string name="model_remove">Retirer</string>
@@ -360,6 +361,7 @@
     <string name="model_detail_tools">Outils</string>
     <string name="model_detail_supported">Pris en charge</string>
     <string name="model_detail_not_supported">Non pris en charge</string>
+    <string name="model_detail_cpu_cores">%1$d cœurs</string>
     <string name="model_detail_backend">Backend</string>
     <string name="model_detail_estimated_memory">Mémoire estimée</string>
     <string name="model_detail_saved_sessions">Sessions enregistrées</string>

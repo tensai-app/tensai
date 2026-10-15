@@ -46,91 +46,33 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.components.TensaiBadge
+import io.github.hokanosekai.tensai.ui.components.TensaiBadgeTone
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
- * Discover's repo card from the kit (`RepoCard`): name, "author · 1.7B params", verdict dot and
- * label with the quant and its size in mono, then the Tools / Vision / Gated badges with the
- * download and like counts on the right. The whole card is the tap target.
+ * Discover's repo card on the shared [ModelCardFrame]: name, verdict top-right, "author · 1.7B
+ * params", "Q4_K_M · 1.9 GB" of the recommended file, the chips, then the download and like counts
+ * (none on the recommended cards). The whole card is the tap target.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun RepoCard(card: RepoCardModel, onClick: () -> Unit, modifier: Modifier = Modifier, onDevice: Boolean = false) {
-    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(
-        shape = TensaiShapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outline),
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(TensaiShapes.large)
-            .clickable(role = Role.Button, onClick = onClick),
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Text(
-                text = card.name,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 22.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = if (card.paramCount > 0) {
-                    stringResource(R.string.discover_author_params, card.author, formatParamCount(card.paramCount))
-                } else {
-                    card.author
-                },
-                fontSize = 13.sp,
-                color = secondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(top = 10.dp),
-            ) {
-                StatusIndicator(
-                    color = verdictColor(card.verdict),
-                    label = compatLabel(card.verdict),
-                    fontSize = 12.5f,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Text(
-                    text = "· ${card.quant} · ${formatFileSize(card.sizeBytes)}",
-                    fontFamily = TensaiMono,
-                    fontSize = 12.sp,
-                    color = secondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            ) {
-                RepoBadges(card, onDevice)
-                if (card.downloads != null && card.likes != null) {
-                    // The kit's `margin-left: auto`: the counts take the rest of the line, pushed to its end.
-                    Box(contentAlignment = Alignment.CenterEnd, modifier = Modifier.weight(1f).defaultMinSize(minHeight = 22.dp)) {
-                        RepoStats(downloads = card.downloads, likes = card.likes)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun FlowRowScope.RepoBadges(card: RepoCardModel, onDevice: Boolean = false) {
-    if (onDevice) TensaiBadge(stringResource(R.string.repo_badge_on_device), icon = Icons.Default.Check)
-    RepoBadges(card.tools, card.vision, card.gated, card.thinking)
+    val params = if (card.paramCount > 0) formatParamCount(card.paramCount) else null
+    ModelCardFrame(
+        title = card.name,
+        status = { StatusIndicator(color = verdictColor(card.verdict), label = compatLabel(card.verdict)) },
+        subtitle = cardSubtitle(card.author, params),
+        facts = cardFacts(card.quant, card.sizeBytes, backend = null),
+        chips = cardChips(onDevice = onDevice, tools = card.tools, thinking = card.thinking, gated = card.gated),
+        modifier = modifier,
+        onClick = onClick,
+        extra = if (card.downloads != null && card.likes != null) {
+            { RepoStats(downloads = card.downloads, likes = card.likes, modifier = Modifier.padding(top = 12.dp)) }
+        } else {
+            null
+        },
+    )
 }
 
 /**
@@ -139,22 +81,13 @@ internal fun FlowRowScope.RepoBadges(card: RepoCardModel, onDevice: Boolean = fa
  */
 internal const val SHOW_VISION = false
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun FlowRowScope.RepoBadges(tools: Boolean, vision: Boolean, gated: Boolean, thinking: Boolean = false) {
-    if (tools) TensaiBadge(stringResource(R.string.discover_badge_tools), icon = Icons.Default.Construction)
-    if (thinking) TensaiBadge(stringResource(R.string.discover_badge_thinking), icon = Icons.Default.Psychology)
-    if (SHOW_VISION && vision) TensaiBadge(stringResource(R.string.discover_badge_vision), icon = Icons.Default.Visibility)
-    if (gated) TensaiBadge(stringResource(R.string.discover_badge_gated), icon = Icons.Default.Lock, warning = true)
-}
-
 /** Downloads and likes, mono 12sp, each with its 15dp icon. Read as "182400 downloads", not as a glyph and a number. */
 @Composable
 internal fun RepoStats(downloads: Long, likes: Long, modifier: Modifier = Modifier) {
     val downloadsText = stringResource(R.string.discover_downloads_count, downloads.toString())
     val likesText = stringResource(R.string.discover_likes_count, likes.toString())
     Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.semantics(mergeDescendants = true) { contentDescription = "$downloadsText, $likesText" },
     ) {
@@ -166,7 +99,7 @@ internal fun RepoStats(downloads: Long, likes: Long, modifier: Modifier = Modifi
 @Composable
 private fun Stat(icon: ImageVector, text: String) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.clearAndSetSemantics {},
     ) {

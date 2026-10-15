@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -89,26 +90,37 @@ fun TensaiChip(
     }
 }
 
+/** Tone of a [TensaiBadge]: [Neutral] is surface-variant, [Primary] primary-16, [Warning] warning-14. */
+enum class TensaiBadgeTone { Neutral, Primary, Warning }
+
 /**
- * Primary-tone badge from the kit (`Badge tone="primary"`): 22dp pill, primary-16 fill, primary
- * 12sp semibold text, optional 13dp [icon] with a 5dp gap. [warning] is the kit's
- * `tone="warning"`: warning-12 fill and warning text (the "Gated" badge).
+ * Badge from the kit (`Badge`): 22dp-minimum pill, 9dp side padding, optional 13dp [icon] with a 5dp
+ * gap, 12sp semibold text with 0.01em tracking. [tone] picks the colors: neutral (tools, thinking,
+ * on device), primary (loaded) or warning (gated).
  */
 @Composable
-fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, warning: Boolean = false) {
-    val tone = if (warning) MaterialTheme.tensaiColors.warning else MaterialTheme.colorScheme.primary
-    val fill = if (warning) MaterialTheme.tensaiTints.warning12 else MaterialTheme.tensaiTints.primary16
-    Surface(shape = CircleShape, color = fill, modifier = modifier.defaultMinSize(minHeight = 22.dp)) {
+fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, tone: TensaiBadgeTone = TensaiBadgeTone.Primary) {
+    val content = when (tone) {
+        TensaiBadgeTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+        TensaiBadgeTone.Primary -> MaterialTheme.colorScheme.primary
+        TensaiBadgeTone.Warning -> MaterialTheme.tensaiColors.warning
+    }
+    val fill = when (tone) {
+        TensaiBadgeTone.Neutral -> MaterialTheme.colorScheme.surfaceVariant
+        TensaiBadgeTone.Primary -> MaterialTheme.tensaiTints.primary16
+        TensaiBadgeTone.Warning -> MaterialTheme.tensaiTints.warning12
+    }
+    Surface(shape = CircleShape, color = fill, modifier = modifier.heightIn(min = 22.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 2.dp),
         ) {
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = tone,
+                    tint = content,
                     modifier = Modifier.size(13.dp),
                 )
             }
@@ -116,7 +128,8 @@ fun TensaiBadge(text: String, modifier: Modifier = Modifier, icon: ImageVector? 
                 text = text,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = tone,
+                letterSpacing = 0.12.sp,
+                color = content,
                 maxLines = 1,
             )
         }

@@ -137,10 +137,12 @@ class ModelFilterTest {
     }
 
     @Test
-    fun openClModelsOnlyShowUnderAll() {
+    fun openClModelsShowUnderAllAndOpenCl() {
         assertEquals(all, filter(all, ModelFilter.All, hasVulkan = false, hasOpenCl = true))
         assertEquals(listOf(cpu), filter(all, ModelFilter.Cpu, hasVulkan = false, hasOpenCl = true))
         assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.Vulkan, hasVulkan = false, hasOpenCl = true))
+        assertEquals(listOf(gpu, auto), filter(all, ModelFilter.OpenCl, hasVulkan = false, hasOpenCl = true))
+        assertEquals(emptyList<ModelEntity>(), filter(all, ModelFilter.OpenCl, hasVulkan = true, hasOpenCl = false))
     }
 
     @Test
@@ -173,5 +175,14 @@ class ModelFilterTest {
     fun vulkanChipIsHiddenWithoutVulkan() {
         assertEquals(listOf(ModelFilter.All, ModelFilter.Vulkan, ModelFilter.Cpu), availableFilters(hasVulkan = true))
         assertEquals(listOf(ModelFilter.All, ModelFilter.Cpu), availableFilters(hasVulkan = false))
+    }
+
+    @Test
+    fun openClChipOnlyWithOpenCl() {
+        assertEquals(
+            listOf(ModelFilter.All, ModelFilter.Vulkan, ModelFilter.Cpu, ModelFilter.OpenCl),
+            availableFilters(hasVulkan = true, hasOpenCl = true),
+        )
+        assertEquals(listOf(ModelFilter.All, ModelFilter.Cpu, ModelFilter.OpenCl), availableFilters(hasVulkan = false, hasOpenCl = true))
     }
 }

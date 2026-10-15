@@ -253,7 +253,7 @@ fun ModelsScreen(
     val hasVulkan = deviceProfile.hasVulkan
     var selectedFilter by rememberSaveable { mutableStateOf(ModelFilter.All) }
     // A saved Vulkan selection on a device that no longer offers the chip falls back to All.
-    val filter = if (selectedFilter in availableFilters(hasVulkan)) selectedFilter else ModelFilter.All
+    val filter = if (selectedFilter in availableFilters(hasVulkan, deviceProfile.hasOpenCl)) selectedFilter else ModelFilter.All
     val shown = filterModels(currentModels.orEmpty(), verdicts, filter, backendPreference ?: BackendPreference.Auto, hasVulkan, deviceProfile.hasOpenCl)
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -274,7 +274,7 @@ fun ModelsScreen(
                     .padding(start = 20.dp, top = 4.dp, end = 20.dp, bottom = 12.dp)
                     .selectableGroup(),
             ) {
-                availableFilters(hasVulkan).forEach { option ->
+                availableFilters(hasVulkan, deviceProfile.hasOpenCl).forEach { option ->
                     TensaiChip(
                         label = stringResource(option.labelRes),
                         selected = option == filter,
@@ -330,8 +330,11 @@ fun ModelsScreen(
                             item(key = "filter-empty") {
                                 Text(
                                     text = stringResource(
-                                        if (filter == ModelFilter.Vulkan) R.string.models_filter_empty_vulkan
-                                        else R.string.models_filter_empty_cpu,
+                                        when (filter) {
+                                            ModelFilter.Vulkan -> R.string.models_filter_empty_vulkan
+                                            ModelFilter.OpenCl -> R.string.models_filter_empty_opencl
+                                            else -> R.string.models_filter_empty_cpu
+                                        },
                                     ),
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

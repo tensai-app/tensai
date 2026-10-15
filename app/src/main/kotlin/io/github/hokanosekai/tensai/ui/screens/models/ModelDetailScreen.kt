@@ -267,10 +267,11 @@ fun ModelDetailScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 modifier = Modifier.padding(top = 10.dp),
                             ) {
-                                ModelStatus(if (exists) compatibility else null, fontSize = 12.5f)
+                                ModelStatus(compatibility, exists, fontSize = 12.5f)
                                 if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
                             }
-                            ModelBadges(model, if (exists) backend else null, isLoaded = false, modifier = Modifier.padding(top = 12.dp))
+                            CardFacts(cardFacts(model.displayQuant, model.sizeBytes, if (exists) backend else null), modifier = Modifier.padding(top = 8.dp))
+                            CardChips(cardChips(tools = model.supportsTools, thinking = model.supportsThinking), modifier = Modifier.padding(top = 12.dp))
                             if (wontFit && exists) WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
                         }
 
@@ -366,7 +367,17 @@ fun ModelDetailScreen(
                                 SettingsRow(
                                     icon = Icons.Default.Bolt,
                                     title = stringResource(R.string.model_detail_backend),
-                                    trailing = { ValueText(backend.displayName()) },
+                                    trailing = {
+                                        val cpuCores = profile.cpuCoreCount.takeIf { it > 0 }?.let { stringResource(R.string.model_detail_cpu_cores, it) }
+                                        ValueText(
+                                            backendHardware(
+                                                backend,
+                                                vulkanDevice = profile.vulkanDeviceName,
+                                                openClDevice = profile.openClDeviceName,
+                                                cpuCores = cpuCores,
+                                            ),
+                                        )
+                                    },
                                 )
                             }
                             RowDivider()

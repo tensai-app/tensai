@@ -83,11 +83,11 @@
     <!-- Inference > backend. One entry per io.github.hokanosekai.tensai.data.BackendPreference. -->
     <string name="settings_backend">Default backend</string>
     <string name="settings_backend_auto">Auto</string>
-    <string name="settings_backend_auto_subtitle">Recommended: picks CPU or GPU per model</string>
+    <string name="settings_backend_auto_subtitle">Recommended: picks CPU or Vulkan per model</string>
     <string name="settings_backend_cpu">CPU</string>
     <string name="settings_backend_cpu_subtitle">Fastest for most dense models on this class of phone</string>
     <string name="settings_backend_gpu">Vulkan</string>
-    <string name="settings_backend_gpu_subtitle">GPU offload, when the device has it</string>
+    <string name="settings_backend_gpu_subtitle">Runs the model through Vulkan when the phone supports it</string>
 
     <!-- Inference > read-only rows. See io.github.hokanosekai.tensai.ui.screens.settings.InferenceFacts. -->
     <string name="settings_context_size">Context size</string>
@@ -416,8 +416,10 @@
     <!-- Backend names, not translated: filter chips and the card badge. -->
     <string name="models_filter_vulkan" translatable="false">Vulkan</string>
     <string name="models_filter_cpu" translatable="false">CPU</string>
+    <string name="models_filter_opencl" translatable="false">OpenCL</string>
     <string name="models_filter_empty_vulkan">No Vulkan models</string>
     <string name="models_filter_empty_cpu">No CPU models</string>
+    <string name="models_filter_empty_opencl">No OpenCL models</string>
     <string name="model_load">Load model</string>
     <string name="model_delete">Delete model</string>
     <string name="model_remove">Remove</string>
@@ -445,6 +447,7 @@
     <string name="model_detail_supported">Supported</string>
     <string name="model_detail_not_supported">Not supported</string>
     <string name="model_detail_backend">Backend</string>
+    <string name="model_detail_cpu_cores">%1$d cores</string>
     <string name="model_detail_estimated_memory">Estimated memory</string>
     <string name="model_detail_saved_sessions">Saved sessions</string>
 
