@@ -97,7 +97,7 @@ object QuantLabel {
             "|TQ[12]${SEP}0" + // TQ1_0, TQ2_0
             "|Q[2-8]${SEP}0$SEP(?:4${SEP}4|4${SEP}8|8${SEP}8)" + // Q4_0_4_4, Q4_0_4_8, Q4_0_8_8 (ARM repacks)
             "|Q[2-8]${SEP}K(?:$SEP(?:XL|XS|[SML]))?" + // Q4_K_M, Q6_K, Q3_K_XL
-            "|Q[2-8]$SEP[01]" + // Q8_0, Q4_1
+            "|Q[2-8]$SEP[01](?:$SEP(?:XL|L))?" + // Q8_0, Q4_1, Q8_0_XL (uploader variant, output tensors kept wider)
             "|BF16|FP16|F16|FP32|F32|MXFP4" + // unquantized / 4-bit float
             "|Q[2-8]" + // bare `q4`, `q8`
             ")(?![A-Za-z0-9])",

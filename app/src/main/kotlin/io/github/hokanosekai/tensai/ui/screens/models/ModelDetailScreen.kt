@@ -268,7 +268,7 @@ fun ModelDetailScreen(
                             RowDivider()
                             SettingsRow(Icons.Default.Hub, stringResource(R.string.model_detail_parameters), trailing = { MonoText(formatParamCount(model.paramCount)) })
                             RowDivider()
-                            SettingsRow(Icons.Default.Compress, stringResource(R.string.model_detail_quantization), trailing = { MonoText(model.quantLabel) })
+                            SettingsRow(Icons.Default.Compress, stringResource(R.string.model_detail_quantization), trailing = { MonoText(model.displayQuant) })
                             RowDivider()
                             SettingsRow(Icons.Default.Storage, stringResource(R.string.model_detail_file_size), trailing = { MonoText(formatFileSize(model.sizeBytes)) })
                             RowDivider()

@@ -31,7 +31,7 @@ internal object ModelSource {
             repo = origin.repo,
             quant = HfQuantFile(
                 fileName = origin.file,
-                quant = origin.quant.ifBlank { model.quantLabel },
+                quant = origin.quant.ifBlank { model.displayQuant },
                 sizeBytes = model.sizeBytes,
                 sha256 = origin.sha256,
             ),

@@ -2,6 +2,7 @@ package io.github.hokanosekai.tensai.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import io.github.hokanosekai.tensai.hf.QuantLabel
 
 /**
  * A GGUF model imported into the app's private storage, persisted so the Models list survives
@@ -77,6 +78,15 @@ data class ModelEntity(
             val file = sourceFile ?: return null
             return ModelOrigin(repo, file, sourceQuant.orEmpty(), sourceSha256, sourceCommit, downloadedAt ?: importedAt)
         }
+
+    /**
+     * The quant label to show (TEN-148): what the user picked on the Hub ([sourceQuant]) for a
+     * download, the GGUF `general.file_type` ([quantLabel]) for an import. The header cannot tell
+     * an uploader variant (`Q4_K_L`, `UD-Q4_K_XL`) from its base type, so it reads `Q4_K_M` for both.
+     * A blank or [QuantLabel.UNKNOWN] source quant is no better than the header, so it is skipped.
+     */
+    val displayQuant: String
+        get() = sourceQuant?.takeIf { it.isNotBlank() && it != QuantLabel.UNKNOWN } ?: quantLabel
 
     /** This row with [origin] written into its `source*` columns (null clears them). */
     fun withOrigin(origin: ModelOrigin?): ModelEntity = copy(

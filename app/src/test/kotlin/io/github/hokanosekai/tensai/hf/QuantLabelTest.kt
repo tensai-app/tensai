@@ -19,6 +19,8 @@ class QuantLabelTest {
         assertEquals("Q6_K", label("model-Q6_K.gguf"))
         assertEquals("Q3_K_XL", label("Qwen3-UD-Q3_K_XL.gguf"))
         assertEquals("Q4_0", label("model.Q4_0.gguf"))
+        assertEquals("Q8_0_XL", label("MiniCPM5-2B-Elffuss-Code-Q8_0-XL.gguf"))
+        assertEquals("Q4_K_L", label("Llama-3.2-1B-Instruct-Q4_K_L.gguf"))
     }
 
     @Test

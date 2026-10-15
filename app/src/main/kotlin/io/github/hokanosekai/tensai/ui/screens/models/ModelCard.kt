@@ -308,7 +308,7 @@ internal fun ModelBadges(
         modifier = modifier,
     ) {
         if (isLoaded) TensaiBadge(stringResource(R.string.model_loaded_badge))
-        TensaiMonoBadge(model.quantLabel)
+        TensaiMonoBadge(model.displayQuant)
         TensaiMonoBadge(formatFileSize(model.sizeBytes))
         if (backend != null) {
             TensaiBadge(
