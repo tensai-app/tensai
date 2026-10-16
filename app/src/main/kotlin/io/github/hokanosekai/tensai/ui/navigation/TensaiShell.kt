@@ -50,7 +50,6 @@ import kotlinx.coroutines.launch
 private enum class TensaiChrome { Main, Detail, None }
 
 private fun chromeForRoute(route: String?): TensaiChrome = when {
-    route == TensaiDestination.Home.route -> TensaiChrome.Main
     route?.startsWith("chat/") == true -> TensaiChrome.Main
     route == TensaiDestination.Models.route -> TensaiChrome.Detail
     route?.startsWith("model/") == true -> TensaiChrome.Detail
@@ -83,7 +82,7 @@ private fun detailTitleForRoute(route: String?): Int? = when {
  * there's no public hook to swap its slide animation for [io.github.hokanosekai.tensai.ui.theme.TensaiMotion].
  *
  * @param onboardingEntry whether this launch starts in the first-run flow, and at which step —
- * picks [TensaiDestination.Home] vs [TensaiDestination.Onboarding] as the start destination. See
+ * picks a new draft chat vs [TensaiDestination.Onboarding] as the start destination. See
  * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate] for the rule, and
  * `MainActivity` for how it is resolved before first composition.
  */
@@ -135,6 +134,11 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
     // RestrictedApi). A stale entry is two short strings that no drawer row matches.
     val createdChatIds = remember { mutableStateMapOf<String, String>() }
 
+    // Whether a chat has no message yet, by back stack entry id, as its screen reports it: the top bar
+    // shows the brand and no ring then. Until it reports, a draft counts as empty and a saved
+    // conversation does not, so the bar does not flip as the screen appears. Same pruning as above.
+    val emptyChats = remember { mutableStateMapOf<String, Boolean>() }
+
     val untitledLabel = stringResource(R.string.drawer_new_chat)
     // A draft's route still says "new" once it has its row, so createdChatIds comes first: the same
     // resolution as the drawer's active row. No row yet (or still blank) reads as the untitled label.
@@ -142,13 +146,16 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
         val argId = backStackEntry?.arguments?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
         val chatId = backStackEntry?.id?.let(createdChatIds::get)
             ?: argId?.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID }
-        conversationLabel(conversations?.firstOrNull { it.id == chatId }?.title.orEmpty(), untitledLabel)
+        val empty = backStackEntry?.id?.let(emptyChats::get) ?: (chatId == null)
+        if (empty) null else conversationLabel(conversations?.firstOrNull { it.id == chatId }?.title.orEmpty(), untitledLabel)
     } else {
         null
     }
+    // Empty chat: no title, no ring (the brand shows, see TensaiTopBar).
+    val chatHasMessages = currentRoute?.startsWith("chat/") == true && chatTitle != null
 
     val startDestination = when (onboardingEntry) {
-        OnboardingEntry.None -> TensaiDestination.Home.route
+        OnboardingEntry.None -> TensaiDestination.Chat.route
         is OnboardingEntry.Show -> TensaiDestination.Onboarding.route
     }
     val onboardingStartStep = (onboardingEntry as? OnboardingEntry.Show)?.step ?: OnboardingStep.Welcome
@@ -165,6 +172,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
         LoadRequests.consume(modelId)
         // A model deleted since the notification was posted: nothing to load, nothing to say.
         val exists = RuntimeGraph.modelRepository.models.first().any { it.id == modelId }
+        // Not returnToChat: on success the root becomes a new draft chat, see loadFinishedOp.
         if (exists) navController.navigate(TensaiDestination.Loading.route(modelId))
     }
 
@@ -176,15 +184,12 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
             TensaiDrawerContent(
                 onOpenConversation = { conversationId ->
                     scope.launch { drawerState.close() }
-                    // Already on it (or on an empty draft, for "New chat"): a second entry would be a
-                    // duplicate screen with its own view model.
+                    // Replaces the root (TEN-168), see openConversationOp.
                     val openId = backStackEntry?.takeIf { currentRoute?.startsWith("chat/") == true }?.let {
                         createdChatIds[it.id]
                             ?: it.arguments?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
                     }
-                    if (openId != conversationId) {
-                        navController.navigate(TensaiDestination.Chat.route(conversationId))
-                    }
+                    navController.perform(openConversationOp(openId, conversationId))
                 },
                 currentRoute = currentRoute,
                 currentConversationId = backStackEntry?.arguments
@@ -192,7 +197,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 createdConversationId = backStackEntry?.id?.let(createdChatIds::get),
                 onNavigate = { route ->
                     scope.launch { drawerState.close() }
-                    navController.navigate(route) { launchSingleTop = true }
+                    navController.perform(openSecondaryOp(route))
                 },
             )
         },
@@ -211,7 +216,7 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                         title = chatTitle,
                         actions = {
                             if (currentRoute?.startsWith("chat/") == true) {
-                                ContextRing(
+                                if (chatHasMessages) ContextRing(
                                     state = chatContextRing.usage,
                                     busy = chatContextRing.busy,
                                     onClick = { chatContextRequests.tryEmit(Unit) },
@@ -257,6 +262,8 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 onChatContextRingState = { chatContextRing = it },
                 deviceCopyRequests = deviceCopyRequests,
                 onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
+                createdConversationId = { createdChatIds[it] },
+                onChatEmpty = { entryId, empty -> emptyChats[entryId] = empty },
                 modifier = Modifier.padding(innerPadding),
             )
 

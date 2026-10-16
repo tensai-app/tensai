@@ -1,7 +1,7 @@
 package io.github.hokanosekai.tensai.ui.screens
 
 /**
- * Which of Home's four greetings the clock calls for — see [greetingFor]. The screen maps these
+ * Which of the empty chat's four greetings the clock calls for, see [greetingFor]. The screen maps these
  * to their string resources, so the bands stay a plain function of the hour and nothing here has
  * to know about locales.
  */
@@ -20,11 +20,11 @@ enum class Greeting {
 }
 
 /**
- * Picks Home's greeting from the hour of day.
+ * Picks the empty chat's greeting from the hour of day.
  *
  * Deliberately takes the hour rather than reading a clock: "which greeting at 04:59 vs. 05:00" is
  * the only part of the greeting worth proving, and it is only provable if the time comes in as an
- * argument. `HomeScreen` supplies `LocalTime.now().hour`.
+ * argument. `ChatEmptyState` supplies `LocalTime.now().hour`.
  *
  * @param hour hour of day, 0..23. Anything outside that range lands in [Greeting.Night] along with
  *   the late/early band it shares an `else` with — this is not a validated input, callers are

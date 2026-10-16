@@ -158,7 +158,7 @@ class NoTechnicalJargonTest {
      *
      * Read off the source tree rather than through `R`/`Resources` so this stays a plain JVM test
      * with no Android runtime behind it — the same reason every other pure rule in this project
-     * ([io.github.hokanosekai.tensai.ui.screens.HomePill], `OnboardingGate`, `KvCacheSize`) is
+     * (`OnboardingGate`, `KvCacheSize`) is
      * testable without a device.
      */
     private fun userFacingStrings(): List<Pair<String, String>> {

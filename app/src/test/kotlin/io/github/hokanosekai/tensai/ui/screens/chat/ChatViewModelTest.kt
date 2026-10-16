@@ -602,7 +602,7 @@ class ChatViewModelTest {
 
     /**
      * A `ChatViewModel` rebuilt mid-reply — `ChatScreen` `remember`s one per conversation id, so
-     * navigating to Home and back makes a new one while the generation, which runs on the
+     * navigating to another screen and back makes a new one while the generation, which runs on the
      * application scope, carries on — must still offer the stop for its own conversation. That is
      * what [ActiveSessionTracker] covers and an instance-scoped flag cannot.
      */

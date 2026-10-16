@@ -1,6 +1,10 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -62,8 +66,9 @@ import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.SuggestionChips
-import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
+import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
+import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 
 /**
@@ -73,20 +78,19 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *
  * @param conversationId an existing conversation, or `null` for a new chat: a draft that gets its
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
- * @param onNavigateToModels used by [ChatError.NoModelLoaded]'s banner.
+ * @param onNavigateToModels the context sheet's "Load" when it has no model to name, and the model picker's "Manage models".
  * @param onNavigateToSettings the context sheet's way to the context length setting (TEN-161).
  * @param onNavigateToLoad the context sheet's "Load" (the model the conversation was started on) and the
  *   model picker's pick. The caller makes the load come back to this conversation.
  * @param onNavigateToDiscover the model picker's way to Discover.
  * @param onNavigateToImport the model picker's empty state, to the Models screen's file picker.
  * @param onConversationCreated the draft got its real id (first send), reported for the drawer.
+ * @param onEmptyChanged whether the conversation has no message, for the shell's top bar (the brand
+ *   and no context ring while empty).
  * @param contextRequests taps on the top bar's context ring (owned by `TensaiShell`).
  * @param onContextRingState the ring's figure and busy flag, for the shell's top bar to draw (TEN-160).
  * @param settingsRequests taps on the top bar's params button (owned by `TensaiShell`), which open
  *   [ChatSettingsSheet].
- * @param initialPrompt a first turn handed over by Home (TEN-37), sent once on arrival — see
- *   [io.github.hokanosekai.tensai.ui.navigation.TensaiDestination.Chat.ARG_PROMPT]. `null` for
- *   every other way into a conversation.
  */
 @Composable
 fun ChatScreen(
@@ -97,9 +101,9 @@ fun ChatScreen(
     onNavigateToDiscover: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
     modifier: Modifier = Modifier,
-    initialPrompt: String? = null,
     settingsRequests: Flow<Unit> = emptyFlow(),
     onConversationCreated: (String) -> Unit = {},
+    onEmptyChanged: (Boolean) -> Unit = {},
     contextRequests: Flow<Unit> = emptyFlow(),
     onContextRingState: (ContextRingState) -> Unit = {},
 ) {
@@ -109,7 +113,7 @@ fun ChatScreen(
     // back, never a reason to build another one.
     var createdConversationId by rememberSaveable { mutableStateOf<String?>(null) }
     val viewModel = remember(conversationId) { ChatViewModel(conversationId ?: createdConversationId) }
-    // Leaving this conversation (another one, a new chat, Home, Models) ends the cache warm-up
+    // Leaving this conversation (another one, a new chat, Models) ends the cache warm-up
     // that was preparing for the user's next message here. Keyed on the instance, so switching
     // conversations disposes the outgoing one's. The reply itself is not touched, see ChatViewModel.leave.
     DisposableEffect(viewModel) { onDispose { viewModel.leave() } }
@@ -125,13 +129,15 @@ fun ChatScreen(
     }
 
     val messages by viewModel.messages.collectAsState(initial = null)
+    val isEmpty = showsEmptyState(messages?.size, isDraft = conversationId == null && createdConversationId == null)
+    LaunchedEffect(messages) { messages?.let { onEmptyChanged(it.isEmpty()) } }
     val error by viewModel.error.collectAsState()
     val queueState by viewModel.queueState.collectAsState()
     val isGenerating = queueState is QueueState.Generating
     // Narrower than isGenerating, and only the stop button uses it — see ChatViewModel.canStop.
     val canStop by viewModel.canStop.collectAsState(initial = false)
-    // Generating still has a model resident, so the pill and the "no model" banner must not fall
-    // back to the empty state mid-reply — see residentModel's KDoc (TEN-46, TEN-58).
+    // Generating still has a model resident, so the pill's chip must not fall
+    // back to "Load a model" mid-reply, see residentModel's KDoc (TEN-46, TEN-58).
     val modelInfo = queueState.residentModel
     // Null until first emission, like sampling below: the sheet opens only once all of them are known,
     // so the thinking row never flashes disabled or off before the real values arrive.
@@ -174,17 +180,6 @@ fun ChatScreen(
         }
     }
 
-    // Home's send hands its text over on the route rather than writing it itself, so the first
-    // reply streams here where it can be watched. rememberSaveable and not a plain flag: the route
-    // still carries the prompt after process death, and a restored back stack entry must not
-    // re-ask the question it already asked.
-    var initialPromptSent by rememberSaveable(conversationId) { mutableStateOf(false) }
-    LaunchedEffect(conversationId, initialPrompt) {
-        if (initialPrompt.isNullOrBlank() || initialPromptSent) return@LaunchedEffect
-        initialPromptSent = true
-        viewModel.send(initialPrompt)
-    }
-
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -222,9 +217,6 @@ fun ChatScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        if (modelInfo == null) {
-            NoModelBanner(onNavigateToModels = onNavigateToModels, modifier = Modifier.fillMaxWidth())
-        }
         if (error is ChatError.ContextWindowFull) {
             ContextWindowFullBanner(onDismiss = viewModel::clearError, modifier = Modifier.fillMaxWidth())
         }
@@ -241,31 +233,43 @@ fun ChatScreen(
         val currentMessages = messages
         Box(modifier = Modifier.weight(1f)) {
             val overlayHeight = with(density) { overlayHeightPx.toDp() }
-            when {
-                currentMessages == null -> Unit // initial Room query hasn't emitted yet.
-                currentMessages.isEmpty() -> EmptyConversationState(modifier = Modifier.padding(bottom = overlayHeight))
-                else -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 16.dp,
-                            bottom = overlayHeight + 8.dp,
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                    ) {
-                        itemsIndexed(currentMessages, key = { _, message -> message.id }) { index, message ->
-                            val isLastAssistantReply = index == currentMessages.lastIndex && !message.isUser
-                            val isThinkingActive = isLastAssistantReply && isGenerating &&
-                                message.content.isEmpty() && !message.thinking.isNullOrEmpty()
-                            MessageBubble(
-                                message = message,
-                                isThinkingActive = isThinkingActive,
-                                onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
-                            )
-                        }
+            // The greeting, subtitle and watermark fade out at the first message (TEN-169), and the list
+            // fades in over them, but only then: opening a saved conversation shows its messages at once.
+            val reducedMotion = rememberReducedMotion()
+            val fade = if (reducedMotion) snap<Float>() else tween<Float>(TensaiMotion.DurBase)
+            var sawEmpty by remember { mutableStateOf(false) }
+            LaunchedEffect(isEmpty) { if (isEmpty) sawEmpty = true }
+            // Alpha rather than AnimatedVisibility: inside this Box the one in scope is the enclosing Column's.
+            val emptyAlpha by animateFloatAsState(if (isEmpty) 1f else 0f, fade, label = "emptyState")
+            if (emptyAlpha > 0f) {
+                ChatEmptyState(modifier = Modifier.alpha(emptyAlpha).padding(bottom = overlayHeight))
+            }
+            val listAlpha by animateFloatAsState(
+                if (currentMessages.isNullOrEmpty()) 0f else 1f,
+                if (sawEmpty) fade else snap(),
+                label = "messages",
+            )
+            if (currentMessages != null && currentMessages.isNotEmpty()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().alpha(listAlpha),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 16.dp,
+                        bottom = overlayHeight + 8.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    itemsIndexed(currentMessages, key = { _, message -> message.id }) { index, message ->
+                        val isLastAssistantReply = index == currentMessages.lastIndex && !message.isUser
+                        val isThinkingActive = isLastAssistantReply && isGenerating &&
+                            message.content.isEmpty() && !message.thinking.isNullOrEmpty()
+                        MessageBubble(
+                            message = message,
+                            isThinkingActive = isThinkingActive,
+                            onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
+                        )
                     }
                 }
             }
@@ -286,12 +290,12 @@ fun ChatScreen(
                     .fillMaxWidth()
                     .onSizeChanged { overlayHeightPx = it.height },
             ) {
-                // Starters for a conversation with no message yet; the same chips as Home, and they fill the
-                // pill the same way. Gone as soon as there is a message.
-                if (currentMessages != null && currentMessages.isEmpty()) {
+                // Starters for a conversation with no message yet: one line that scrolls, just above the
+                // pill. A tap fills the pill, the user edits before sending. They fade out with the rest of
+                // the empty state at the first message.
+                AnimatedVisibility(visible = isEmpty, enter = EnterTransition.None, exit = fadeOut(fade)) {
                     SuggestionChips(
                         onPick = { input = it },
-                        wrap = true,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
                 }
@@ -313,8 +317,10 @@ fun ChatScreen(
                     onStop = viewModel::stop,
                     isGenerating = isGenerating,
                     canStop = canStop,
-                    modelLabel = modelInfo?.name ?: stringResource(R.string.top_bar_no_model),
+                    modelLabel = modelChipLabel(modelInfo?.name, stringResource(R.string.chat_load_a_model)),
                     onModelClick = { pickerOpen = true },
+                    // No model, nothing to send to: the chip is the way forward, it opens the picker.
+                    canSend = modelInfo != null,
                     translucent = true,
                     // Scrim: transparent at the pill's vertical center, fully background by its bottom
                     // edge and solid below, so text fades out under the pill's lower half and never
@@ -437,36 +443,12 @@ private fun JumpToBottomButton(
     }
 }
 
-@Composable
-private fun EmptyConversationState(modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        KanjiGlyph(size = 96.dp, modifier = Modifier.alpha(0.15f))
-    }
-}
-
-@Composable
-private fun NoModelBanner(onNavigateToModels: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(color = MaterialTheme.tensaiTints.warning12, modifier = modifier) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.chat_no_model_loaded),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onNavigateToModels) { Text(stringResource(R.string.chat_load_a_model)) }
-        }
-    }
-}
-
 /**
  * Shown when [ChatViewModel.error] holds [ChatError.ContextWindowFull] (TEN-65) — the prompt alone
  * already filled the model's context window, so the last "reply" wasn't a reply at all: nothing was
  * generated, and no empty bubble was kept for it (see [ChatViewModel.streamInto]; a user stop is the one
  * empty ending that does keep its row, TEN-110). Same sobre
- * treatment as [NoModelBanner]. Dismissing just clears the flag — the conversation itself is still
+ * treatment as [GenerationFailedBanner]. Dismissing just clears the flag, the conversation itself is still
  * full, no context trimming happens here (TEN-65 deliberately leaves that out of scope), so starting
  * a new chat is the actual way forward.
  */

@@ -24,9 +24,6 @@
     <string name="home_suggestion_draft_reply">Rédiger une réponse</string>
     <string name="home_suggestion_commit_message">Écrire un message de commit</string>
 
-    <string name="home_pill_load_model">Charger %1$s pour commencer…</string>
-    <string name="home_pill_no_model">Importer un modèle pour commencer</string>
-
     <!-- ==================== Settings (TEN-38) ==================== -->
 
     <string name="settings_group_appearance">Apparence</string>
@@ -246,7 +243,6 @@
     <string name="chats_long_click_label">Sélectionner</string>
     <string name="chats_state_selected">Sélectionnée</string>
     <string name="chats_state_not_selected">Non sélectionnée</string>
-    <string name="top_bar_no_model">aucun modèle</string>
     <string name="top_bar_open_menu">Ouvrir le menu</string>
 
     <!-- Chat input pill. -->
@@ -256,7 +252,6 @@
 
     <!-- Chat screen and its conversation settings sheet. -->
     <string name="chat_jump_to_latest">Aller au dernier message</string>
-    <string name="chat_no_model_loaded">Aucun modèle chargé</string>
     <string name="chat_load_a_model">Charger un modèle</string>
     <string name="chat_context_full">Cette conversation est pleine : démarrer une nouvelle discussion pour continuer</string>
     <string name="chat_thinking_toggle">Réflexion</string>

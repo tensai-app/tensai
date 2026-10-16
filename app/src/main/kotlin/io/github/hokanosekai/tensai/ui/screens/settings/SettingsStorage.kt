@@ -43,9 +43,8 @@ data class StorageFigures(
  * count.
  *
  * That "a row whose file is gone is not a thing" rule is the same one
- * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate.entry] and
- * [io.github.hokanosekai.tensai.ui.screens.HomePill.state] already apply to the model library, and
- * the [fileSize] parameter is the same injectable-file-access shape as their `fileExists` — a JVM
+ * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate.entry] already applies to the
+ * model library, and the [fileSize] parameter is the same injectable-file-access shape as its `fileExists`, a JVM
  * test can state every disk arrangement it wants without one.
  */
 object SettingsStorage {

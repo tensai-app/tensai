@@ -294,7 +294,7 @@ private fun ConversationEntity?.settings(): ConversationSettings =
  *
  * Like [io.github.hokanosekai.tensai.ui.screens.loading.LoadModelViewModel], every generation runs
  * on [scope] (defaulting to [RuntimeGraph.applicationScope]), **not** a Compose-scoped coroutine:
- * leaving the chat screen (back to Home, switching conversations) must not cut off a reply that's
+ * leaving the chat screen (back to the root chat, switching conversations) must not cut off a reply that's
  * mid-stream, the same way a model load survives leaving the loading screen. This class is
  * deliberately not an `androidx.lifecycle.ViewModel` for the same reason `LoadModelViewModel`
  * isn't — the project has no such dependency yet (see `RuntimeGraph`'s "framework-free
@@ -529,7 +529,7 @@ class ChatViewModel(
 
     /**
      * To be called when the screen showing this conversation goes away (a different conversation,
-     * a new chat, Home, Models): the user is no longer about to type here, so the warm-up that was
+     * a new chat, Models): the user is no longer about to type here, so the warm-up that was
      * preparing for it stops and gives the CPU back. What it had already decoded stays in the
      * cache. Idempotent, and a no-op when nothing is warming up. Nothing else is torn down: a reply
      * still streaming must survive leaving the screen, see this class's KDoc.

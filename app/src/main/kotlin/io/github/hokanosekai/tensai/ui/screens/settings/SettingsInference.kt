@@ -46,7 +46,7 @@ sealed interface InferenceFacts {
  * screen reports what that and the KV precision come to, and this is where that reporting is decided.
  *
  * Same "a row whose file is gone is not a model" rule as
- * [io.github.hokanosekai.tensai.ui.screens.HomePill.state], and the same injectable [fileExists]:
+ * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate.entry], and the same injectable [fileExists]:
  * planning a load for a model that isn't on disk would put numbers on screen for something that
  * can never be loaded.
  */
@@ -57,7 +57,7 @@ object SettingsInference {
      *   [io.github.hokanosekai.tensai.runtime.residentModel], so a model stays "in use" for the
      *   whole of a generation, not just between them.
      * @param models every imported model, most recently imported first — the first one whose file
-     *   survives is the one [InferenceFacts.Planned] plans for, matching what Home offers to load.
+     *   survives is the one [InferenceFacts.Planned] plans for, matching what the model picker offers to load.
      * @param profile the device as it is now, or `null` if it can't be read — without it there is
      *   no RAM figure to plan against, so an empty queue resolves to [InferenceFacts.Unknown]
      *   rather than to a plan computed from a made-up number.

@@ -146,9 +146,9 @@ import kotlinx.coroutines.launch
  * @param startStep step to open at: a returning skipper skips the welcome and lands on the model.
  * @param onDone called when the flow ends: with the imported model's id when the user finished it
  *   (the caller sends that to the loading screen, which continues into a first chat), or `null`
- *   when they left without going through Ready (the caller goes Home).
+ *   when they left without going through Ready (the caller goes to the draft chat).
  * @param onBrowseHuggingFace "Browse Hugging Face" of the other options: the skipped flag is written
- *   exactly as Skip does, then the caller opens the Models screen on Discover. Home sits under it.
+ *   exactly as Skip does, then the caller opens the Models screen on Discover. The draft chat sits under it.
  * @param persistScope scope the preference writes run on. Deliberately **not** a
  *   `rememberCoroutineScope()`: "Skip" both persists the flag and navigates away, and a
  *   composition-scoped write would be cancelled by the navigation it triggers. Same reasoning as
@@ -246,14 +246,14 @@ fun OnboardingScreen(
         onBrowseHuggingFace()
     }
 
-    // One exit only: a double tap must not navigate twice (two Home entries, Loading pushed twice).
+    // One exit only: a double tap must not navigate twice (two chat entries, Loading pushed twice).
     fun finish(modelId: String?) {
         if (finished) return
         finished = true
         onDone(modelId)
     }
 
-    // The same exit from every step: flag persisted, Home. Leaving mid-copy would cancel the
+    // The same exit from every step: flag persisted, draft chat. Leaving mid-copy would cancel the
     // import, so the Skip button is hidden while one runs.
     fun skip() {
         if (finished) return

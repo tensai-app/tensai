@@ -27,12 +27,12 @@ import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
 
 /**
- * Top bar for [TensaiDestination.Home] and [TensaiDestination.Chat] — hamburger opens the drawer,
- * the title is display only (TEN-129): the conversation's title on a chat, left-aligned, the 天 glyph
- * and "tensai" on Home. The model moved to the input pill's chip.
+ * Top bar for [TensaiDestination.Chat], hamburger opens the drawer, the title is display only
+ * (TEN-129): the conversation's title, left-aligned, or the 天 glyph and "tensai" centered while the chat
+ * has no message (TEN-169). The model moved to the input pill's chip.
  *
- * @param title the chat's title, one line, ellipsized; null on Home, which shows the brand instead.
- * @param actions trailing icon buttons: the chat's params button (TEN-115), empty on Home.
+ * @param title the chat's title, one line, ellipsized; null for an empty chat, which shows the brand instead.
+ * @param actions trailing icon buttons: the chat's params button (TEN-115), the ring (once there is a message) and the chat settings button.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * This is deliberately a plain, always-overwritable "last known" pointer rather than a
  * precisely-scoped enter/leave registration: both triggers fire from code with no direct line to
  * whatever `ChatScreen` is actually composed right now. A slightly stale value here (e.g. the user
- * already navigated to Home) is harmless — at worst it saves a session for a conversation nobody's
+ * already navigated elsewhere) is harmless, at worst it saves a session for a conversation nobody's
  * looking at anymore, which `SessionStoragePolicy`'s LRU cap cleans up on its own. Missing a save
  * entirely would not be harmless, so this favours "usually right" over strictly correct.
  *

@@ -22,7 +22,7 @@ enum class OnboardingStep {
 
 /** What a cold start should open with — see [OnboardingGate.entry]. */
 sealed interface OnboardingEntry {
-    /** No onboarding: the app opens at Home. */
+    /** No onboarding: the app opens on a new chat. */
     data object None : OnboardingEntry
 
     /** Show the onboarding, starting at [step]. */
@@ -35,7 +35,7 @@ sealed interface OnboardingEntry {
  * One rule: **no usable model means onboarding**. A model row whose file is gone (storage wiped
  * from the system settings, an app-data restore that brought rows back without files) is not a
  * usable model — the app can't chat with it, so that install is treated exactly like a fresh one
- * rather than dropping the user at a Home screen that cannot do anything.
+ * rather than dropping the user at a chat that cannot do anything.
  *
  * Skipping does not turn the flow off — see [io.github.hokanosekai.tensai.data.OnboardingRepository]
  * for why, and for the one thing the persisted flag does change (which step a returning skipper

@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Home's greeting as a function of the hour (TEN-37) — the one half of the greeting that can be
+ * The empty chat's greeting as a function of the hour (TEN-37, TEN-169), the one half of the greeting that can be
  * proven without a device. What it *looks* like is a device question; which of the four bands a
  * given hour falls into is not, so every boundary is pinned here, including the one that wraps
  * past midnight.

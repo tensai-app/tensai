@@ -12,7 +12,7 @@ import org.junit.Test
  * over a column.
  *
  * Same injectable-file-access shape, and the same "a row whose file is gone is not a thing" rule,
- * as `OnboardingGateTest` and `HomePillTest`.
+ * as `OnboardingGateTest`.
  */
 class SettingsStorageTest {
 

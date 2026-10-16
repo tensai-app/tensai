@@ -154,7 +154,7 @@ class SettingsInferenceTest {
         )
 
         assertEquals(
-            "same rule as HomePill and OnboardingGate — a row without its file can never be " +
+            "same rule as OnboardingGate, a row without its file can never be " +
                 "loaded, so there is no load to plan",
             InferenceFacts.Unknown,
             facts,

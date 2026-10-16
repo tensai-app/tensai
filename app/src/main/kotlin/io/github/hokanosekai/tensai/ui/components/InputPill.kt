@@ -64,7 +64,7 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 /**
  * The app's single text-entry affordance: a rounded surface with the text
  * field on top and, below it, a model chip (left) and the send/stop action (right). Shared by
- * [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen] and, per TEN-37, Home.
+ * [io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen].
  *
  * V1 is deliberately spare (no attach/mic actions, per the design): the trailing button toggles
  * between send and stop as [canStop] flips, and a lavender ring animates around the whole
@@ -82,7 +82,9 @@ import io.github.hokanosekai.tensai.ui.theme.tensaiTints
  *   narrower answer, so a reply streaming in *another* conversation shows as busy rather than
  *   offering a stop that would cut off something the user cannot see.
  * @param translucent lets the content scrolling under the pill show faintly through it (TEN-133).
- *   Chat overlays the pill on its message list; Home keeps the opaque default.
+ *   Chat overlays the pill on its message list.
+ * @param canSend a send has somewhere to go: false while no model is loaded, which leaves the send
+ *   button disabled (the model chip is then the way forward).
  */
 @Composable
 fun InputPill(
@@ -96,6 +98,7 @@ fun InputPill(
     modifier: Modifier = Modifier,
     canStop: Boolean = isGenerating,
     translucent: Boolean = false,
+    canSend: Boolean = true,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         if (isGenerating) {
@@ -151,7 +154,7 @@ fun InputPill(
                         onClick = { if (canStop) onStop() else onSend() },
                         // Busy without a stop to offer leaves the button disabled rather than enabled
                         // on a send the queue would refuse, with the ring still turning to say why.
-                        enabled = canStop || (!isGenerating && value.isNotBlank()),
+                        enabled = canStop || (!isGenerating && canSend && value.isNotBlank()),
                     )
                 }
             }
@@ -159,7 +162,7 @@ fun InputPill(
     }
 }
 
-/** The resident model's name, bottom-left of the pill: a tap opens Models, like the top bar pill used to (TEN-129). */
+/** The resident model's name, bottom-left of the pill: a tap opens the model picker (TEN-163) (TEN-129). */
 @Composable
 private fun ModelChip(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     // No 48dp minimum here: it would make the row taller than the chip (TEN-134). The chip is wide,

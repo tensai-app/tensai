@@ -95,7 +95,7 @@ fun notificationAskState(sdkInt: Int, granted: Boolean, askedBefore: Boolean): N
 /**
  * Runs [NotificationPermissionGate.decide] and, if it says [NotificationAsk.Ask], spends the ask —
  * with every effect injected so the whole sequence runs in a JVM test (the pattern
- * `ModelImporter`/`OnboardingGate`/`HomePill` already use here).
+ * `ModelImporter`/`OnboardingGate` already use here).
  *
  * **The claim completes before [launchRequest] runs, and that order is the point.** The dialog's
  * result is delivered asynchronously to a callback that may never arrive: the user backgrounds

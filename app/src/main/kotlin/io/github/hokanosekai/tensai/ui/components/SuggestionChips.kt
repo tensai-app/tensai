@@ -3,8 +3,6 @@ package io.github.hokanosekai.tensai.ui.components
 import androidx.annotation.StringRes
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -22,7 +20,7 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
  * One suggestion chip. Label and prompt are the same string: tapping a chip fills the input pill
  * with its text rather than sending it, so the user can edit before committing.
  *
- * The design allows **four** chips; this enum is the whole set, shared by Home and the empty chat.
+ * The design allows **four** chips; this enum is the whole set, used by the empty chat.
  * Adding a fifth means dropping one, not widening the row.
  */
 private enum class Suggestion(@StringRes val labelRes: Int) {
@@ -33,15 +31,16 @@ private enum class Suggestion(@StringRes val labelRes: Int) {
 }
 
 /**
- * The suggestion chips, [onPick] getting the chip's text. One line that scrolls horizontally by
- * default (Home): four chips do not fit across a phone, and a single line keeps the screen's
- * vertical rhythm fixed whatever the translation's word lengths turn out to be (TEN-41). With
- * [wrap] they flow onto as many lines as they need (the empty chat, which has the height).
+ * The suggestion chips, [onPick] getting the chip's text. One line that scrolls horizontally: four
+ * chips do not fit across a phone, and a single line keeps the screen's vertical rhythm fixed whatever
+ * the translation's word lengths turn out to be (TEN-41).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SuggestionChips(onPick: (String) -> Unit, modifier: Modifier = Modifier, wrap: Boolean = false) {
-    val chips: @Composable () -> Unit = {
+fun SuggestionChips(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Suggestion.entries.forEach { suggestion ->
             val label = stringResource(suggestion.labelRes)
             Surface(
@@ -58,17 +57,5 @@ fun SuggestionChips(onPick: (String) -> Unit, modifier: Modifier = Modifier, wra
                 )
             }
         }
-    }
-    if (wrap) {
-        FlowRow(
-            modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) { chips() }
-    } else {
-        Row(
-            modifier = modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) { chips() }
     }
 }

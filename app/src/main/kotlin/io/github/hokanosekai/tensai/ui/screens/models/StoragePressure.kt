@@ -33,12 +33,10 @@ sealed interface StoragePressureState {
  * Sizes come from disk, not from [ModelEntity.sizeBytes], and a row whose file is gone counts for
  * nothing — the same rule
  * [io.github.hokanosekai.tensai.ui.screens.settings.SettingsStorage.figures],
- * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate.entry] and [HomePill.state]
+ * [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate.entry]
  * already apply, for the same reason: a row is not a file. Billing the average against models that
  * are not on the phone would raise the threshold on a device that just got *emptier*, which is
  * backwards.
- *
- * [HomePill.state]: io.github.hokanosekai.tensai.ui.screens.HomePill
  */
 object StoragePressure {
 

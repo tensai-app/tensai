@@ -31,8 +31,7 @@ class DrawerSelectionTest {
     }
 
     @Test
-    fun homeAndNewChatSelectNothing() {
-        assertNull(drawerSelectedKey(TensaiDestination.Home.route, null))
+    fun newChatSelectsNothing() {
         assertNull(drawerSelectedKey(TensaiDestination.Chat.route, TensaiDestination.Chat.NEW_CONVERSATION_ID))
         assertNull(drawerSelectedKey(null, null))
     }

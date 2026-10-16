@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
  *
  * Takes flows rather than the repositories behind them wherever a repository would drag in an
  * Android `Context` (the model library, the volume size), so the whole class can be exercised from
- * a JVM test — same reasoning as [io.github.hokanosekai.tensai.ui.screens.HomeViewModel].
+ * a JVM test.
  *
  * @param scope where writes run. Deliberately [RuntimeGraph.applicationScope] and **not** a
  *   `rememberCoroutineScope()`: [clearSessions] deletes files for as long as that takes, and a
@@ -208,7 +208,7 @@ class SettingsViewModel(
 
     /**
      * The in-flight [clearSessions], if any — a second tap while one is running is a no-op rather
-     * than a second purge, same belt-and-braces as `HomeViewModel.start`.
+     * than a second purge.
      */
     private var clearJob: Job? = null
 

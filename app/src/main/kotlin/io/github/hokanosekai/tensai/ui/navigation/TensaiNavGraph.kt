@@ -14,7 +14,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import io.github.hokanosekai.tensai.ui.screens.HomeScreen
 import io.github.hokanosekai.tensai.ui.screens.ServerScreen
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatScreen
 import io.github.hokanosekai.tensai.ui.screens.chats.ChatsScreen
@@ -44,6 +43,9 @@ import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
  *   forwarded to [DeviceScreen], which owns the report.
  * @param onChatConversationCreated a chat opened as a draft got its row: back stack entry id and the
  *   new conversation id, for the drawer's selection.
+ * @param onChatEmpty whether a chat has no message yet: back stack entry id and the flag, for the
+ *   shell's top bar (brand and no ring while empty).
+ * @param createdConversationId the row a draft entry got, by back stack entry id (see `onChatConversationCreated`).
  * @param onboardingStartStep step the onboarding opens at when [startDestination] is it — see
  *   [io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingGate].
  */
@@ -59,6 +61,8 @@ fun TensaiNavGraph(
     onChatContextRingState: (ContextRingState) -> Unit = {},
     deviceCopyRequests: Flow<Unit> = emptyFlow(),
     onChatConversationCreated: (entryId: String, conversationId: String) -> Unit = { _, _ -> },
+    onChatEmpty: (entryId: String, empty: Boolean) -> Unit = { _, _ -> },
+    createdConversationId: (entryId: String) -> String? = { null },
 ) {
     // Set by "Open Settings" on the repo screen: Settings opens with the token sheet up, once.
     var openTokenSheet by remember { mutableStateOf(false) }
@@ -75,24 +79,24 @@ fun TensaiNavGraph(
             OnboardingScreen(
                 startStep = onboardingStartStep,
                 // A model came out of the flow: straight into its load, which continues into a
-                // new chat on success (see the Loading destination below) — that's the ticket's
-                // "blank device to first chat without leaving the flow". Skipping stops at Home.
-                // Home is pushed in both cases rather than loading landing on an empty stack:
+                // new chat on success (see the Loading destination below): blank device to first chat
+                // without leaving the flow. Skipping stops at the draft chat.
+                // The draft is pushed in both cases rather than loading landing on an empty stack:
                 // `LoadingScreen`'s own back/"see smaller models" actions pop, and popping the
                 // only entry would drop the user out of the app. The onboarding itself is always
-                // popped — it is re-entered by relaunching with no model, never by going back.
+                // popped, it is re-entered by relaunching with no model, never by going back.
                 onDone = { modelId ->
-                    navController.navigate(TensaiDestination.Home.route) {
+                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
                         popUpTo(TensaiDestination.Onboarding.route) { inclusive = true }
                     }
                     if (modelId != null) {
                         navController.navigate(TensaiDestination.Loading.route(modelId))
                     }
                 },
-                // Same exit as Skip (Home underneath, flag persisted by the screen), then Discover.
+                // Same exit as Skip (draft chat underneath, flag persisted by the screen), then Discover.
                 onBrowseHuggingFace = {
                     modelsOnDiscover = true
-                    navController.navigate(TensaiDestination.Home.route) {
+                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
                         popUpTo(TensaiDestination.Onboarding.route) { inclusive = true }
                     }
                     navController.navigate(TensaiDestination.Models.route)
@@ -100,34 +104,19 @@ fun TensaiNavGraph(
             )
         }
 
-        composable(TensaiDestination.Home.route) {
-            HomeScreen(
-                // A new chat carrying the prompt: ChatScreen sends it, and that first send is what
-                // creates the conversation (TEN-106). Home is left on the stack: back from that
-                // first chat returns to it.
-                onNavigateToChat = { prompt ->
-                    navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID, prompt))
-                },
-                onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
-                onNavigateToLoad = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
-            )
-        }
-
         composable(
             route = TensaiDestination.Chat.route,
             arguments = listOf(
-                navArgument(TensaiDestination.Chat.ARG_CONVERSATION_ID) { type = NavType.StringType },
-                navArgument(TensaiDestination.Chat.ARG_PROMPT) {
+                // The default is what the NavHost's start destination (the route pattern) opens on: a draft.
+                navArgument(TensaiDestination.Chat.ARG_CONVERSATION_ID) {
                     type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
+                    defaultValue = TensaiDestination.Chat.NEW_CONVERSATION_ID
                 },
             ),
         ) { backStackEntry ->
             val conversationId = backStackEntry.arguments
                 ?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
                 .orEmpty()
-            val initialPrompt = backStackEntry.arguments?.getString(TensaiDestination.Chat.ARG_PROMPT)
 
             // The sentinel opens a draft, with no row until its first send (TEN-106): see
             // TensaiDestination.Chat.NEW_CONVERSATION_ID.
@@ -148,11 +137,11 @@ fun TensaiNavGraph(
                     modelsOnImport = true
                     navController.navigate(TensaiDestination.Models.route)
                 },
-                initialPrompt = initialPrompt,
                 settingsRequests = chatSettingsRequests,
                 contextRequests = chatContextRequests,
                 onContextRingState = onChatContextRingState,
                 onConversationCreated = { onChatConversationCreated(backStackEntry.id, it) },
+                onEmptyChanged = { onChatEmpty(backStackEntry.id, it) },
             )
         }
 
@@ -161,7 +150,14 @@ fun TensaiNavGraph(
         composable(TensaiDestination.Chats.route) {
             ChatsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenConversation = { navController.navigate(TensaiDestination.Chat.route(it)) },
+                // The root is the entry under this page. Opening it again pops back to it rather than stacking a copy.
+                onOpenConversation = { id ->
+                    val root = navController.previousBackStackEntry
+                    val rootId = root?.let {
+                        createdConversationId(it.id) ?: it.arguments?.getString(TensaiDestination.Chat.ARG_CONVERSATION_ID)
+                    }
+                    navController.perform(openFromChatsOp(rootId, id))
+                },
                 onNewChat = { navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) },
             )
         }
@@ -177,7 +173,7 @@ fun TensaiNavGraph(
                 startOnDiscover = startOnDiscover,
                 startImport = startImport,
                 onModelClick = { modelId -> navController.navigate(TensaiDestination.ModelDetail.route(modelId)) },
-                onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                onLoadModelClick = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) { launchSingleTop = true } },
                 // singleTop: a double tap on a card must not stack two copies of the screen.
                 onOpenRepo = { repoId, file ->
                     navController.navigate(TensaiDestination.Repo.route(repoId, file)) { launchSingleTop = true }
@@ -204,7 +200,7 @@ fun TensaiNavGraph(
             RepoScreen(
                 repoId = repoId,
                 preselectFile = backStackEntry.arguments?.getString(TensaiDestination.Repo.ARG_FILE),
-                onLoadModel = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) },
+                onLoadModel = { modelId -> navController.navigate(TensaiDestination.Loading.route(modelId)) { launchSingleTop = true } },
                 // A fresh Models entry opens on "On device", where the downloads and the free space are.
                 onManageModels = { navController.navigate(TensaiDestination.Models.route) },
                 onOpenSettings = {
@@ -223,7 +219,7 @@ fun TensaiNavGraph(
                 .orEmpty()
             ModelDetailScreen(
                 modelId = modelId,
-                onLoadClick = { navController.navigate(TensaiDestination.Loading.route(it)) },
+                onLoadClick = { navController.navigate(TensaiDestination.Loading.route(it)) { launchSingleTop = true } },
                 onDeleted = { navController.popBackStack() },
                 // "Download again" refused for lack of space: the library is where models are removed.
                 onManageModels = { navController.navigate(TensaiDestination.Models.route) },
@@ -249,15 +245,7 @@ fun TensaiNavGraph(
             val returnToChat = backStackEntry.arguments?.getBoolean(TensaiDestination.Loading.ARG_RETURN_TO_CHAT) == true
             LoadingScreen(
                 modelId = modelId,
-                onLoaded = {
-                    if (returnToChat) {
-                        navController.popBackStack()
-                    } else {
-                        navController.navigate(TensaiDestination.Chat.route(TensaiDestination.Chat.NEW_CONVERSATION_ID)) {
-                            popUpTo(TensaiDestination.Loading.route) { inclusive = true }
-                        }
-                    }
-                },
+                onLoaded = { navController.perform(loadFinishedOp(returnToChat)) },
                 onBack = { navController.popBackStack() },
                 onSeeSmallerModels = {
                     // From a chat, the Models entry further down may sit under that conversation:
@@ -266,8 +254,12 @@ fun TensaiNavGraph(
                         navController.popBackStack()
                         navController.navigate(TensaiDestination.Models.route) { launchSingleTop = true }
                     } else {
+                        // No Models underneath (notification, onboarding): the list opens in its place.
                         val poppedToModels = navController.popBackStack(TensaiDestination.Models.route, false)
-                        if (!poppedToModels) navController.popBackStack()
+                        if (!poppedToModels) {
+                            navController.popBackStack()
+                            navController.navigate(TensaiDestination.Models.route) { launchSingleTop = true }
+                        }
                     }
                 },
             )

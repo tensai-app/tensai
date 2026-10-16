@@ -6,7 +6,6 @@ import android.net.Uri
 sealed class TensaiDestination(val route: String) {
 
     data object Onboarding : TensaiDestination("onboarding")
-    data object Home : TensaiDestination("home")
     data object Chats : TensaiDestination("chats")
     data object Models : TensaiDestination("models")
     data object Settings : TensaiDestination("settings")
@@ -14,20 +13,11 @@ sealed class TensaiDestination(val route: String) {
     data object Licenses : TensaiDestination("settings/licenses")
     data object Server : TensaiDestination("server")
 
-    data object Chat : TensaiDestination("chat/{conversationId}?prompt={prompt}") {
+    data object Chat : TensaiDestination("chat/{conversationId}") {
         const val ARG_CONVERSATION_ID = "conversationId"
 
         /**
-         * Optional: the first turn's text, handed over by Home (TEN-37). Home navigates to a new
-         * chat ([NEW_CONVERSATION_ID]); the message itself is sent from `ChatScreen`, so the reply
-         * streams where the user can see it. Carried on the route rather than in a process-wide
-         * holder so it survives with the back stack: a chat restored after process death still
-         * knows what it was opened to ask.
-         */
-        const val ARG_PROMPT = "prompt"
-
-        /**
-         * Sentinel for a new chat rather than a saved one: drawer "New chat", Home's send, a load
+         * Sentinel for a new chat rather than a saved one: the app's start, drawer "New chat", a load
          * landing on a fresh chat. It opens a draft with no row behind it (TEN-106); the row is
          * created by the first send, see `ChatViewModel`. The route keeps this value after that,
          * `ChatScreen` holds the real id.
@@ -35,10 +25,6 @@ sealed class TensaiDestination(val route: String) {
         const val NEW_CONVERSATION_ID = "new"
 
         fun route(conversationId: String) = "chat/$conversationId"
-
-        /** [route] with a first turn attached — see [ARG_PROMPT]. */
-        fun route(conversationId: String, prompt: String) =
-            "chat/$conversationId?prompt=${Uri.encode(prompt)}"
     }
 
     data object ModelDetail : TensaiDestination("model/{modelId}") {

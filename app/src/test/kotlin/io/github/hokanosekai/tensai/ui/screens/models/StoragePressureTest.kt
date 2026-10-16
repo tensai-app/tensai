@@ -9,7 +9,7 @@ import org.junit.Test
  *
  * The threshold is relative — free space against the mean size of a model *this* device actually
  * holds — so the interesting cases are all about what counts towards that mean and what happens at
- * its edges. Same injectable-file-access shape as `SettingsStorageTest`/`HomePillTest`, so every
+ * its edges. Same injectable-file-access shape as `SettingsStorageTest`, so every
  * disk arrangement below is stated rather than staged.
  */
 class StoragePressureTest {

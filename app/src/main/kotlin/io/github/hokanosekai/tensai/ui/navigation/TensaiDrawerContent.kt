@@ -233,7 +233,7 @@ internal fun recentKey(conversationId: String): String = "recent:$conversationId
 
 /**
  * Which drawer row is active (TEN-116): "chats", "models", "server", "settings", [recentKey] for a saved
- * conversation open on `chat/{id}`, or null (Home, a new-chat draft, anything else). [route] is the
+ * conversation open on `chat/{id}`, or null (a new-chat draft, anything else). [route] is the
  * nav graph's route pattern, [conversationId] the chat argument, [createdConversationId] the real id
  * of a draft whose route still says "new" after its first send.
  */

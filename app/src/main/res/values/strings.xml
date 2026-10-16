@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-     Home's copy (TEN-37) and Settings' (TEN-38). Every user-facing string on these screens lives
+     The empty chat's copy (TEN-37, TEN-169) and Settings' (TEN-38). Every user-facing string on these screens lives
      here rather than in the composable so the "localised suggestions" the ticket asks for are
      actually translatable: TEN-41 adds the other locales, this file is what it will translate.
 
@@ -24,11 +24,6 @@
     <string name="home_suggestion_explain_error">Explain this error</string>
     <string name="home_suggestion_draft_reply">Draft a reply</string>
     <string name="home_suggestion_commit_message">Write a commit message</string>
-
-    <!-- Input pill, non-Ready states: see io.github.hokanosekai.tensai.ui.screens.HomePillState. -->
-    <!-- %1$s is a model's display name. -->
-    <string name="home_pill_load_model">Load %1$s to start…</string>
-    <string name="home_pill_no_model">Import a model to start</string>
 
     <!-- ==================== Settings (TEN-38) ==================== -->
 
@@ -314,7 +309,6 @@
     <string name="chats_long_click_label">Select</string>
     <string name="chats_state_selected">Selected</string>
     <string name="chats_state_not_selected">Not selected</string>
-    <string name="top_bar_no_model">no model</string>
     <string name="top_bar_open_menu">Open menu</string>
 
     <!-- Chat input pill. -->
@@ -324,7 +318,6 @@
 
     <!-- Chat screen and its conversation settings sheet. Top P, Min P and Top K stay literal in code: they are parameter names, not words. -->
     <string name="chat_jump_to_latest">Jump to the latest message</string>
-    <string name="chat_no_model_loaded">No model loaded</string>
     <string name="chat_load_a_model">Load a model</string>
     <string name="chat_context_full">This conversation is full: start a new chat to keep going</string>
     <string name="chat_thinking_toggle">Thinking</string>
