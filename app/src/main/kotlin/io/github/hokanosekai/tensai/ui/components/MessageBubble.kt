@@ -1,5 +1,9 @@
 package io.github.hokanosekai.tensai.ui.components
 
+import android.os.Build
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,17 +14,40 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.screens.chat.ChatMessageUi
@@ -29,6 +56,7 @@ import io.github.hokanosekai.tensai.ui.screens.chat.ReplyEnding
 import io.github.hokanosekai.tensai.ui.screens.chat.TruncationReason
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
+import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import java.util.Locale
 
 /**
@@ -36,7 +64,8 @@ import java.util.Locale
  * right-aligned; an assistant reply is a [ThinkingBlock] (if [ChatMessageUi.thinking] is present)
  * followed by [ChatMessageUi.content] rendered as [MarkdownText], full width, no bubble — with a
  * mono stats chip (or an [EndingChip], if generation broke or was stopped) and, for the last one, a
- * regenerate action, once it's finished.
+ * regenerate action, once it's finished. Long-pressing a message opens [MessageActionsMenu] and a
+ * finished reply carries a copy button (TEN-184), see [copyableText] and [showsCopyButton].
  *
  * A user message is drawn as plain [Text], not [MarkdownText] — nothing the user typed should be
  * reinterpreted as markdown.
@@ -52,28 +81,75 @@ fun MessageBubble(
     message: ChatMessageUi,
     isThinkingActive: Boolean,
     onRegenerate: (() -> Unit)?,
+    isGenerating: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val copyText = copyableText(message)?.takeUnless { isGenerating }
+    val copiedToast = stringResource(R.string.chat_copied)
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    var menuOpen by remember { mutableStateOf(false) }
+    val copy = { text: String ->
+        clipboard.setText(AnnotatedString(text))
+        // From Android 13 the system shows its own clipboard preview, a second confirmation would double it.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(context, copiedToast, Toast.LENGTH_SHORT).show()
+        }
+    }
+    // The one list of actions the menu draws: Edit, Regenerate and Select text join it without a new gesture.
+    val actions = remember(copyText) {
+        listOfNotNull(
+            copyText?.let { text -> MessageAction(R.string.chat_copy, Icons.Default.ContentCopy) { copy(text) } },
+        )
+    }
+    val copyLabel = stringResource(R.string.chat_copy)
+    val bubbleSemantics = Modifier.semantics {
+        if (copyText != null) customActions = listOf(CustomAccessibilityAction(copyLabel) { copy(copyText); true })
+    }
+    // Long press only on the message body: the reasoning block keeps its own tap and ignores long presses.
+    // The menu opens under the finger: DropdownMenu offsets from its anchor's bottom-start, so the press
+    // point is kept with the anchor's height.
+    var pressAt by remember { mutableStateOf(Offset.Zero) }
+    var anchorHeight by remember { mutableIntStateOf(0) }
+    val longPress = if (actions.isEmpty()) {
+        Modifier
+    } else {
+        Modifier
+            .onSizeChanged { anchorHeight = it.height }
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = { at ->
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    pressAt = at
+                    menuOpen = true
+                })
+            }
+    }
+    val menuOffset = with(LocalDensity.current) { DpOffset(pressAt.x.toDp(), (pressAt.y - anchorHeight).toDp()) }
     if (message.isUser) {
-        Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        Box(modifier = modifier.fillMaxWidth().then(bubbleSemantics), contentAlignment = Alignment.CenterEnd) {
             // Design: at most 82% of the row, 20dp corners with the bottom-end one tucked to 6dp,
             // 15/22 body text (between bodyMedium and bodyLarge, so a local style).
             Box(modifier = Modifier.fillMaxWidth(0.82f), contentAlignment = Alignment.CenterEnd) {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Text(
-                        text = message.content,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                    )
+                // The bubble itself anchors the menu, not the 82% box around it.
+                Box(modifier = longPress) {
+                    Surface(
+                        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                        )
+                    }
+                    MessageActionsMenu(expanded = menuOpen, actions = actions, offset = menuOffset, onDismiss = { menuOpen = false })
                 }
             }
         }
     } else {
-        Column(modifier = modifier.fillMaxWidth()) {
+        Column(modifier = modifier.fillMaxWidth().then(bubbleSemantics)) {
             message.thinking?.let { thinking ->
                 ThinkingBlock(
                     thinking = thinking,
@@ -82,15 +158,19 @@ fun MessageBubble(
                 )
             }
 
+            val showCopy = showsCopyButton(message, isGenerating)
             if (message.content.isNotEmpty()) {
-                MarkdownText(
-                    markdown = message.content,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                Box(modifier = longPress) {
+                    MarkdownText(
+                        markdown = message.content,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    MessageActionsMenu(expanded = menuOpen, actions = actions, offset = menuOffset, onDismiss = { menuOpen = false })
+                }
             }
 
-            if (message.stats != null || message.ending != ReplyEnding.Normal || onRegenerate != null) {
+            if (message.stats != null || message.ending != ReplyEnding.Normal || onRegenerate != null || showCopy) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -111,6 +191,16 @@ fun MessageBubble(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (showCopy && copyText != null) {
+                        IconButton(onClick = { copy(copyText) }, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.chat_copy_reply),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
                     onRegenerate?.let { regenerate ->
                         IconButton(onClick = regenerate, modifier = Modifier.size(28.dp)) {
                             Icon(
@@ -123,6 +213,43 @@ fun MessageBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+/** One entry of [MessageActionsMenu]. */
+internal class MessageAction(val labelRes: Int, val icon: ImageVector, val onClick: () -> Unit)
+
+/** The long-press menu of a message, styled like the sort menu of the Discover pane. Draws nothing when [actions] is empty. */
+@Composable
+private fun MessageActionsMenu(expanded: Boolean, actions: List<MessageAction>, offset: DpOffset, onDismiss: () -> Unit) {
+    if (actions.isEmpty()) return
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        offset = offset,
+        shape = TensaiShapes.medium,
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, MaterialTheme.tensaiTints.outline),
+    ) {
+        actions.forEach { action ->
+            DropdownMenuItem(
+                text = { Text(text = stringResource(action.labelRes), fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = action.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = {
+                    onDismiss()
+                    action.onClick()
+                },
+            )
         }
     }
 }

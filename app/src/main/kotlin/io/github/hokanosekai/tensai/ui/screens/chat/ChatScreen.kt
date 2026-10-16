@@ -284,6 +284,7 @@ fun ChatScreen(
                                     message = message,
                                     isThinkingActive = isThinkingActive,
                                     onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
+                                    isGenerating = isLastAssistantReply && isGenerating,
                                 )
                             }
                             is ToolLineItem -> Column {
