@@ -1,7 +1,12 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -62,6 +67,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
+import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.data.AutoMemoryShare
 import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.runtime.EffectiveBackend
@@ -141,7 +148,12 @@ fun ContextSheet(
 @Composable
 private fun WindowCard(breakdown: ContextBreakdown, modelLoaded: Boolean, onOpenSettings: () -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(200), label = "chevron")
+    val reducedMotion = rememberReducedMotion()
+    val rotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        tween(if (reducedMotion) 0 else TensaiMotion.DurBase),
+        label = "chevron",
+    )
     val error = MaterialTheme.colorScheme.error
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val title = stringResource(R.string.context_sheet_section_window)
@@ -149,7 +161,9 @@ private fun WindowCard(breakdown: ContextBreakdown, modelLoaded: Boolean, onOpen
         if (expanded) R.string.context_sheet_collapse else R.string.context_sheet_expand,
     )
 
-    Column(modifier = Modifier.animateContentSize(tween(200))) {
+    // One animation for the whole unfold, as in the conversation settings' sampling block: the card
+    // grows with its rows (expand + fade together) instead of the rows outrunning an animateContentSize.
+    Column {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -218,7 +232,11 @@ private fun WindowCard(breakdown: ContextBreakdown, modelLoaded: Boolean, onOpen
             }
         }
 
-        AnimatedVisibility(visible = expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = if (reducedMotion) EnterTransition.None else expandVertically(tween(TensaiMotion.DurBase)) + fadeIn(tween(TensaiMotion.DurBase)),
+            exit = if (reducedMotion) ExitTransition.None else shrinkVertically(tween(TensaiMotion.DurBase)) + fadeOut(tween(TensaiMotion.DurBase)),
+        ) {
             Column {
                 HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
                 Row(
