@@ -171,7 +171,7 @@ class AgentRuntime(
         generator.generate(request).collect { event ->
             when (event) {
                 is DecodeEvent.Token -> emit(AgentEvent.Token(event.text))
-                is DecodeEvent.Parsed -> emit(AgentEvent.Parsed(event.content, event.reasoning))
+                is DecodeEvent.Parsed -> emit(AgentEvent.Parsed(event.content, event.reasoning, event.toolCalls))
                 is DecodeEvent.ToolTurn -> turn = event
                 is DecodeEvent.Done -> stats = event.stats
                 is DecodeEvent.Error -> error = event.cause

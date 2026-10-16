@@ -492,9 +492,9 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                         //
                         // Runs on `dispatcher` inside the same blocking completion as the token
                         // callback, so the tracker is still only ever touched from one thread.
-                        val chatParseCallback = ChatParseCallback { content, reasoningContent ->
+                        val chatParseCallback = ChatParseCallback { content, reasoningContent, toolCalls ->
                             budgetTracker?.onParsed(content, reasoningContent)
-                            trySend(DecodeEvent.Parsed(content, reasoningContent.ifEmpty { null }))
+                            trySend(DecodeEvent.Parsed(content, reasoningContent.ifEmpty { null }, toolCalls.toList()))
                         }
                         // Last look before committing to a call that can hold this thread for
                         // minutes. Everything above (`formatChat`, `tokenize`) is a blocking

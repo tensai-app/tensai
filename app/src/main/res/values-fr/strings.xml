@@ -768,6 +768,9 @@
 
     <string name="tool_done_generic">%1$s utilisé</string>
     <string name="tool_run_generic">Utilisation de %1$s…</string>
+    <string name="tool_run_unnamed">Utilisation d\'un outil…</string>
+    <string name="tool_done_unnamed">Outil utilisé</string>
+    <string name="tool_name_unnamed">Outil</string>
     <string name="tool_line_failed">Échec : %1$s</string>
     <string name="tool_line_refused">Refus : %1$s</string>
     <string name="tool_refused_timer">Minuteur refusé</string>

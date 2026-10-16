@@ -69,6 +69,18 @@ class ChatItemsTest {
         }
     }
 
+    /** TEN-185: a placeholder call is a plain running line even when its name resolves to a gated tool, and keeps its line's key. */
+    @Test
+    fun aCallStillBeingWrittenIsNeverGatedAndTheLineKeepsItsKey() {
+        val writing = message("assistant", "", listOf(call("writing_0", "erase")), id = "a1")
+        val real = message("assistant", "", listOf(call("c1", "datetime")), id = "a1")
+        val before = build(listOf(message("user", "go"), writing), running = true)
+        val after = build(listOf(message("user", "go"), real), running = true)
+
+        assertEquals(listOf("user", "line(1)"), before.shape())
+        assertEquals((before[1] as ToolLineItem).key, (after[1] as ToolLineItem).key)
+    }
+
     @Test
     fun callsBetweenTwoAnswersCollapseIntoOneLine() {
         // text + call, then a reply with only a call, then the answer: the second assistant message adds no bubble.
@@ -88,7 +100,7 @@ class ChatItemsTest {
         assertEquals(listOf("user", "assistant", "line(2)", "assistant"), items.shape())
         val line = items[2] as ToolLineItem
         assertEquals(listOf("14:02", "82%"), line.calls.map { it.output })
-        assertEquals("tools:a1:c1", line.key)
+        assertEquals("tools:a1:0", line.key)
     }
 
     @Test

@@ -76,6 +76,65 @@ class ReplyStreamSplitterTest {
         assertEquals("partial answer", splitter.content)
     }
 
+    /** TEN-185: a reply of a request with tools that opens on a call marker, held back by the engine. */
+    @Test
+    fun withTools_anEmptyEngineSplitHidesTheRawCallMarkerTheFallbackWouldShow() {
+        val splitter = ReplyStreamSplitter(toolsActive = true)
+
+        splitter.acceptParsed(content = "", thinking = null)
+        splitter.accept("<tool")
+        splitter.accept("_call>{\"name\": \"open_url\"")
+
+        assertTrue(splitter.usingEngineSplit)
+        assertEquals("", splitter.content)
+    }
+
+    @Test
+    fun withTools_theFallbackIsHeldUntilTheEngineSpeaksOrEightChunksPass() {
+        val splitter = ReplyStreamSplitter(toolsActive = true)
+
+        splitter.accept("<tool_call>")
+        assertEquals("", splitter.content)
+        repeat(7) { splitter.accept("x") }
+        assertEquals("<tool_call>xxxxxxx", splitter.content)
+    }
+
+    @Test
+    fun withTools_finishReleasesTheHeldFallback() {
+        val splitter = ReplyStreamSplitter(toolsActive = true)
+
+        splitter.accept("plain answer")
+        splitter.finish()
+
+        assertEquals("plain answer", splitter.content)
+    }
+
+    @Test
+    fun withTools_textBeforeTheCallStaysAndTheCallNeverShows() {
+        val splitter = ReplyStreamSplitter(toolsActive = true)
+
+        splitter.acceptParsed(content = "", thinking = null)
+        splitter.accept("Let me ")
+        splitter.acceptParsed(content = "Let me ", thinking = null)
+        splitter.accept("check.<tool_call>{\"na")
+        splitter.acceptParsed(content = "Let me check.", thinking = null)
+        splitter.finish()
+
+        assertEquals("Let me check.", splitter.content)
+    }
+
+    @Test
+    fun withoutTools_aLiteralToolCallWrittenAsTextStaysVisible() {
+        val splitter = ReplyStreamSplitter()
+
+        splitter.acceptParsed(content = "", thinking = null)
+        splitter.accept("<tool_call>x")
+        splitter.finish()
+
+        assertFalse(splitter.usingEngineSplit)
+        assertEquals("<tool_call>x", splitter.content)
+    }
+
     @Test
     fun engineSplitIsCumulative_lastOneWins() {
         val splitter = ReplyStreamSplitter()

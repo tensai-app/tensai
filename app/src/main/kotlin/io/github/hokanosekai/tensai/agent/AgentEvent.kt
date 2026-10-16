@@ -80,7 +80,7 @@ sealed interface AgentEvent {
     data class Token(val text: String) : AgentEvent
 
     /** The engine's split of the current reply, see [io.github.hokanosekai.tensai.engine.DecodeEvent.Parsed]. */
-    data class Parsed(val content: String, val reasoning: String?) : AgentEvent
+    data class Parsed(val content: String, val reasoning: String?, val toolCalls: List<String> = emptyList()) : AgentEvent
 
     /**
      * The current reply ended.

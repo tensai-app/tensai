@@ -61,6 +61,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -1413,6 +1414,52 @@ class ChatViewModelTest {
     private fun toolCallsReply(vararg calls: ToolCall) =
         listOf(DecodeEvent.ToolTurn("", null, calls.toList(), toolsIgnored = false, toolParseFailed = false, truncated = false))
 
+    /**
+     * TEN-185: the raw call text streamed as tokens never reaches the stored reply (the engine held it back), and a
+     * call the parser then rejects leaves the fallback message, not the JSON, and no stored calls.
+     */
+    @Test
+    fun aMalformedCallLeavesNeitherTheRawTextNorStoredCalls() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += listOf(
+            // Production order: the token reaches the app before the parse that holds it back.
+            DecodeEvent.Token("<tool_call>"),
+            DecodeEvent.Parsed(content = "", reasoning = null),
+            DecodeEvent.Token("{\"name\": \"datetime\", "),
+            DecodeEvent.Parsed(content = "", reasoning = null, toolCalls = listOf("datetime")),
+            DecodeEvent.ToolTurn("<tool_call>{\"name\": \"datetime\", ", null, emptyList(), toolsIgnored = false, toolParseFailed = true, truncated = false),
+        )
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("what time is it?")
+        awaitGeneration()
+
+        val reply = chatDao.observeMessages(id).first().last()
+        assertEquals(toolFallbackMessage(java.util.Locale.getDefault().language), reply.content)
+        assertNull(reply.toolCallsJson)
+        assertTrue("no write ever held the raw call: ${chatDao.writtenContents}", chatDao.writtenContents.none { it.contains("<tool_call>") })
+    }
+
+    /** TEN-185: a parse that failed on something else than a call keeps the model's prose. */
+    @Test
+    fun aFailedParseWithNoCallSeenKeepsTheProse() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += listOf(
+            DecodeEvent.Token("Sure, "),
+            DecodeEvent.Parsed(content = "", reasoning = null),
+            DecodeEvent.Token("one moment."),
+            DecodeEvent.ToolTurn("Sure, one moment.", null, emptyList(), toolsIgnored = false, toolParseFailed = true, truncated = false),
+        )
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("hi")
+        awaitGeneration()
+
+        assertEquals("Sure, one moment.", chatDao.observeMessages(id).first().last().content)
+    }
+
     private fun answerReply(text: String) = listOf(
         DecodeEvent.Token(text),
         DecodeEvent.ToolTurn(text, null, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = false),
@@ -1924,6 +1971,9 @@ class ChatViewModelTest {
             messagesFlow.value = messages.mapValues { it.value.toList() }
         }
 
+        /** Every content `updateMessage` was handed, in order: what the screen could have shown. */
+        val writtenContents = mutableListOf<String>()
+
         override suspend fun updateMessage(
             id: String,
             content: String,
@@ -1933,6 +1983,7 @@ class ChatViewModelTest {
             ttftMs: Long?,
             stopReason: String?,
         ) {
+            writtenContents += content
             for (list in messages.values) {
                 val index = list.indexOfFirst { it.id == id }
                 if (index >= 0) {

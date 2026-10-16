@@ -137,19 +137,22 @@ object ToolUiCatalog {
     fun icon(tool: String): ImageVector = byId[tool]?.icon ?: Icons.Rounded.Build
 
     /** "Date and time"; the raw id for an unknown tool. */
-    fun name(tool: String): UiText = byId[tool]?.let { UiText.of(it.name) } ?: UiText.Raw(tool)
+    fun name(tool: String): UiText = if (tool.isEmpty()) UiText.of(R.string.tool_name_unnamed) else byId[tool]?.let { UiText.of(it.name) } ?: UiText.Raw(tool)
 
     /** The user-facing description, `null` for an unknown tool. */
     fun description(tool: String): UiText? = byId[tool]?.let { UiText.of(it.description) }
 
     /** "Checked the phone": what the call did, past tense. */
     fun doneLabel(tool: String, argsJson: String): UiText {
+        if (tool.isEmpty()) return UiText.of(R.string.tool_done_unnamed)
         val meta = byId[tool] ?: return UiText.of(R.string.tool_done_generic, name(tool))
         return UiText.of(actions(meta, argsJson).done)
     }
 
     /** "Checking the phone...": what the call is doing. */
     fun runningLabel(tool: String, argsJson: String): UiText {
+        // A call whose name is not written yet (TEN-185).
+        if (tool.isEmpty()) return UiText.of(R.string.tool_run_unnamed)
         val meta = byId[tool] ?: return UiText.of(R.string.tool_run_generic, name(tool))
         return UiText.of(actions(meta, argsJson).running)
     }

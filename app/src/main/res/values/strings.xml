@@ -855,6 +855,9 @@
 
     <string name="tool_done_generic">Used %1$s</string>
     <string name="tool_run_generic">Using %1$s…</string>
+    <string name="tool_run_unnamed">Using a tool…</string>
+    <string name="tool_done_unnamed">Used a tool</string>
+    <string name="tool_name_unnamed">Tool</string>
     <string name="tool_line_failed">%1$s failed</string>
     <string name="tool_line_refused">%1$s refused</string>
     <string name="tool_refused_timer">Timer refused</string>

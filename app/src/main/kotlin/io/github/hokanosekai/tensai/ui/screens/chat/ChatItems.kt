@@ -7,6 +7,9 @@ import io.github.hokanosekai.tensai.engine.ToolCall
 import io.github.hokanosekai.tensai.ui.tools.ToolCallState
 import io.github.hokanosekai.tensai.ui.tools.ToolCallUi
 
+/** Id prefix of the placeholder calls stored while a reply is still writing them (TEN-185): never gated, a plain running line. */
+internal const val WritingCallIdPrefix = "writing_"
+
 /** What the answer to a [ConfirmationItem] stands at. */
 enum class ConfirmDecision { Pending, Allowed, Denied, Stopped }
 
@@ -38,7 +41,7 @@ data class ConfirmationItem(override val key: String, val call: ToolCallUi, val 
  * - An assistant message without text (its calls only) adds no bubble, only its calls (and its thinking, when
  *   [MessageEntity.toUi] keeps it).
  * - Calls that follow each other, across assistant messages, with no visible message between, are one
- *   [ToolLineItem]. Its key is its first call's, so it stays put while the group grows.
+ *   [ToolLineItem]. Its key is its first call's message and position, so it stays put while the group grows.
  * - A call that [requiresConfirmation] is a [ConfirmationItem] when it was decided: [ConfirmDecision.Allowed]
  *   once it ran ok, [ConfirmDecision.Denied] when refused, [ConfirmDecision.Stopped] when Stop cut it. While
  *   the turn runs it is pending while in [pendingCallIds], allowed once in [allowedIds], and shows nothing
@@ -78,10 +81,13 @@ internal fun buildChatItems(
 
     val items = ArrayList<ChatItem>()
     val group = ArrayList<ToolCallUi>()
+    // Keyed by the line's first call position in its message, not its id: the placeholder id of a call still being
+    // written is replaced by the real one, and the line must not be rebuilt for it.
+    var groupKey = ""
 
     fun flush() {
         if (group.isEmpty()) return
-        items += ToolLineItem("tools:${group.first().messageId}:${group.first().id}", group.toList())
+        items += ToolLineItem(groupKey, group.toList())
         group.clear()
     }
 
@@ -91,7 +97,7 @@ internal fun buildChatItems(
             flush()
             items += MessageItem(it)
         }
-        for (call in calls[message.id].orEmpty()) {
+        for ((index, call) in calls[message.id].orEmpty().withIndex()) {
             val ui = toolCallUi(message.id, call, rows[message.id to call.id], outputs[message.id to call.id], agentRunning, requiresConfirmation)
             val decision = if (!ui.confirmed) null else when (ui.state) {
                 ToolCallState.Ok -> ConfirmDecision.Allowed
@@ -111,7 +117,10 @@ internal fun buildChatItems(
                 }
                 // Gated and running but not asked yet: nothing to show until the gate is reached.
                 ui.confirmed && ui.state == ToolCallState.Running -> flush()
-                else -> group += ui
+                else -> {
+                    if (group.isEmpty()) groupKey = "tools:${message.id}:$index"
+                    group += ui
+                }
             }
         }
     }
@@ -141,6 +150,6 @@ private fun toolCallUi(
         durationMs = row?.durationMs,
         output = output,
         destination = row?.destination,
-        confirmed = requiresConfirmation(call.name, call.argumentsJson),
+        confirmed = !call.id.startsWith(WritingCallIdPrefix) && requiresConfirmation(call.name, call.argumentsJson),
     )
 }

@@ -45,6 +45,9 @@ class ToolUiTest {
         assertEquals(UiText.Raw("mystery"), ToolUiCatalog.name("mystery"))
         assertEquals(UiText.of(R.string.tool_done_generic, UiText.Raw("mystery")), ToolUiCatalog.doneLabel("mystery", "{}"))
         assertEquals(UiText.of(R.string.tool_run_generic, UiText.Raw("mystery")), ToolUiCatalog.runningLabel("mystery", "{}"))
+        assertEquals(UiText.of(R.string.tool_run_unnamed), ToolUiCatalog.runningLabel("", "{}"))
+        assertEquals(UiText.of(R.string.tool_done_unnamed), ToolUiCatalog.doneLabel("", "{}"))
+        assertEquals(UiText.of(R.string.tool_name_unnamed), ToolUiCatalog.name(""))
         assertNull(ToolUiCatalog.description("mystery"))
     }
 

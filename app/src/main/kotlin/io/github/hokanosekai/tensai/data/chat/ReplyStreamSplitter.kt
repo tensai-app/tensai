@@ -21,38 +21,67 @@ package io.github.hokanosekai.tensai.data.chat
  * good. That's a one-way switch on purpose — the engine holds text back while a marker is still
  * ambiguous and reports nothing at all for those tokens, and falling back to the tag parser in
  * those gaps would make the rendered reply flicker between two disagreeing splits.
+ *
+ * A reply of a request with tools (`toolsActive`, TEN-185) differs on one point: the engine reports
+ * every parse, even an empty one (see [io.github.hokanosekai.tensai.engine.DecodeEvent.Parsed]), and
+ * an empty one is accepted. Its content then stays what the engine resolved, call markup excluded,
+ * instead of the raw text the fallback would show while the parser holds a call marker back. Without
+ * tools nothing changes: a literal `<tool_call>` written as text stays visible.
  */
-class ReplyStreamSplitter {
+class ReplyStreamSplitter(private val toolsActive: Boolean = false) {
 
     private val fallback = ThinkingStreamParser()
 
     private var engineContent: String? = null
     private var engineThinking: String? = null
+    private var chunks = 0
+    private var finished = false
 
     /** Feeds the next chunk of raw streamed text — see [ThinkingStreamParser.accept]. */
-    fun accept(chunk: String) = fallback.accept(chunk)
+    fun accept(chunk: String) {
+        chunks++
+        fallback.accept(chunk)
+    }
 
     /**
      * Feeds an engine-provided split (cumulative, see
      * [io.github.hokanosekai.tensai.engine.DecodeEvent.Parsed]). Ignored while both halves are
      * empty: an engine that has resolved nothing yet must not blank out what the fallback already
-     * has.
+     * has. With `toolsActive` an empty split counts too, see the class doc.
      */
     fun acceptParsed(content: String, thinking: String?) {
-        if (content.isEmpty() && thinking.isNullOrEmpty()) return
+        if (!toolsActive && content.isEmpty() && thinking.isNullOrEmpty()) return
         engineContent = content
         engineThinking = thinking
     }
 
     /** Flushes the fallback's held-back text — call exactly once, when the stream ends. */
-    fun finish() = fallback.finish()
+    fun finish() {
+        finished = true
+        fallback.finish()
+    }
 
     /** Whether the engine's split is what [content]/[thinking] report. */
     val usingEngineSplit: Boolean get() = engineContent != null
 
+    /**
+     * With tools the fallback is not shown at first (TEN-185): the engine reports its first parse right
+     * after the first token, and until then a reply opening on a call marker would flash raw (the token
+     * reaches the caller before that parse does). Held until the engine speaks, [HoldChunks] chunks
+     * passed without it (no parser: the fallback is all there is) or [finish].
+     */
+    private val held: Boolean get() = toolsActive && engineContent == null && !finished && chunks < HoldChunks
+
+    /** The fallback's own content, for a reply the engine could not resolve: only valid after [finish]. */
+    val fallbackContent: String get() = fallback.content
+
     /** Everything outside the reasoning block, resolved so far. */
-    val content: String get() = engineContent ?: fallback.content
+    val content: String get() = engineContent ?: if (held) "" else fallback.content
 
     /** The reasoning block's interior, or `null` if none has been seen. */
-    val thinking: String? get() = if (engineContent != null) engineThinking else fallback.thinking
+    val thinking: String? get() = if (engineContent != null) engineThinking else if (held) null else fallback.thinking
+
+    private companion object {
+        const val HoldChunks = 8
+    }
 }

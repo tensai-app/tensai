@@ -467,8 +467,13 @@ sealed class DecodeEvent {
      *   delta, and not necessarily monotonic (a parse can retract text a later token disproves).
      * @param reasoning the reasoning that preceded it, markers stripped, or `null` when the engine
      *   found none.
+     * @param toolCalls the names of the calls the reply has opened so far, the last one possibly still
+     *   being written (empty or cut short: only trust a name you offered). Always empty for a request
+     *   without [DecodeRequest.tools]. A request with tools also gets one of these before it has
+     *   anything to report, with empty [content]: the engine is parsing, so a reply that opens on a
+     *   call marker is held back instead of shown raw (TEN-185).
      */
-    data class Parsed(val content: String, val reasoning: String?) : DecodeEvent()
+    data class Parsed(val content: String, val reasoning: String?, val toolCalls: List<String> = emptyList()) : DecodeEvent()
 
     /**
      * The finished reply of a request with [DecodeRequest.tools], as the engine's chat parser split

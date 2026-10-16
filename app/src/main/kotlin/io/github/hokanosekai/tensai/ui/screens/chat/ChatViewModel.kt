@@ -286,6 +286,12 @@ internal fun hasPersistableContent(content: String, thinking: String?): Boolean 
  */
 internal fun keepsEmptyTurn(stopReason: StopReason?): Boolean = stopReason == StopReason.Cancelled
 
+/** Whether [text] holds the opening of a tool call in any of the formats llama.cpp parses (a guess on the marker, not a parse). */
+internal fun hasToolCallMarker(text: String): Boolean =
+    ToolCallMarkers.any { text.contains(it, ignoreCase = true) }
+
+private val ToolCallMarkers = listOf("tool_call", "python_tag", "<function", "<invoke")
+
 /**
  * What an agent turn ends on when the model, after its tool calls, wrote no answer at all (TEN-172).
  * Stored text, so it follows the app language ([language] is a two-letter code) rather than a resource.
@@ -1325,7 +1331,7 @@ class ChatViewModel(
     private suspend fun streamAgentTurn(conversationId: String, request: DecodeRequest) {
         val stopSignal = GenerationStopSignal()
         agentStopSignal = stopSignal
-        var parser = ReplyStreamSplitter()
+        var parser = ReplyStreamSplitter(toolsActive = true)
         // The reply being streamed, and the last one that made calls: the audit rows point at it.
         var openReplyId: String? = null
         var callingReplyId: String? = null
@@ -1334,6 +1340,12 @@ class ChatViewModel(
         var lastStats: DecodeStats? = null
         var failed = false
         var lastPersistAt = 0L
+        // What the open reply has stored as its calls while they are still being written (TEN-185).
+        var writing = emptyList<String>()
+        // A placeholder was ever stored on the open reply, whatever it holds now: the `finally` clears on this.
+        var wrotePlaceholders = false
+        // The engine reported a call (of any name) for the open reply, see the parse-failure rescue below.
+        var sawCallName = false
 
         suspend fun persistThrottled() {
             val now = System.currentTimeMillis()
@@ -1342,6 +1354,22 @@ class ChatViewModel(
                 chatRepository.updateAssistantMessage(id, parser.content, parser.thinking)
                 lastPersistAt = now
             }
+        }
+
+        /**
+         * Shows the calls the engine sees being written as running ones, so the tool line is there before the
+         * reply ends. Stored as the reply's calls under placeholder ids: [AgentEvent.ReplyFinished] replaces
+         * them with the real ones (or clears them), and the `finally` below clears them on a cut reply.
+         * A name that is not a registered tool (still being written, or invented) shows as a generic one.
+         * Only written when the names change, not per token.
+         */
+        suspend fun showWritingCalls(names: List<String>) {
+            val id = openReplyId ?: return
+            val shown = names.map { if (agentRuntime.tierOf(it) != null) it else "" }
+            if (shown == writing) return
+            writing = shown
+            wrotePlaceholders = true
+            chatRepository.setToolCalls(id, shown.mapIndexed { i, name -> ToolCall("$WritingCallIdPrefix$i", name, "{}") })
         }
 
         _generatingHere.value = true
@@ -1353,8 +1381,11 @@ class ChatViewModel(
                 when (event) {
                     AgentEvent.TurnStarted -> Unit
                     is AgentEvent.ReplyStarted -> {
-                        parser = ReplyStreamSplitter()
+                        parser = ReplyStreamSplitter(toolsActive = true)
                         lastPersistAt = 0L
+                        writing = emptyList()
+                        wrotePlaceholders = false
+                        sawCallName = false
                         // Not cancellable: an id that never reaches [openReplyId] is a row nobody closes.
                         openReplyId = withContext(NonCancellable) { chatRepository.startAssistantMessage(conversationId) }
                     }
@@ -1363,7 +1394,12 @@ class ChatViewModel(
                         persistThrottled()
                     }
                     is AgentEvent.Parsed -> {
+                        val wasEngine = parser.usingEngineSplit
                         parser.acceptParsed(event.content, event.reasoning)
+                        if (event.toolCalls.isNotEmpty()) sawCallName = true
+                        // The first split replaces what the fallback showed: no waiting for the throttle.
+                        if (!wasEngine && parser.usingEngineSplit) lastPersistAt = 0L
+                        showWritingCalls(event.toolCalls)
                         persistThrottled()
                     }
                     is AgentEvent.ReplyFinished -> {
@@ -1379,8 +1415,16 @@ class ChatViewModel(
                         // With calls (or calls dropped after the limit), the engine's own content is the one
                         // without the call markup.
                         var content = if ((event.calls.isNotEmpty() || event.droppedCalls) && event.content != null) event.content else parser.content
+                        // A parse the engine rejected with nothing resolved: the model's own prose is kept when the engine
+                        // never saw a call in this reply and the text holds no call marker (the parse failed on something
+                        // else), otherwise [toolFallbackMessage] below. Never the raw call.
+                        if (event.toolParseFailed && event.calls.isEmpty() && !hasPersistableContent(content, parser.thinking) &&
+                            !sawCallName && parser.fallbackContent.isNotBlank() && !hasToolCallMarker(parser.fallbackContent)
+                        ) {
+                            content = parser.fallbackContent
+                        }
                         // The answer after tool use came out empty: say so rather than leave bare calls on screen.
-                        val noAnswer = event.index > 0 && event.calls.isEmpty() &&
+                        val noAnswer = (event.index > 0 || event.toolParseFailed) && event.calls.isEmpty() &&
                             !hasPersistableContent(content, parser.thinking) &&
                             event.stats?.stopReason != StopReason.ContextBudgetExhausted &&
                             event.stats?.stopReason != StopReason.ContextBudgetClipped
@@ -1425,6 +1469,7 @@ class ChatViewModel(
                 }
                 openReplyId?.let { id ->
                     parser.finish()
+                    if (wrotePlaceholders) chatRepository.setToolCalls(id, emptyList())
                     val stopReason = when {
                         failed -> StopReason.Failed
                         stopSignal.wasRequested -> StopReason.Cancelled
