@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Calculate
+import androidx.compose.material.icons.rounded.ContactSupport
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.FlashlightOn
@@ -37,6 +38,7 @@ class ToolActions(@StringRes val done: Int, @StringRes val running: Int)
  *   labels in [variants] by value. A value with no entry gets [actions].
  * @param confirmLabel the "tensai wants to ..." line of the confirmation card, built from the call's arguments.
  * @param refused the "Timer refused" line of a phone action no app handled, [ToolUiCatalog.refusedLabel] falls back to "<name> refused".
+ * @param dismissed the "Question dismissed" line of a call the user closed, [ToolUiCatalog.dismissedLabel] falls back to [actions].
  */
 class ToolUiMeta(
     val id: String,
@@ -48,6 +50,7 @@ class ToolUiMeta(
     val variants: Map<String, ToolActions> = emptyMap(),
     val confirmLabel: ((Map<String, String>) -> UiText)? = null,
     @StringRes val refused: Int? = null,
+    @StringRes val dismissed: Int? = null,
 )
 
 /**
@@ -79,6 +82,9 @@ object ToolUiCatalog {
                 val id = args["id"]
                 if (id != null) UiText.of(R.string.tool_confirm_memory_forget_id, id) else UiText.of(R.string.tool_confirm_memory_forget)
             }),
+        ToolUiMeta("ask_user", Icons.Rounded.ContactSupport, R.string.tool_name_ask_user, R.string.tool_desc_ask_user,
+            ToolActions(R.string.tool_done_ask_user, R.string.tool_run_ask_user),
+            dismissed = R.string.tool_dismissed_ask_user),
         ToolUiMeta("clipboard", Icons.Rounded.ContentPaste, R.string.tool_name_clipboard, R.string.tool_desc_clipboard,
             ToolActions(R.string.tool_done_clipboard, R.string.tool_run_clipboard),
             variantArg = "action",
@@ -160,6 +166,19 @@ object ToolUiCatalog {
     /** "Timer refused": a call that was refused, by the user or because no app handled it. */
     fun refusedLabel(tool: String): UiText =
         byId[tool]?.refused?.let { UiText.of(it) } ?: UiText.of(R.string.tool_line_refused, name(tool))
+
+    /** "Question dismissed": a call the user closed without answering. */
+    fun dismissedLabel(tool: String): UiText =
+        byId[tool]?.dismissed?.let { UiText.of(it) } ?: doneLabel(tool, "{}")
+
+    /**
+     * The rows of a call in the detail sheet: the arguments as they are, except `ask_user`, whose question and options
+     * are prose and only `multiple` reads as code.
+     */
+    fun detailInputs(tool: String, argsJson: String): List<ToolInput> {
+        val inputs = ToolArgsView.inputs(argsJson)
+        return if (tool == "ask_user") inputs.map { it.copy(mono = it.key == "multiple") } else inputs
+    }
 
     /** The "tensai wants to ..." line of the confirmation card. */
     fun confirmLabel(tool: String, argsJson: String): UiText =

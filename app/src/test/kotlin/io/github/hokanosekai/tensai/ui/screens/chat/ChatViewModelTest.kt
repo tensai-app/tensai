@@ -7,6 +7,8 @@ import io.github.hokanosekai.tensai.agent.ToolResult
 import io.github.hokanosekai.tensai.agent.ToolTier
 import io.github.hokanosekai.tensai.agent.DateTimeTool
 import io.github.hokanosekai.tensai.agent.ToolRegistry
+import io.github.hokanosekai.tensai.agent.AskUserGate
+import io.github.hokanosekai.tensai.agent.AskUserTool
 import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
@@ -91,6 +93,7 @@ class ChatViewModelTest {
     private lateinit var sessionRepository: SessionRepository
     private var agentRuntime = AgentRuntime(ToolRegistry())
     private var confirmationGate = UiConfirmationGate()
+    private var askUserGate = AskUserGate()
 
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
@@ -156,6 +159,7 @@ class ChatViewModelTest {
         scope = CoroutineScope(this.coroutineContext + viewModelJob),
         agentRuntime = agentRuntime,
         confirmationGate = confirmationGate,
+        askUserGate = askUserGate,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -1704,6 +1708,100 @@ class ChatViewModelTest {
         assertEquals(0, eraser.runs)
         val card = viewModel.items.first().filterIsInstance<ConfirmationItem>().single()
         assertEquals(ConfirmDecision.Stopped, card.decision)
+    }
+
+    // ask_user (TEN-187)
+
+    private val askCall = ToolCall("c1", "ask_user", """{"question":"Which Jade?","options":["Jade Martin","Jade Leroy"]}""")
+
+    private fun askRuntime() {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(AskUserTool(askUserGate))))
+    }
+
+    /** The question is published while the turn waits, the answer goes back as the tool result and shows as a Q/A row. */
+    @Test
+    fun answeringAQuestionGivesTheModelTheResultAndShowsTheAnswerRow() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += answerReply("Drafting to Jade Leroy.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("text Jade")
+        val asked = withTimeout(5_000) { viewModel.pendingQuestion.first { it != null } }!!
+        assertEquals("Which Jade?", asked.question)
+        assertEquals(listOf("Jade Martin", "Jade Leroy"), asked.options)
+        assertEquals("running", (viewModel.items.first().filterIsInstance<ToolLineItem>().single().calls.single().state).name.lowercase())
+
+        viewModel.answerQuestion(asked.callId, listOf("Jade Leroy"))
+        awaitGeneration()
+
+        assertEquals("ok", chatDao.toolCalls.single().status)
+        assertNull(viewModel.pendingQuestion.first())
+        val items = viewModel.items.first()
+        assertEquals(listOf("message", "line", "answer", "message"), items.map { if (it is MessageItem) "message" else if (it is AskAnswerItem) "answer" else "line" })
+        assertEquals(listOf("Jade Leroy"), (items[2] as AskAnswerItem).answers)
+        // The model saw a tool result, and no user message was invented for the answer.
+        assertEquals("""{"answer":"Jade Leroy"}""", chatRepository.observeMessages(id).first().single { it.role == "tool" }.content)
+        assertEquals(1, chatRepository.observeMessages(id).first().count { it.role == "user" })
+    }
+
+    @Test
+    fun dismissingAQuestionTellsTheModelAndDrawsNoAnswerRow() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += answerReply("I'll leave it empty.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("text Jade")
+        val asked = withTimeout(5_000) { viewModel.pendingQuestion.first { it != null } }!!
+        viewModel.dismissQuestion(asked.callId)
+        awaitGeneration()
+
+        assertEquals("""{"dismissed":true}""", chatRepository.observeMessages(id).first().single { it.role == "tool" }.content)
+        val items = viewModel.items.first()
+        assertTrue(items.none { it is AskAnswerItem })
+        assertEquals(ToolCallState.Dismissed, items.filterIsInstance<ToolLineItem>().single().calls.single().state)
+    }
+
+    @Test
+    fun leavingTheChatDismissesAWaitingQuestion() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += answerReply("Okay.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("text Jade")
+        withTimeout(5_000) { viewModel.pendingQuestion.first { it != null } }
+        viewModel.leave()
+        awaitGeneration()
+
+        assertEquals("""{"dismissed":true}""", chatRepository.observeMessages(id).first().single { it.role == "tool" }.content)
+        assertTrue(askUserGate.pending.value.isEmpty())
+    }
+
+    @Test
+    fun stoppingWhileAQuestionWaitsDropsItAndRecordsStopped() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("text Jade")
+        withTimeout(5_000) { viewModel.pendingQuestion.first { it != null } }
+        viewModel.stop()
+        awaitGeneration()
+
+        // The tool is cancelled on its own scope, a moment after the turn ends.
+        withTimeout(5_000) { askUserGate.pending.first { it.isEmpty() } }
+        assertEquals("stopped", chatDao.toolCalls.single().status)
+        assertNull(viewModel.pendingQuestion.first())
     }
 
     private class Eraser : Tool {

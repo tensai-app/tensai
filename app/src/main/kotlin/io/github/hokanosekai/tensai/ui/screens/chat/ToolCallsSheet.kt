@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.agent.AskUserResult
+import io.github.hokanosekai.tensai.agent.AskUserTool
 import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
@@ -174,6 +176,7 @@ private fun statusText(state: ToolCallState): String = stringResource(
         ToolCallState.Timeout -> R.string.tool_status_timeout
         ToolCallState.Refused -> R.string.tool_status_refused
         ToolCallState.Stopped -> R.string.tool_status_stopped
+        ToolCallState.Dismissed -> R.string.tool_status_dismissed
     },
 )
 
@@ -183,7 +186,7 @@ private fun statusColor(state: ToolCallState): Color = when (state) {
     ToolCallState.Ok -> MaterialTheme.tensaiColors.success
     ToolCallState.Error, ToolCallState.Timeout -> MaterialTheme.colorScheme.error
     ToolCallState.Refused -> MaterialTheme.tensaiColors.warning
-    ToolCallState.Stopped -> MaterialTheme.colorScheme.onSurfaceVariant
+    ToolCallState.Stopped, ToolCallState.Dismissed -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
@@ -293,7 +296,7 @@ private fun Detail(call: ToolCallUi) {
             .padding(bottom = 28.dp),
     ) {
         Eyebrow(stringResource(R.string.tool_detail_inputs), Modifier.padding(top = 6.dp, bottom = 8.dp))
-        val inputs = ToolArgsView.inputs(call.argsJson)
+        val inputs = ToolUiCatalog.detailInputs(call.tool, call.argsJson)
         SheetCard {
             if (inputs.isEmpty()) {
                 Text(
@@ -354,7 +357,11 @@ private fun Detail(call: ToolCallUi) {
                 modifier = Modifier.padding(horizontal = 4.dp),
             ) {
                 ToolSpinner()
-                Text(text = stringResource(R.string.tool_detail_waiting), fontSize = 14.sp, color = muted)
+                Text(
+                    text = stringResource(if (call.tool == AskUserTool.NAME) R.string.tool_detail_waiting_answer else R.string.tool_detail_waiting),
+                    fontSize = 14.sp,
+                    color = muted,
+                )
             }
             output.isNullOrEmpty() -> Text(
                 text = stringResource(R.string.tool_detail_no_output),
@@ -363,6 +370,11 @@ private fun Detail(call: ToolCallUi) {
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
             showRaw -> RawBlock(rawOutput(output))
+            // An answer reads as the text the user gave (as in the bubble), a dismissal as a line, not as JSON keys.
+            call.tool == AskUserTool.NAME && call.state == ToolCallState.Dismissed ->
+                ReadableBlock(ReadableOutput.Text(stringResource(R.string.tool_detail_dismissed)), call.tool)
+            call.tool == AskUserTool.NAME && call.state == ToolCallState.Ok && AskUserResult.answers(output).isNotEmpty() ->
+                ReadableBlock(ReadableOutput.Text(AskUserResult.answers(output).joinToString(", ")), call.tool)
             else -> ReadableBlock(readableOutput(output, call.state), call.tool)
         }
     }

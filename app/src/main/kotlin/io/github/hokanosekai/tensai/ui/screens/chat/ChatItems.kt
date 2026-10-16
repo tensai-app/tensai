@@ -1,10 +1,13 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
+import io.github.hokanosekai.tensai.agent.AskUserResult
+import io.github.hokanosekai.tensai.agent.AskUserTool
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.engine.ToolCall
 import io.github.hokanosekai.tensai.ui.tools.ToolCallState
+import io.github.hokanosekai.tensai.ui.tools.ToolArgsView
 import io.github.hokanosekai.tensai.ui.tools.ToolCallUi
 
 /** Id prefix of the placeholder calls stored while a reply is still writing them (TEN-185): never gated, a plain running line. */
@@ -13,7 +16,7 @@ internal const val WritingCallIdPrefix = "writing_"
 /** What the answer to a [ConfirmationItem] stands at. */
 enum class ConfirmDecision { Pending, Allowed, Denied, Stopped }
 
-/** One row of the conversation list: a message, a tool line, or a confirmation card (TEN-173, TEN-174). */
+/** One row of the conversation list: a message, a tool line, a confirmation card or an answer to a question (TEN-173, TEN-174, TEN-187). */
 sealed interface ChatItem {
     /** Stable across rebuilds, the list's key. */
     val key: String
@@ -28,6 +31,12 @@ data class ToolLineItem(override val key: String, val calls: List<ToolCallUi>) :
 
 /** A call that went through the confirmation gate: asking, or answered. */
 data class ConfirmationItem(override val key: String, val call: ToolCallUi, val decision: ConfirmDecision) : ChatItem
+
+/**
+ * What the user answered an `ask_user` question, drawn as a user bubble under the call's line (TEN-187). Built from
+ * the call and its result, not a stored message: the model reads the result, never a user message that was not typed.
+ */
+data class AskAnswerItem(override val key: String, val question: String, val answers: List<String>) : ChatItem
 
 /**
  * Builds the conversation list from what is stored: messages in order, with the calls of each assistant
@@ -47,6 +56,8 @@ data class ConfirmationItem(override val key: String, val call: ToolCallUi, val 
  *   the turn runs it is pending while in [pendingCallIds], allowed once in [allowedIds], and shows nothing
  *   before the gate is reached. One that failed ([ToolCallState.failed]) never was a decision (it may have
  *   failed before the gate: call limit, invalid arguments): it is an error in a line.
+ * - An `ask_user` call is its own [ToolLineItem], followed by an [AskAnswerItem] once the user answered. A dismissed one
+ *   (a result of `{"dismissed": true}`) is [ToolCallState.Dismissed] and has no answer.
  * - A call with no stored result is [ToolCallState.Running] while the turn [agentRunning], and
  *   [ToolCallState.Stopped] otherwise (a killed process leaves such calls behind).
  *
@@ -99,6 +110,17 @@ internal fun buildChatItems(
         }
         for ((index, call) in calls[message.id].orEmpty().withIndex()) {
             val ui = toolCallUi(message.id, call, rows[message.id to call.id], outputs[message.id to call.id], agentRunning, requiresConfirmation)
+            if (call.name == AskUserTool.NAME) {
+                // Its own line, and the answer under it: a question is a turn of the conversation, not a tool run to fold.
+                flush()
+                val asked = if (ui.state == ToolCallState.Ok && AskUserResult.isDismissed(ui.output)) ui.copy(state = ToolCallState.Dismissed) else ui
+                items += ToolLineItem("tools:${message.id}:$index", listOf(asked))
+                val answers = if (asked.state == ToolCallState.Ok) AskUserResult.answers(asked.output) else emptyList()
+                if (answers.isNotEmpty()) {
+                    items += AskAnswerItem("ask:${message.id}:${call.id}", AskUserTool.capQuestion(ToolArgsView.values(call.argumentsJson)["question"].orEmpty()), answers)
+                }
+                continue
+            }
             val decision = if (!ui.confirmed) null else when (ui.state) {
                 ToolCallState.Ok -> ConfirmDecision.Allowed
                 ToolCallState.Refused -> ConfirmDecision.Denied
@@ -108,7 +130,7 @@ internal fun buildChatItems(
                     call.id in allowedIds -> ConfirmDecision.Allowed
                     else -> null
                 }
-                ToolCallState.Error, ToolCallState.Timeout -> null
+                ToolCallState.Error, ToolCallState.Timeout, ToolCallState.Dismissed -> null
             }
             when {
                 decision != null -> {

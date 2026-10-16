@@ -54,7 +54,7 @@ fun interface ConfirmationGate {
  * - at most [MaxToolCallsPerTurn] calls per turn. Past it the model gets one more generation with
  *   [ToolChoice.None] (tools stay in the prompt, so the KV prefix is reused) and any call it still
  *   makes is dropped;
- * - a tool runs at most its tier's [ToolTier.timeoutMs], a result at most [ResultTokenBudget] tokens;
+ * - a tool runs at most its tier's [ToolTier.timeoutMs] (none for a [Tool.waitsForUser]), a result at most [ResultTokenBudget] tokens;
  * - cancelling the collector (Stop) cancels the running tool and ends the loop. The calls that did
  *   not finish get no event: whoever records the turn closes them with [ToolCallOutcome.stopped] (a
  *   flow cannot emit once its collector is cancelled), so every call of a reply has its result.
@@ -237,7 +237,7 @@ class AgentRuntime(
 
         val ranFrom = clock()
         return try {
-            val result = runDetached(tool, args)
+            val result = runDetached(tool, args, call.id)
             val took = clock() - ranFrom
             when {
                 result == null -> outcome(ToolCallStatus.Timeout, "Error: '${tool.name}' timed out after ${timeoutMs(tool) / 1000} s.", took)
@@ -258,12 +258,12 @@ class AgentRuntime(
      * Runs [tool] on [Dispatchers.IO] in a scope of its own, waiting at most its timeout. Not a child of
      * the turn: [kotlinx.coroutines.withContext] would wait for a tool that ignores cancellation, and the
      * loop with it. Past the timeout, or on Stop, the tool is cancelled and, if it does not notice, left
-     * to finish on its own thread. `null` is the timeout.
+     * to finish on its own thread. `null` is the timeout. A [Tool.waitsForUser] has none: it ends with the user's answer or Stop.
      */
-    private suspend fun runDetached(tool: Tool, args: String): ToolResult? {
-        val running = toolScope.async { tool.execute(args) }
+    private suspend fun runDetached(tool: Tool, args: String, callId: String): ToolResult? {
+        val running = toolScope.async(ToolCallContext(callId)) { tool.execute(args) }
         return try {
-            withTimeoutOrNull(timeoutMs(tool)) { running.await() }.also { if (it == null) running.cancel() }
+            withTimeoutOrNull(if (tool.waitsForUser) Long.MAX_VALUE else timeoutMs(tool)) { running.await() }.also { if (it == null) running.cancel() }
         } catch (e: CancellationException) {
             running.cancel()
             throw e

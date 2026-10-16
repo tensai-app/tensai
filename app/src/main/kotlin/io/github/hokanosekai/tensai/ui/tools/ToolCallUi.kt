@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.ui.tools
 
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.agent.AskUserTool
 
 /** How a call stands, from the persisted audit row (`tool_calls.status`) or, with no row yet, from the turn running. */
 enum class ToolCallState {
@@ -11,6 +12,9 @@ enum class ToolCallState {
     Timeout,
     Refused,
     Stopped,
+
+    /** An `ask_user` the user closed without answering: stored as ok (the model got a result), shown untinted. Never stored as such, [io.github.hokanosekai.tensai.ui.screens.chat.buildChatItems] derives it. */
+    Dismissed,
     ;
 
     /** The call went wrong: the tool failed, was unknown, had bad arguments or timed out. */
@@ -78,7 +82,7 @@ fun toolLineSummary(calls: List<ToolCallUi>): ToolLineSummary {
     if (calls.any { it.state == ToolCallState.Stopped }) {
         return ToolLineSummary(UiText.of(R.string.tool_line_stopped), LineStatus.Stopped)
     }
-    val labels = calls.map { ToolUiCatalog.doneLabel(it.tool, it.argsJson) }
+    val labels = calls.map { if (it.state == ToolCallState.Dismissed) ToolUiCatalog.dismissedLabel(it.tool) else ToolUiCatalog.doneLabel(it.tool, it.argsJson) }
     val label = when {
         calls.size == 1 -> labels.first()
         labels.distinct().size == 1 -> UiText.of(R.string.tool_line_repeated, labels.first(), calls.size)
@@ -93,12 +97,17 @@ fun toolCallLabel(call: ToolCallUi): UiText = when {
     call.state.failed -> UiText.of(R.string.tool_line_failed, ToolUiCatalog.name(call.tool))
     call.state == ToolCallState.Refused -> ToolUiCatalog.refusedLabel(call.tool)
     call.state == ToolCallState.Stopped -> UiText.of(R.string.tool_line_stopped)
+    call.state == ToolCallState.Dismissed -> ToolUiCatalog.dismissedLabel(call.tool)
     else -> ToolUiCatalog.doneLabel(call.tool, call.argsJson)
 }
 
 /** The arguments of a call on one line, "forget · 1": what the timeline shows under the action. */
 fun toolCallSummary(call: ToolCallUi): String =
-    ToolArgsView.values(call.argsJson).values.take(3).joinToString(" · ")
+    if (call.tool == AskUserTool.NAME) {
+        AskUserTool.capQuestion(ToolArgsView.values(call.argsJson)["question"].orEmpty())
+    } else {
+        ToolArgsView.values(call.argsJson).values.take(3).joinToString(" · ")
+    }
 
 /** "120 ms", "1.4 s": [ms] for the timeline and the detail header. */
 fun formatToolDuration(ms: Long): String =

@@ -66,6 +66,7 @@ class ChatItemsTest {
             is MessageItem -> if (it.message.isUser) "user" else "assistant"
             is ToolLineItem -> "line(${it.calls.size})"
             is ConfirmationItem -> "confirm:${it.decision.name}"
+            is AskAnswerItem -> "answer"
         }
     }
 
@@ -292,5 +293,71 @@ class ChatItemsTest {
 
         assertEquals(listOf("user", "assistant"), items.shape())
         assertTrue(items.none { it is ToolLineItem || it is ConfirmationItem })
+    }
+
+    // ask_user (TEN-187)
+
+    private val askArgs = """{"question":"Which Jade?","options":["Jade Martin","Jade Leroy"]}"""
+
+    private fun asked(result: String?, running: Boolean = false, status: String = "ok"): List<ChatItem> {
+        val a1 = message("assistant", "Two contacts are named Jade.", listOf(call("c1", "ask_user", askArgs)), id = "a1")
+        val stored = listOfNotNull(message("user", "text Jade"), a1, result?.let { message("tool", it, toolCallId = "c1") })
+        return build(stored, if (result == null) emptyList() else listOf(row("a1", "c1", "ask_user", status = status)), running = running)
+    }
+
+    
+    fun anOpenQuestionIsARunningLineAndNothingElse() {
+        val items = asked(result = null, running = true)
+
+        assertEquals(listOf("user", "assistant", "line(1)"), items.shape())
+        assertEquals(ToolCallState.Running, (items.last() as ToolLineItem).calls.single().state)
+    }
+
+    
+    fun anAnsweredQuestionIsItsLineThenTheQuestionAndAnswerAsAUserRow() {
+        val items = asked("""{"answer":"Jade Martin"}""")
+
+        assertEquals(listOf("user", "assistant", "line(1)", "answer"), items.shape())
+        assertEquals(ToolCallState.Ok, (items[2] as ToolLineItem).calls.single().state)
+        val answer = items[3] as AskAnswerItem
+        assertEquals("Which Jade?", answer.question)
+        assertEquals(listOf("Jade Martin"), answer.answers)
+        assertEquals("ask:a1:c1", answer.key)
+    }
+
+    
+    fun aMultipleAnswerKeepsEveryAnswer() {
+        val items = asked("""{"answers":["Terraform","Ansible"]}""")
+
+        assertEquals(listOf("Terraform", "Ansible"), (items.last() as AskAnswerItem).answers)
+    }
+
+    
+    fun aDismissedQuestionIsADismissedLineWithNoAnswerRow() {
+        val items = asked("""{"dismissed":true}""")
+
+        assertEquals(listOf("user", "assistant", "line(1)"), items.shape())
+        assertEquals(ToolCallState.Dismissed, (items.last() as ToolLineItem).calls.single().state)
+    }
+
+    
+    fun aQuestionLeftByAKilledProcessIsStoppedWithNoAnswerRow() {
+        val items = asked("Error: stopped by the user.", status = "stopped")
+
+        assertEquals(listOf("user", "assistant", "line(1)"), items.shape())
+        assertEquals(ToolCallState.Stopped, (items.last() as ToolLineItem).calls.single().state)
+    }
+
+    
+    fun aQuestionSplitsTheLineOfTheCallsAroundIt() {
+        val a1 = message("assistant", "", listOf(call("c1", "datetime"), call("c2", "ask_user", askArgs), call("c3", "device_info")), id = "a1")
+        val messages = listOf(
+            message("user", "q"), a1,
+            message("tool", "14:02", toolCallId = "c1"), message("tool", """{"answer":"Jade Leroy"}""", toolCallId = "c2"), message("tool", "82%", toolCallId = "c3"),
+        )
+
+        val items = build(messages, listOf(row("a1", "c1", "datetime"), row("a1", "c2", "ask_user"), row("a1", "c3", "device_info")))
+
+        assertEquals(listOf("user", "line(1)", "line(1)", "answer", "line(1)"), items.shape())
     }
 }

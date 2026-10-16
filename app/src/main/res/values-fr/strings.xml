@@ -678,6 +678,7 @@
     <string name="tool_name_device_info">Infos de l\'appareil</string>
     <string name="tool_name_search_chats">Recherche dans les chats</string>
     <string name="tool_name_memory">Mémoire</string>
+    <string name="tool_name_ask_user">Question</string>
     <string name="tool_name_clipboard">Presse-papiers</string>
     <string name="tool_name_torch">Lampe torche</string>
     <string name="tool_name_set_timer">Minuteur</string>
@@ -698,6 +699,7 @@
     <string name="tool_desc_device_info">Batterie, stockage, RAM et version d\'Android</string>
     <string name="tool_desc_search_chats">Retrouve des conversations passées sur ce téléphone</string>
     <string name="tool_desc_memory">Retient et oublie des faits partagés</string>
+    <string name="tool_desc_ask_user">Demande de choisir quand la requête est ambiguë</string>
     <string name="tool_desc_clipboard">Lit ou copie du texte dans le presse-papiers</string>
     <string name="tool_desc_torch">Allume ou éteint la lampe torche</string>
     <string name="tool_desc_set_timer">Ouvre Horloge avec un minuteur prêt</string>
@@ -721,6 +723,9 @@
     <string name="tool_run_device_info">Vérification du téléphone…</string>
     <string name="tool_done_search_chats">Conversations parcourues</string>
     <string name="tool_run_search_chats">Recherche dans les conversations…</string>
+    <string name="tool_done_ask_user">Question posée</string>
+    <string name="tool_run_ask_user">Question en cours…</string>
+    <string name="tool_dismissed_ask_user">Question ignorée</string>
     <string name="tool_done_memory">Mémoire utilisée</string>
     <string name="tool_run_memory">Utilisation de la mémoire…</string>
     <string name="tool_done_memory_remember">Fait retenu</string>
@@ -795,6 +800,7 @@
     <string name="tool_status_running">En cours</string>
     <string name="tool_status_timeout">Délai dépassé</string>
     <string name="tool_status_stopped">Arrêté</string>
+    <string name="tool_status_dismissed">Ignorée</string>
     <string name="tool_detail_inputs">Entrées</string>
     <string name="tool_detail_output">Sortie</string>
     <string name="tool_detail_no_inputs">Aucune entrée</string>
@@ -803,6 +809,8 @@
     <string name="tool_detail_show_json">Afficher le JSON</string>
     <string name="tool_detail_show_readable">Afficher en clair</string>
     <string name="tool_detail_waiting">En attente du résultat…</string>
+    <string name="tool_detail_waiting_answer">En attente de la réponse…</string>
+    <string name="tool_detail_dismissed">Question ignorée. Aucune réponse donnée.</string>
     <string name="tool_detail_opened">Ouvert dans %1$s</string>
     <string name="tool_detail_opened_set">Réglé dans %1$s</string>
     <string name="tool_detail_opened_waiting">À valider dans %1$s</string>
@@ -812,6 +820,10 @@
     <string name="tool_confirm_deny">Refuser</string>
     <string name="tool_confirm_allow">Autoriser</string>
     <string name="tool_confirm_allowed">Autorisé</string>
+    <string name="ask_dismiss">Ignorer la question</string>
+    <string name="ask_own_answer">Saisir une réponse libre…</string>
+    <string name="ask_send">Envoyer la réponse</string>
+    <string name="ask_submit">Valider</string>
     <string name="tool_confirm_denied">Refusé</string>
     <string name="tool_confirm_generic">Utiliser %1$s</string>
     <string name="tool_confirm_memory_forget">Supprimer un fait de la mémoire</string>

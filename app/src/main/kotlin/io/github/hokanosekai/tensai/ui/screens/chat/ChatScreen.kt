@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModel
+import io.github.hokanosekai.tensai.ui.components.AskAnswerBubble
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.SuggestionChips
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
@@ -135,6 +136,8 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState(initial = null)
     // What the list draws: the messages with the tool lines and confirmation cards between them (TEN-173).
     val items by viewModel.items.collectAsState(initial = null)
+    // The question the model waits on (TEN-187): its card takes the input pill's place while it is open.
+    val question by viewModel.pendingQuestion.collectAsState(initial = null)
     // The tool line whose calls the sheet shows, by key: the sheet reads its calls from the live items.
     var toolSheetKey by rememberSaveable { mutableStateOf<String?>(null) }
     val isEmpty = showsEmptyState(messages?.size, isDraft = conversationId == null && createdConversationId == null)
@@ -302,6 +305,7 @@ fun ChatScreen(
                                 )
                                 if (endsTheTurn) RegenerateButton(viewModel::regenerate)
                             }
+                            is AskAnswerItem -> AskAnswerBubble(item.question, item.answers)
                         }
                     }
                 }
@@ -335,46 +339,57 @@ fun ChatScreen(
 
                 val background = MaterialTheme.colorScheme.background
                 val pillMargin = 16.dp
-                InputPill(
-                    value = input,
-                    onValueChange = { input = it },
-                    onSend = {
-                        if (input.isNotBlank()) {
-                            viewModel.send(input)
-                            input = ""
-                            // The reply starts streaming right away, leaving the keyboard up would cover
-                            // most of it (TEN-56).
-                            keyboardController?.hide()
-                        }
-                    },
-                    onStop = viewModel::stop,
-                    isGenerating = isGenerating,
-                    canStop = canStop,
-                    modelLabel = modelChipLabel(modelInfo?.name, stringResource(R.string.chat_load_a_model)),
-                    onModelClick = { pickerOpen = true },
-                    // No model, nothing to send to: the chip is the way forward, it opens the picker.
-                    canSend = modelInfo != null,
-                    translucent = true,
-                    // Scrim: transparent at the pill's vertical center, fully background by its bottom
-                    // edge and solid below, so text fades out under the pill's lower half and never
-                    // slides crisply through the margin beneath it. Drawn behind the pill (and its ring).
-                    modifier = Modifier
-                        .drawBehind {
-                            val margin = pillMargin.toPx()
-                            val start = margin + (size.height - 2 * margin) / 2f
-                            val end = size.height - margin
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(Color.Transparent, background),
-                                    startY = start,
-                                    endY = end,
-                                ),
-                                topLeft = Offset(0f, start),
-                                size = Size(size.width, size.height - start),
-                            )
-                        }
-                        .padding(pillMargin),
-                )
+                // Scrim: transparent at the pill's vertical center, fully background by its bottom
+                // edge and solid below, so text fades out under the pill's lower half and never
+                // slides crisply through the margin beneath it. Drawn behind the pill (and its ring).
+                val pillModifier = Modifier
+                    .drawBehind {
+                        val margin = pillMargin.toPx()
+                        val start = margin + (size.height - 2 * margin) / 2f
+                        val end = size.height - margin
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, background),
+                                startY = start,
+                                endY = end,
+                            ),
+                            topLeft = Offset(0f, start),
+                            size = Size(size.width, size.height - start),
+                        )
+                    }
+                    .padding(pillMargin)
+                val asked = question
+                if (asked != null) {
+                    AskCard(
+                        question = asked,
+                        onAnswer = { answers -> viewModel.answerQuestion(asked.callId, answers) },
+                        onDismiss = { viewModel.dismissQuestion(asked.callId) },
+                        modifier = pillModifier,
+                    )
+                } else {
+                    InputPill(
+                        value = input,
+                        onValueChange = { input = it },
+                        onSend = {
+                            if (input.isNotBlank()) {
+                                viewModel.send(input)
+                                input = ""
+                                // The reply starts streaming right away, leaving the keyboard up would cover
+                                // most of it (TEN-56).
+                                keyboardController?.hide()
+                            }
+                        },
+                        onStop = viewModel::stop,
+                        isGenerating = isGenerating,
+                        canStop = canStop,
+                        modelLabel = modelChipLabel(modelInfo?.name, stringResource(R.string.chat_load_a_model)),
+                        onModelClick = { pickerOpen = true },
+                        // No model, nothing to send to: the chip is the way forward, it opens the picker.
+                        canSend = modelInfo != null,
+                        translucent = true,
+                        modifier = pillModifier,
+                    )
+                }
             }
         }
     }

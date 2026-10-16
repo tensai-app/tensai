@@ -1,5 +1,8 @@
 package io.github.hokanosekai.tensai.agent
 
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+
 /**
  * What a tool needs before the model may call it (TEN-172). The user grants it by tier in Settings
  * (TEN-174), see [ToolRegistry].
@@ -67,6 +70,12 @@ interface Tool {
     fun requiresConfirmation(argsJson: String): Boolean = sendsOrDeletes
 
     /**
+     * The call waits for the user (`ask_user`): [AgentRuntime] puts no timeout on it, the tier's does not apply.
+     * Stop still cancels it.
+     */
+    val waitsForUser: Boolean get() = false
+
+    /**
      * Runs the tool, on [kotlinx.coroutines.Dispatchers.IO]. [argsJson] is a JSON object that passed the
      * `required` check. May throw: the runtime turns an exception into an error result for the model.
      *
@@ -76,4 +85,12 @@ interface Tool {
      * loop goes on, while the work finishes on its own thread and its result is discarded.
      */
     suspend fun execute(argsJson: String): ToolResult
+}
+
+/**
+ * The id of the call a tool is running for, in the coroutine context of [Tool.execute]: a tool that publishes
+ * something to the UI (`ask_user`) keys it by call, as [UiConfirmationGate] does.
+ */
+class ToolCallContext(val callId: String) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ToolCallContext>
 }

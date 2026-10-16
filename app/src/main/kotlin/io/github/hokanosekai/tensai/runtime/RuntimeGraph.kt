@@ -17,6 +17,8 @@ import io.github.hokanosekai.tensai.agent.SetTimerTool
 import io.github.hokanosekai.tensai.agent.Tool
 import io.github.hokanosekai.tensai.agent.AndroidDeviceInfoSource
 import io.github.hokanosekai.tensai.agent.AndroidTorchControl
+import io.github.hokanosekai.tensai.agent.AskUserGate
+import io.github.hokanosekai.tensai.agent.AskUserTool
 import io.github.hokanosekai.tensai.agent.ClipboardTool
 import io.github.hokanosekai.tensai.agent.DeviceInfoTool
 import io.github.hokanosekai.tensai.agent.MemoryTool
@@ -343,6 +345,9 @@ object RuntimeGraph {
     /** Asks the user before a call that sends or deletes (TEN-174): the chat draws its card, see [UiConfirmationGate]. */
     val confirmationGate: UiConfirmationGate by lazy { UiConfirmationGate() }
 
+    /** Where `ask_user` waits for the user (TEN-187): the chat swaps its input bar for the question, see [AskUserGate]. */
+    val askUserGate: AskUserGate by lazy { AskUserGate() }
+
     private fun phoneActionTools(): List<Tool> {
         val phone = AndroidPhoneActions(appContext) { AppForegroundTracker.isForeground.value }
         return listOf(
@@ -361,6 +366,7 @@ object RuntimeGraph {
                 ClipboardTool(AndroidClipboardAccess(appContext)),
                 TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
                 MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
+                AskUserTool(askUserGate),
             ) + phoneActionTools(),
         )
     }

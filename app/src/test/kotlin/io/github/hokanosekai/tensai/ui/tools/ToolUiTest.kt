@@ -26,7 +26,7 @@ class ToolUiTest {
     /** Every tool the app registers (RuntimeGraph.toolRegistry) has an entry, and so do the ones the next tickets add. */
     @Test
     fun everyRegisteredToolHasMetadata() {
-        val registered = listOf("datetime", "calculate", "device_info", "search_chats", "memory", "clipboard", "torch")
+        val registered = listOf("datetime", "calculate", "device_info", "search_chats", "memory", "ask_user", "clipboard", "torch")
         val planned = listOf(
             "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "open_app", "open_url",
             "media_control", "web_search", "web_fetch", "weather", "wikipedia",
@@ -136,6 +136,51 @@ class ToolUiTest {
         val summary = toolLineSummary(listOf(call("datetime"), call("torch", ToolCallState.Stopped)))
 
         assertEquals(ToolLineSummary(UiText.of(R.string.tool_line_stopped), LineStatus.Stopped), summary)
+    }
+
+    // ---- ask_user (TEN-187)
+
+    private val askArgs = """{"question":"Which Jade?","options":["Jade Martin","Jade Leroy"],"multiple":false}"""
+
+    @Test
+    fun aQuestionReadsAskingThenAskedThenDismissed() {
+        val open = toolLineSummary(listOf(call("ask_user", ToolCallState.Running, askArgs, output = null)))
+        val answered = toolLineSummary(listOf(call("ask_user", args = askArgs)))
+        val dismissed = toolLineSummary(listOf(call("ask_user", ToolCallState.Dismissed, askArgs)))
+
+        assertEquals(ToolLineSummary(UiText.of(R.string.tool_run_ask_user), LineStatus.Running), open)
+        assertEquals(ToolLineSummary(UiText.of(R.string.tool_done_ask_user), LineStatus.Ok), answered)
+        // Untinted like any ok line, only the words differ.
+        assertEquals(ToolLineSummary(UiText.of(R.string.tool_dismissed_ask_user), LineStatus.Ok), dismissed)
+        assertEquals(UiText.of(R.string.tool_dismissed_ask_user), toolCallLabel(call("ask_user", ToolCallState.Dismissed, askArgs)))
+    }
+
+    @Test
+    fun theTimelineShowsTheQuestionNotTheRawArguments() {
+        assertEquals("Which Jade?", toolCallSummary(call("ask_user", args = askArgs)))
+    }
+
+    @Test
+    fun theDetailListsQuestionOptionsOnePerLineAndMultipleInMono() {
+        val inputs = ToolUiCatalog.detailInputs("ask_user", """{"question":"Pick (one)?","options":["Terraform","Ansible"],"multiple":true}""")
+
+        assertEquals(
+            listOf(
+                ToolInput("question", "Pick (one)?", mono = false),
+                ToolInput("options", "Terraform\nAnsible", mono = false),
+                ToolInput("multiple", "true", mono = true),
+            ),
+            inputs,
+        )
+    }
+
+    @Test
+    fun theMetadataOfAskUserIsInTheLocalListWithItsDescription() {
+        val meta = ToolUiCatalog.meta("ask_user")!!
+
+        assertEquals(R.string.tool_name_ask_user, meta.name)
+        assertEquals(R.string.tool_desc_ask_user, meta.description)
+        assertEquals(R.string.tool_dismissed_ask_user, meta.dismissed)
     }
 
     @Test

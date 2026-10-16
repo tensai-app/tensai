@@ -765,6 +765,7 @@
     <string name="tool_name_device_info">Device info</string>
     <string name="tool_name_search_chats">Search chats</string>
     <string name="tool_name_memory">Memory</string>
+    <string name="tool_name_ask_user">Ask you</string>
     <string name="tool_name_clipboard">Clipboard</string>
     <string name="tool_name_torch">Torch</string>
     <string name="tool_name_set_timer">Set timer</string>
@@ -785,6 +786,7 @@
     <string name="tool_desc_device_info">Battery, storage, RAM and Android version</string>
     <string name="tool_desc_search_chats">Finds past conversations on this phone</string>
     <string name="tool_desc_memory">Remembers and forgets facts you share</string>
+    <string name="tool_desc_ask_user">Asks you to pick when your request is ambiguous</string>
     <string name="tool_desc_clipboard">Reads or copies text to the clipboard</string>
     <string name="tool_desc_torch">Turns the flashlight on or off</string>
     <string name="tool_desc_set_timer">Opens Clock with a timer ready</string>
@@ -808,6 +810,9 @@
     <string name="tool_run_device_info">Checking the phone…</string>
     <string name="tool_done_search_chats">Searched your chats</string>
     <string name="tool_run_search_chats">Searching your chats…</string>
+    <string name="tool_done_ask_user">Asked a question</string>
+    <string name="tool_run_ask_user">Asking you…</string>
+    <string name="tool_dismissed_ask_user">Question dismissed</string>
     <string name="tool_done_memory">Used memory</string>
     <string name="tool_run_memory">Using memory…</string>
     <string name="tool_done_memory_remember">Remembered a fact</string>
@@ -881,6 +886,7 @@
     <string name="tool_status_running">Running</string>
     <string name="tool_status_timeout">Timed out</string>
     <string name="tool_status_stopped">Stopped</string>
+    <string name="tool_status_dismissed">Dismissed</string>
     <string name="tool_detail_inputs">Inputs</string>
     <string name="tool_detail_output">Output</string>
     <string name="tool_detail_no_inputs">No inputs</string>
@@ -889,6 +895,8 @@
     <string name="tool_detail_show_json">Show JSON</string>
     <string name="tool_detail_show_readable">Show readable</string>
     <string name="tool_detail_waiting">Waiting for the result…</string>
+    <string name="tool_detail_waiting_answer">Waiting for your answer…</string>
+    <string name="tool_detail_dismissed">Dismissed. No answer given.</string>
     <string name="tool_detail_opened">Opened in %1$s</string>
     <string name="tool_detail_opened_set">Set in %1$s</string>
     <string name="tool_detail_opened_waiting">Waiting for you in %1$s</string>
@@ -898,6 +906,10 @@
     <string name="tool_confirm_deny">Deny</string>
     <string name="tool_confirm_allow">Allow</string>
     <string name="tool_confirm_allowed">Allowed</string>
+    <string name="ask_dismiss">Dismiss question</string>
+    <string name="ask_own_answer">Type your own answer…</string>
+    <string name="ask_send">Send answer</string>
+    <string name="ask_submit">Submit</string>
     <string name="tool_confirm_denied">Denied</string>
     <string name="tool_confirm_generic">Use %1$s</string>
     <string name="tool_confirm_memory_forget">Delete a fact from memory</string>

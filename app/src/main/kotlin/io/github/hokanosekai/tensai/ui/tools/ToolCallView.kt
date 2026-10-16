@@ -19,10 +19,14 @@ object ToolArgsView {
         }
         val out = LinkedHashMap<String, String>()
         for (key in obj.keys()) {
-            if (!obj.isNull(key)) out[key] = obj.get(key).toString()
+            if (!obj.isNull(key)) out[key] = text(obj.get(key))
         }
         return out
     }
+
+    /** An array of strings reads one item per line (the options of `ask_user`), anything else as JSON writes it. */
+    private fun text(value: Any): String =
+        if (value is JSONArray) (0 until value.length()).joinToString("\n") { value.get(it).toString() } else value.toString()
 
     fun inputs(argsJson: String): List<ToolInput> =
         values(argsJson).map { (key, value) -> ToolInput(key, value, isCodeLike(value)) }

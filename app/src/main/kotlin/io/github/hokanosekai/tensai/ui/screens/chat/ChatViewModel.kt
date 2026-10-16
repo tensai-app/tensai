@@ -4,6 +4,8 @@ import io.github.hokanosekai.tensai.agent.AgentEvent
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.ReplyGenerator
 import io.github.hokanosekai.tensai.agent.ToolCallOutcome
+import io.github.hokanosekai.tensai.agent.AskUserGate
+import io.github.hokanosekai.tensai.agent.PendingQuestion
 import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
@@ -49,6 +51,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -350,6 +353,7 @@ class ChatViewModel(
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
     private val agentRuntime: AgentRuntime = RuntimeGraph.agentRuntime,
     private val confirmationGate: UiConfirmationGate = RuntimeGraph.confirmationGate,
+    private val askUserGate: AskUserGate = RuntimeGraph.askUserGate,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -407,6 +411,23 @@ class ChatViewModel(
 
     /** The user's answer to the confirmation card of [callId]. The turn goes on with it. */
     fun answerConfirmation(callId: String, allow: Boolean) = confirmationGate.answer(callId, allow)
+
+    /**
+     * The question of this chat's running turn the model is waiting on (TEN-187), `null` when there is none: the screen
+     * swaps the input bar for its card. At most one, a turn runs its calls one after the other.
+     */
+    val pendingQuestion: Flow<PendingQuestion?> = askUserGate.pending.map { pending -> pending.values.firstOrNull { it.callId in turnCallIds } }
+        .distinctUntilChanged()
+
+    /** The user's answer to [callId]'s question: the chosen options, then the typed text if any. The turn goes on with it. */
+    fun answerQuestion(callId: String, answers: List<String>) = askUserGate.answer(callId, answers)
+
+    /**
+     * The user closed the question of [callId] (the X): the model is told so, the turn goes on.
+     * While a question is open the card replaces the input pill, so Stop is out of reach: the X is the way out, the model
+     * goes on without an answer and the pill (with its Stop) is back as soon as the question closes.
+     */
+    fun dismissQuestion(callId: String) = askUserGate.dismiss(callId)
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
@@ -644,10 +665,14 @@ class ChatViewModel(
      *
      * One thing is answered for the user: a confirmation card still waiting (TEN-174) is denied, nobody is left
      * to tap it and the turn would hang on it. The model is told the action was refused.
+     * Same for a question (TEN-187): it is dismissed, the model is told the user gave no answer.
      */
     fun leave() {
         warmUpJob?.cancel()
-        if (_agentRunning.value) confirmationGate.deny(turnCallIds)
+        if (_agentRunning.value) {
+            confirmationGate.deny(turnCallIds)
+            askUserGate.dismiss(turnCallIds)
+        }
     }
 
     /**
