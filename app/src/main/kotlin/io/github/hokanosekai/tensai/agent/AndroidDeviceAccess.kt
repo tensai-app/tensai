@@ -1,19 +1,25 @@
 package io.github.hokanosekai.tensai.agent
 
 import android.app.ActivityManager
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.StatFs
+import android.view.KeyEvent
+import io.github.hokanosekai.tensai.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
@@ -132,5 +138,94 @@ class AndroidTorchControl(
         } catch (e: CameraAccessException) {
             throw IllegalStateException("the flashlight is in use by another app, try again later")
         }
+    }
+}
+
+/**
+ * The phone actions on a real device (TEN-177): intents started from the application context with
+ * `FLAG_ACTIVITY_NEW_TASK`, so they work from the chat screen. Needs the `<queries>` of the manifest to see
+ * which app would answer.
+ *
+ * From the background Android 10+ drops the start without an error, so the tools check [inForeground] first.
+ */
+class AndroidPhoneActions(
+    context: Context,
+    private val isForeground: () -> Boolean,
+) : PhoneActions {
+    private val app = context.applicationContext
+
+    override val inForeground: Boolean get() = isForeground()
+
+    private fun intent(spec: IntentSpec): Intent = Intent(spec.action).apply {
+        val uri = if (spec.scheme != null) Uri.fromParts(spec.scheme, spec.schemeSpecificPart.orEmpty(), null) else spec.data?.let(Uri::parse)
+        when {
+            uri != null && spec.mimeType != null -> setDataAndType(uri, spec.mimeType)
+            uri != null -> data = uri
+            spec.mimeType != null -> type = spec.mimeType
+        }
+        spec.extras.forEach { (key, value) ->
+            when (value) {
+                is String -> putExtra(key, value)
+                is Int -> putExtra(key, value)
+                is Long -> putExtra(key, value)
+                is Boolean -> putExtra(key, value)
+                is List<*> -> if (value.all { it is Int }) {
+                    putIntegerArrayListExtra(key, ArrayList(value.filterIsInstance<Int>()))
+                } else {
+                    putExtra(key, value.filterIsInstance<String>().toTypedArray())
+                }
+            }
+        }
+        spec.categories.forEach(::addCategory)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    /** The default handler's label; "android" is the system resolver (several apps, none chosen), named as such. */
+    override fun handlerLabel(spec: IntentSpec): String? {
+        val pm = app.packageManager
+        val info = pm.resolveActivity(intent(spec), PackageManager.MATCH_DEFAULT_ONLY) ?: return null
+        if (info.activityInfo.packageName == "android") return app.getString(R.string.tool_app_picker)
+        return info.loadLabel(pm).toString()
+    }
+
+    override fun start(spec: IntentSpec) {
+        try {
+            app.startActivity(intent(spec))
+        } catch (e: ActivityNotFoundException) {
+            throw NoHandlerException()
+        }
+    }
+
+    override fun launchableApps(): List<InstalledApp> {
+        val pm = app.packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return pm.queryIntentActivities(launcher, 0).map {
+            InstalledApp(it.loadLabel(pm).toString(), it.activityInfo.packageName)
+        }
+    }
+
+    override fun launchApp(packageName: String) {
+        val launch = app.packageManager.getLaunchIntentForPackage(packageName) ?: throw NoHandlerException()
+        try {
+            app.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            throw NoHandlerException()
+        }
+    }
+
+    override val isMusicActive: Boolean get() = app.getSystemService(AudioManager::class.java).isMusicActive
+
+    /** The key goes to the active media session, down then up: what a headset button does. No permission. */
+    override fun sendMediaKey(key: MediaKey) {
+        val code = when (key) {
+            MediaKey.Play -> KeyEvent.KEYCODE_MEDIA_PLAY
+            MediaKey.Pause -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            MediaKey.PlayPause -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            MediaKey.Next -> KeyEvent.KEYCODE_MEDIA_NEXT
+            MediaKey.Previous -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+        }
+        val audio = app.getSystemService(AudioManager::class.java)
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
     }
 }

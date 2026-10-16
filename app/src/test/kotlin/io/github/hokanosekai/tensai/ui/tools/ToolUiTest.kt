@@ -198,6 +198,7 @@ class ToolUiTest {
     @Test
     fun anOpenedAppReadsAsAnApp() {
         assertEquals(ReadableOutput.AppOpened("Clock"), readableOutput("""{"opened":"Clock"}""", ToolCallState.Ok))
+        assertEquals(ReadableOutput.AppOpened("Clock", set = true), readableOutput("""{"opened":"Clock","status":"set, shown in Clock"}""", ToolCallState.Ok))
     }
 
     @Test

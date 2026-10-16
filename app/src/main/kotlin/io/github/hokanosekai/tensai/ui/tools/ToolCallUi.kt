@@ -73,7 +73,7 @@ fun toolLineSummary(calls: List<ToolCallUi>): ToolLineSummary {
         return ToolLineSummary(UiText.of(R.string.tool_line_failed, ToolUiCatalog.name(it.tool)), LineStatus.Error)
     }
     calls.firstOrNull { it.state == ToolCallState.Refused }?.let {
-        return ToolLineSummary(UiText.of(R.string.tool_line_refused, ToolUiCatalog.name(it.tool)), LineStatus.Refused)
+        return ToolLineSummary(ToolUiCatalog.refusedLabel(it.tool), LineStatus.Refused)
     }
     if (calls.any { it.state == ToolCallState.Stopped }) {
         return ToolLineSummary(UiText.of(R.string.tool_line_stopped), LineStatus.Stopped)
@@ -91,7 +91,7 @@ fun toolLineSummary(calls: List<ToolCallUi>): ToolLineSummary {
 fun toolCallLabel(call: ToolCallUi): UiText = when {
     call.state == ToolCallState.Running -> ToolUiCatalog.runningLabel(call.tool, call.argsJson)
     call.state.failed -> UiText.of(R.string.tool_line_failed, ToolUiCatalog.name(call.tool))
-    call.state == ToolCallState.Refused -> UiText.of(R.string.tool_line_refused, ToolUiCatalog.name(call.tool))
+    call.state == ToolCallState.Refused -> ToolUiCatalog.refusedLabel(call.tool)
     call.state == ToolCallState.Stopped -> UiText.of(R.string.tool_line_stopped)
     else -> ToolUiCatalog.doneLabel(call.tool, call.argsJson)
 }

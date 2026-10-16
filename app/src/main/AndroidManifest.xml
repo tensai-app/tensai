@@ -13,6 +13,48 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- TEN-177: set_alarm and set_timer. A normal permission (granted at install, no prompt) that lets the
+         app hand an alarm or timer to the Clock app. Nothing else is read or written. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
+    <!-- TEN-177: package visibility (Android 11+) for the phone actions. Each entry is the intent a tool
+         starts, so tensai sees which app would answer and names it ("Opened in Clock"); the launcher entry
+         lists the apps open_app can start. Narrower than QUERY_ALL_PACKAGES, which is not requested. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.INSERT" />
+            <data android:mimeType="vnd.android.cursor.dir/event" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="sms" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <!-- TEN-144: backup stays on (default), minus the encrypted Hugging Face token file. Its Keystore
          key is not backed up, so a restored token would be unreadable; it must not travel at all. -->
     <application

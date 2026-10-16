@@ -40,14 +40,13 @@ import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
-import io.github.hokanosekai.tensai.ui.tools.ToolArgsView
 import io.github.hokanosekai.tensai.ui.tools.ToolUiCatalog
 import io.github.hokanosekai.tensai.ui.tools.resolve
 
 /**
  * The inline "tensai wants to ..." card of a call that sends or deletes (TEN-174). Pending, it names the
  * action, lists the arguments and asks Deny / Allow; answered, it folds into one row, "Allowed" or "Denied".
- * Phone intents never show it: the target app confirms.
+ * Phone intents never show it (the target app confirms), except `open_url`: the browser acts on open.
  *
  * @param onAnswer `true` for Allow, `false` for Deny.
  */
@@ -83,7 +82,7 @@ fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifie
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Column(modifier = Modifier.padding(top = 10.dp)) {
-                    for (input in ToolArgsView.inputs(item.call.argsJson)) {
+                    for (input in ToolUiCatalog.confirmInputs(item.call.tool, item.call.argsJson)) {
                         HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
                         Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 8.dp)) {
                             Text(
@@ -98,6 +97,7 @@ fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifie
                             Text(
                                 text = input.value,
                                 fontSize = 14.sp,
+                                fontFamily = if (input.mono) TensaiMono else null,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 3,
                                 overflow = TextOverflow.Ellipsis,

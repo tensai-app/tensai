@@ -36,6 +36,7 @@ class ToolActions(@StringRes val done: Int, @StringRes val running: Int)
  * @param variantArg an argument whose value picks a more precise label (`memory` has an `action`), with the
  *   labels in [variants] by value. A value with no entry gets [actions].
  * @param confirmLabel the "tensai wants to ..." line of the confirmation card, built from the call's arguments.
+ * @param refused the "Timer refused" line of a phone action no app handled, [ToolUiCatalog.refusedLabel] falls back to "<name> refused".
  */
 class ToolUiMeta(
     val id: String,
@@ -46,6 +47,7 @@ class ToolUiMeta(
     val variantArg: String? = null,
     val variants: Map<String, ToolActions> = emptyMap(),
     val confirmLabel: ((Map<String, String>) -> UiText)? = null,
+    @StringRes val refused: Int? = null,
 )
 
 /**
@@ -92,19 +94,26 @@ object ToolUiCatalog {
                 "off" to ToolActions(R.string.tool_done_torch_off, R.string.tool_run_torch_off),
             )),
         ToolUiMeta("set_timer", Icons.Rounded.Timer, R.string.tool_name_set_timer, R.string.tool_desc_set_timer,
-            ToolActions(R.string.tool_done_set_timer, R.string.tool_run_set_timer)),
+            ToolActions(R.string.tool_done_set_timer, R.string.tool_run_set_timer),
+            refused = R.string.tool_refused_timer),
         ToolUiMeta("set_alarm", Icons.Rounded.Alarm, R.string.tool_name_set_alarm, R.string.tool_desc_set_alarm,
-            ToolActions(R.string.tool_done_set_alarm, R.string.tool_run_set_alarm)),
+            ToolActions(R.string.tool_done_set_alarm, R.string.tool_run_set_alarm),
+            refused = R.string.tool_refused_alarm),
         ToolUiMeta("create_event", Icons.Rounded.Event, R.string.tool_name_create_event, R.string.tool_desc_create_event,
-            ToolActions(R.string.tool_done_create_event, R.string.tool_run_create_event)),
+            ToolActions(R.string.tool_done_create_event, R.string.tool_run_create_event),
+            refused = R.string.tool_refused_event),
         ToolUiMeta("draft_sms", Icons.Rounded.Sms, R.string.tool_name_draft_sms, R.string.tool_desc_draft_sms,
-            ToolActions(R.string.tool_done_draft_sms, R.string.tool_run_draft_sms)),
+            ToolActions(R.string.tool_done_draft_sms, R.string.tool_run_draft_sms),
+            refused = R.string.tool_refused_sms),
         ToolUiMeta("draft_email", Icons.Rounded.Mail, R.string.tool_name_draft_email, R.string.tool_desc_draft_email,
-            ToolActions(R.string.tool_done_draft_email, R.string.tool_run_draft_email)),
+            ToolActions(R.string.tool_done_draft_email, R.string.tool_run_draft_email),
+            refused = R.string.tool_refused_email),
         ToolUiMeta("open_app", Icons.Rounded.Apps, R.string.tool_name_open_app, R.string.tool_desc_open_app,
             ToolActions(R.string.tool_done_open_app, R.string.tool_run_open_app)),
         ToolUiMeta("open_url", Icons.Rounded.OpenInNew, R.string.tool_name_open_url, R.string.tool_desc_open_url,
-            ToolActions(R.string.tool_done_open_url, R.string.tool_run_open_url)),
+            ToolActions(R.string.tool_done_open_url, R.string.tool_run_open_url),
+            refused = R.string.tool_refused_url,
+            confirmLabel = { UiText.of(R.string.tool_confirm_open_url) }),
         ToolUiMeta("media_control", Icons.Rounded.PlayArrow, R.string.tool_name_media_control, R.string.tool_desc_media_control,
             ToolActions(R.string.tool_done_media_control, R.string.tool_run_media_control)),
         ToolUiMeta("web_search", Icons.Rounded.TravelExplore, R.string.tool_name_web_search, R.string.tool_desc_web_search,
@@ -145,9 +154,24 @@ object ToolUiCatalog {
         return UiText.of(actions(meta, argsJson).running)
     }
 
+    /** "Timer refused": a call that was refused, by the user or because no app handled it. */
+    fun refusedLabel(tool: String): UiText =
+        byId[tool]?.refused?.let { UiText.of(it) } ?: UiText.of(R.string.tool_line_refused, name(tool))
+
     /** The "tensai wants to ..." line of the confirmation card. */
     fun confirmLabel(tool: String, argsJson: String): UiText =
         byId[tool]?.confirmLabel?.invoke(ToolArgsView.values(argsJson)) ?: UiText.of(R.string.tool_confirm_generic, name(tool))
+
+    /**
+     * The rows of the confirmation card. The arguments as they are, except `open_url`: the host first, in the mono
+     * face, because the host is what the user decides on, then the whole URL.
+     */
+    fun confirmInputs(tool: String, argsJson: String): List<ToolInput> {
+        val url = ToolArgsView.values(argsJson)["url"]
+        val host = if (tool == "open_url" && url != null) runCatching { java.net.URI(url.trim()).host }.getOrNull() else null
+        if (host == null) return ToolArgsView.inputs(argsJson)
+        return listOf(ToolInput("host", host, mono = true), ToolInput("url", url!!, mono = false))
+    }
 
     private fun actions(meta: ToolUiMeta, argsJson: String): ToolActions {
         val value = meta.variantArg?.let { ToolArgsView.values(argsJson)[it] }

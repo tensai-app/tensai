@@ -14,7 +14,7 @@ enum class ToolCallStatus {
     /** Unknown tool, bad arguments, an exception, a call over the per-turn limit, or an error result of the tool. */
     Error,
 
-    /** The [ConfirmationGate] said no. */
+    /** The [ConfirmationGate] said no, or a phone action found no app to open ([ToolResult.refused]). */
     Refused,
 
     /** The tool ran past its tier's timeout and was cancelled. */

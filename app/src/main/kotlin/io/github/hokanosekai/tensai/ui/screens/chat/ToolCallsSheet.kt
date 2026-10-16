@@ -140,7 +140,15 @@ private fun Header(title: String, detail: ToolCallUi?, onLeading: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     StatusDot(detail.state, describe = false)
-                    Text(text = statusText(detail.state), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // A phone action that opened its app reads as where it went ("Opened in Clock"), as in the design.
+                    val opened = detail.output
+                        ?.takeIf { detail.state == ToolCallState.Ok }
+                        ?.let { readableOutput(it, detail.state) as? ReadableOutput.AppOpened }
+                    Text(
+                        text = opened?.let { stringResource(R.string.tool_detail_opened, it.app) } ?: statusText(detail.state),
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     detail.durationMs?.let {
                         Text(text = "·", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
@@ -435,12 +443,19 @@ private fun ReadableBlock(output: ReadableOutput, tool: String) {
                 ) {
                     Icon(ToolUiCatalog.icon(tool), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 }
-                Text(
-                    text = stringResource(R.string.tool_detail_opened, output.app),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Column {
+                    Text(
+                        text = stringResource(R.string.tool_detail_opened, output.app),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = stringResource(if (output.set) R.string.tool_detail_opened_set else R.string.tool_detail_opened_waiting, output.app),
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         is ReadableOutput.Error -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.tensaiTints.error12) {

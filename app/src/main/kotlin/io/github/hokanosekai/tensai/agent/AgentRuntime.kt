@@ -241,6 +241,7 @@ class AgentRuntime(
             val took = clock() - ranFrom
             when {
                 result == null -> outcome(ToolCallStatus.Timeout, "Error: '${tool.name}' timed out after ${timeoutMs(tool) / 1000} s.", took)
+                result.refused -> outcome(ToolCallStatus.Refused, result.text, took)
                 result.isError -> outcome(ToolCallStatus.Error, result.text, took, result.destination)
                 else -> outcome(ToolCallStatus.Ok, result.text, took, result.destination)
             }

@@ -767,6 +767,12 @@
     <string name="tool_run_generic">Utilisation de %1$s…</string>
     <string name="tool_line_failed">Échec : %1$s</string>
     <string name="tool_line_refused">Refus : %1$s</string>
+    <string name="tool_refused_timer">Minuteur refusé</string>
+    <string name="tool_refused_alarm">Alarme refusée</string>
+    <string name="tool_refused_event">Événement refusé</string>
+    <string name="tool_refused_sms">SMS refusé</string>
+    <string name="tool_refused_email">E-mail refusé</string>
+    <string name="tool_refused_url">Lien refusé</string>
     <string name="tool_line_stopped">Arrêté</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>
     <plurals name="tool_line_used_tools">
@@ -792,6 +798,9 @@
     <string name="tool_detail_show_readable">Afficher en clair</string>
     <string name="tool_detail_waiting">En attente du résultat…</string>
     <string name="tool_detail_opened">Ouvert dans %1$s</string>
+    <string name="tool_detail_opened_set">Réglé dans %1$s</string>
+    <string name="tool_detail_opened_waiting">À valider dans %1$s</string>
+    <string name="tool_app_picker">le sélecteur d\'apps</string>
 
     <string name="tool_confirm_eyebrow">tensai veut</string>
     <string name="tool_confirm_deny">Refuser</string>
@@ -801,6 +810,7 @@
     <string name="tool_confirm_generic">Utiliser %1$s</string>
     <string name="tool_confirm_memory_forget">Supprimer un fait de la mémoire</string>
     <string name="tool_confirm_memory_forget_id">Supprimer le fait %1$s de la mémoire</string>
+    <string name="tool_confirm_open_url">Ouvrir un lien</string>
 
     <string name="chat_settings_section_tools">Outils</string>
     <string name="chat_settings_tools_title">Outils</string>

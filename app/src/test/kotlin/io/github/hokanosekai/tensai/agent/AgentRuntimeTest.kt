@@ -417,6 +417,19 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun aRefusedResultIsStoredAsRefusedAndTheModelReadsWhy() = runBlocking {
+        val tool = FakeTool(name = "set_timer", tier = ToolTier.PhoneAction, body = { ToolResult.refused("no app on this phone handles timers") })
+        val gen = ScriptedGenerator(reply(calls = listOf(call("t", name = "set_timer"))), reply("ok"))
+
+        val events = runtime(tool).run(userTurn, gen).toList()
+
+        val outcome = events.outcomes().single()
+        assertEquals(ToolCallStatus.Refused, outcome.status)
+        assertEquals("no app on this phone handles timers", outcome.output)
+        assertTrue(gen.requests[1].messages.last().content.contains("handles timers"))
+    }
+
+    @Test
     fun anApprovedConfirmationRunsTheTool() = runBlocking {
         val tool = FakeTool(name = "send", sendsOrDeletes = true)
         val gen = ScriptedGenerator(reply(calls = listOf(call("s", name = "send"))), reply("sent"))

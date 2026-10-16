@@ -26,16 +26,21 @@ enum class ToolTier(val timeoutMs: Long) {
  *
  * @param text the result (plain text or JSON) or, when [isError], what went wrong, written for the model.
  * @param destination for a [ToolTier.Network] tool, where the request went ("DuckDuckGo"), shown on the call.
+ * @param refused an error that is a "no" rather than a failure: no app on the phone can do what the tool opened
+ *   an intent for. Stored as [ToolCallStatus.Refused] and shown as a refusal. Implies [isError].
  */
 data class ToolResult(
     val text: String,
     val isError: Boolean = false,
     val destination: String? = null,
+    val refused: Boolean = false,
 ) {
     companion object {
         fun ok(text: String, destination: String? = null) = ToolResult(text, destination = destination)
 
         fun error(message: String, destination: String? = null) = ToolResult(message, isError = true, destination = destination)
+
+        fun refused(message: String) = ToolResult(message, isError = true, refused = true)
     }
 }
 

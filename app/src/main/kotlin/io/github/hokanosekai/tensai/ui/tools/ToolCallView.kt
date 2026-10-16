@@ -41,8 +41,8 @@ sealed interface ReadableOutput {
     /** A list of `{title, url}`. */
     data class Results(val items: List<ResultItem>) : ReadableOutput
 
-    /** An intent that opened [app]: `{"opened": "Clock"}`. */
-    data class AppOpened(val app: String) : ReadableOutput
+    /** An intent that opened [app]: `{"opened": "Clock"}`. [set] when the app took the request as is (a timer or an alarm). */
+    data class AppOpened(val app: String, val set: Boolean = false) : ReadableOutput
 
     data class Error(val message: String) : ReadableOutput
 
@@ -65,7 +65,7 @@ fun readableOutput(output: String, state: ToolCallState): ReadableOutput {
     val json = parseJson(output) ?: return ReadableOutput.Text(output)
     when (json) {
         is JSONObject -> {
-            json.optString("opened").takeIf { json.has("opened") && it.isNotBlank() }?.let { return ReadableOutput.AppOpened(it) }
+            json.optString("opened").takeIf { json.has("opened") && it.isNotBlank() }?.let { return ReadableOutput.AppOpened(it, json.optString("status").startsWith("set")) }
             resultsOf(json.optJSONArray("results"))?.let { return it }
             val keys = json.keys().asSequence().toList()
             if (keys.isNotEmpty() && keys.none { json.get(it) is JSONObject || json.get(it) is JSONArray }) {

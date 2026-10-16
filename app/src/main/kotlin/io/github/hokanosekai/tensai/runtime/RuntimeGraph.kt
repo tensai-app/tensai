@@ -5,6 +5,16 @@ import android.net.ConnectivityManager
 import android.util.Log
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.AndroidClipboardAccess
+import io.github.hokanosekai.tensai.agent.AndroidPhoneActions
+import io.github.hokanosekai.tensai.agent.CreateEventTool
+import io.github.hokanosekai.tensai.agent.DraftEmailTool
+import io.github.hokanosekai.tensai.agent.DraftSmsTool
+import io.github.hokanosekai.tensai.agent.MediaControlTool
+import io.github.hokanosekai.tensai.agent.OpenAppTool
+import io.github.hokanosekai.tensai.agent.OpenUrlTool
+import io.github.hokanosekai.tensai.agent.SetAlarmTool
+import io.github.hokanosekai.tensai.agent.SetTimerTool
+import io.github.hokanosekai.tensai.agent.Tool
 import io.github.hokanosekai.tensai.agent.AndroidDeviceInfoSource
 import io.github.hokanosekai.tensai.agent.AndroidTorchControl
 import io.github.hokanosekai.tensai.agent.ClipboardTool
@@ -333,6 +343,14 @@ object RuntimeGraph {
     /** Asks the user before a call that sends or deletes (TEN-174): the chat draws its card, see [UiConfirmationGate]. */
     val confirmationGate: UiConfirmationGate by lazy { UiConfirmationGate() }
 
+    private fun phoneActionTools(): List<Tool> {
+        val phone = AndroidPhoneActions(appContext) { AppForegroundTracker.isForeground.value }
+        return listOf(
+            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone),
+            DraftEmailTool(phone), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
+        )
+    }
+
     /** The built-in tools, filtered by the tiers granted in Settings. Settings lists them per tier. */
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry.default(
@@ -343,7 +361,7 @@ object RuntimeGraph {
                 ClipboardTool(AndroidClipboardAccess(appContext)),
                 TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
                 MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
-            ),
+            ) + phoneActionTools(),
         )
     }
 
