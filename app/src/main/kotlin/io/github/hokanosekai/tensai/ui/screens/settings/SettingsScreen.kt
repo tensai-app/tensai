@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Percent
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.Construction
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.agent.DefaultTierGrants
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.AutoMemoryShare
@@ -102,6 +104,7 @@ import kotlinx.coroutines.launch
  * @param onNavigateToLicenses where the open-source licenses row goes.
  * @param onNavigateToDevice where the "This device" row goes.
  * @param onNavigateToMemory where the "Memory" row goes.
+ * @param onNavigateToTools where the "Tools" row goes (TEN-174).
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  */
@@ -111,10 +114,12 @@ fun SettingsScreen(
     onNavigateToLicenses: () -> Unit,
     onNavigateToDevice: () -> Unit,
     onNavigateToMemory: () -> Unit,
+    onNavigateToTools: () -> Unit,
     modifier: Modifier = Modifier,
     openTokenSheet: Boolean = false,
     onTokenSheetOpened: () -> Unit = {},
     viewModel: SettingsViewModel = remember { SettingsViewModel() },
+    toolsViewModel: ToolsViewModel = remember { ToolsViewModel() },
 ) {
     val theme by viewModel.themeMode.collectAsState(initial = ThemeMode.System)
     val language by viewModel.language.collectAsState(initial = AppLanguage.System)
@@ -128,6 +133,7 @@ fun SettingsScreen(
     val tokenMask by viewModel.tokenMask.collectAsState(initial = null)
     val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
     val memoryCount by viewModel.memoryCount.collectAsState(initial = 0)
+    val toolGroupsOn by toolsViewModel.groupsOn.collectAsState(initial = ToolGroup.countOn(DefaultTierGrants.granted()))
 
     val snackbarHostState = remember { SnackbarHostState() }
     val uiScope = rememberCoroutineScope()
@@ -295,6 +301,16 @@ fun SettingsScreen(
 
             SectionLabel(stringResource(R.string.settings_group_agent))
             SectionCard {
+                SettingsRow(
+                    icon = Icons.Rounded.Construction,
+                    title = stringResource(R.string.settings_tools_title),
+                    onClick = onNavigateToTools,
+                    trailing = {
+                        ValueText(stringResource(R.string.settings_tools_summary, toolGroupsOn, ToolGroup.entries.size))
+                        Chevron()
+                    },
+                )
+                RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Bookmark,
                     title = stringResource(R.string.memory_title),

@@ -26,7 +26,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,9 +69,11 @@ import io.github.hokanosekai.tensai.runtime.residentModel
 import io.github.hokanosekai.tensai.ui.components.InputPill
 import io.github.hokanosekai.tensai.ui.components.SuggestionChips
 import io.github.hokanosekai.tensai.ui.components.MessageBubble
+import io.github.hokanosekai.tensai.ui.components.ToolLine
 import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
 import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
+import io.github.hokanosekai.tensai.ui.tools.toolLineSummary
 
 /**
  * The chat screen for `chat/{conversationId}` (TEN-32) — replaces `ChatScreenPlaceholder`. Chrome
@@ -129,6 +133,10 @@ fun ChatScreen(
     }
 
     val messages by viewModel.messages.collectAsState(initial = null)
+    // What the list draws: the messages with the tool lines and confirmation cards between them (TEN-173).
+    val items by viewModel.items.collectAsState(initial = null)
+    // The tool line whose calls the sheet shows, by key: the sheet reads its calls from the live items.
+    var toolSheetKey by rememberSaveable { mutableStateOf<String?>(null) }
     val isEmpty = showsEmptyState(messages?.size, isDraft = conversationId == null && createdConversationId == null)
     LaunchedEffect(messages) { messages?.let { onEmptyChanged(it.isEmpty()) } }
     val error by viewModel.error.collectAsState()
@@ -147,6 +155,8 @@ fun ChatScreen(
     // open on placeholder values it would then commit back, see ChatSettingsSheet's KDoc.
     val sampling by viewModel.sampling.collectAsState(initial = null)
     val systemPrompt by viewModel.systemPrompt.collectAsState(initial = null)
+    val supportsTools by viewModel.currentModelSupportsTools.collectAsState(initial = null)
+    val toolsEnabled by viewModel.toolsEnabled.collectAsState(initial = null)
 
     var input by rememberSaveable { mutableStateOf("") }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -158,7 +168,8 @@ fun ChatScreen(
     // before Room has emitted the values the sheet seeds from (the tap would look dead, then the
     // sheet would pop up late).
     val settingsLoaded by rememberUpdatedState(
-        sampling != null && systemPrompt != null && enableThinking != null && supportsThinking != null,
+        sampling != null && systemPrompt != null && enableThinking != null && supportsThinking != null &&
+            supportsTools != null && toolsEnabled != null,
     )
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(settingsRequests, lifecycleOwner) {
@@ -204,9 +215,9 @@ fun ChatScreen(
 
     // Keyed on the overlay height too: a growing input (several lines) grows the bottom padding, and
     // a reader following the stream must stay glued to the end rather than be left above it.
-    LaunchedEffect(messages, followStream, overlayHeightPx) {
+    LaunchedEffect(items, followStream, overlayHeightPx) {
         if (!followStream) return@LaunchedEffect
-        val count = messages?.size ?: return@LaunchedEffect
+        val count = items?.size ?: return@LaunchedEffect
         if (count == 0) return@LaunchedEffect
         // Snap rather than animate: at streaming speed the next token arrives long before an
         // animation settles, and a perpetually restarting animation is what used to fight the
@@ -230,7 +241,7 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        val currentMessages = messages
+        val currentItems = items
         Box(modifier = Modifier.weight(1f)) {
             val overlayHeight = with(density) { overlayHeightPx.toDp() }
             // The greeting, subtitle and watermark fade out at the first message (TEN-169), and the list
@@ -245,11 +256,11 @@ fun ChatScreen(
                 ChatEmptyState(modifier = Modifier.alpha(emptyAlpha).padding(bottom = overlayHeight))
             }
             val listAlpha by animateFloatAsState(
-                if (currentMessages.isNullOrEmpty()) 0f else 1f,
+                if (currentItems.isNullOrEmpty()) 0f else 1f,
                 if (sawEmpty) fade else snap(),
                 label = "messages",
             )
-            if (currentMessages != null && currentMessages.isNotEmpty()) {
+            if (currentItems != null && currentItems.isNotEmpty()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().alpha(listAlpha),
@@ -261,21 +272,42 @@ fun ChatScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
-                    itemsIndexed(currentMessages, key = { _, message -> message.id }) { index, message ->
-                        val isLastAssistantReply = index == currentMessages.lastIndex && !message.isUser
-                        val isThinkingActive = isLastAssistantReply && isGenerating &&
-                            message.content.isEmpty() && !message.thinking.isNullOrEmpty()
-                        MessageBubble(
-                            message = message,
-                            isThinkingActive = isThinkingActive,
-                            onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
-                        )
+                    itemsIndexed(currentItems, key = { _, item -> item.key }) { index, item ->
+                        val endsTheTurn = index == currentItems.lastIndex && !isGenerating && !canStop
+                        when (item) {
+                            is MessageItem -> {
+                                val message = item.message
+                                val isLastAssistantReply = index == currentItems.lastIndex && !message.isUser
+                                val isThinkingActive = isLastAssistantReply && isGenerating &&
+                                    message.content.isEmpty() && !message.thinking.isNullOrEmpty()
+                                MessageBubble(
+                                    message = message,
+                                    isThinkingActive = isThinkingActive,
+                                    onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
+                                )
+                            }
+                            is ToolLineItem -> Column {
+                                ToolLine(
+                                    summary = toolLineSummary(item.calls),
+                                    onClick = { toolSheetKey = item.key },
+                                )
+                                // A turn that ends on a call (stopped during a tool) has no answer to hang Regenerate on.
+                                if (endsTheTurn) RegenerateButton(viewModel::regenerate)
+                            }
+                            is ConfirmationItem -> Column {
+                                ToolConfirmCard(
+                                    item = item,
+                                    onAnswer = { allow -> viewModel.answerConfirmation(item.call.id, allow) },
+                                )
+                                if (endsTheTurn) RegenerateButton(viewModel::regenerate)
+                            }
+                        }
                     }
                 }
             }
 
             JumpToBottomButton(
-                visible = !isAtBottom && !currentMessages.isNullOrEmpty(),
+                visible = !isAtBottom && !currentItems.isNullOrEmpty(),
                 // Re-arming the follow is the whole action: the effect above owns the scrolling,
                 // so the button never races it with a second one of its own.
                 onClick = { followStream = true },
@@ -364,6 +396,19 @@ fun ChatScreen(
         )
     }
 
+    val toolSheetLine = items?.firstOrNull { it is ToolLineItem && it.key == toolSheetKey } as? ToolLineItem
+    // The line is gone (the reply was regenerated or the chat deleted): nothing to show, and no stale key to come back to.
+    LaunchedEffect(items, toolSheetKey) {
+        if (items != null && toolSheetKey != null && toolSheetLine == null) toolSheetKey = null
+    }
+    if (toolSheetLine != null) {
+        ToolCallsSheet(
+            title = toolLineSummary(toolSheetLine.calls).label,
+            calls = toolSheetLine.calls,
+            onDismiss = { toolSheetKey = null },
+        )
+    }
+
     if (pickerOpen) {
         ModelPickerSheet(
             loadedModelId = modelInfo?.modelId,
@@ -392,14 +437,20 @@ fun ChatScreen(
     val currentSystemPrompt = systemPrompt
     val currentEnableThinking = enableThinking
     val currentSupportsThinking = supportsThinking
+    val currentSupportsTools = supportsTools
+    val currentToolsEnabled = toolsEnabled
     if (settingsOpen && currentSampling != null && currentSystemPrompt != null &&
-        currentEnableThinking != null && currentSupportsThinking != null
+        currentEnableThinking != null && currentSupportsThinking != null &&
+        currentSupportsTools != null && currentToolsEnabled != null
     ) {
         ChatSettingsSheet(
             config = currentSampling,
             systemPrompt = currentSystemPrompt,
             enableThinking = currentEnableThinking,
             supportsThinking = currentSupportsThinking,
+            supportsTools = currentSupportsTools,
+            toolsEnabled = currentToolsEnabled,
+            onToolsEnabledChange = viewModel::setToolsEnabled,
             contextSize = modelInfo?.nCtxEffective,
             onConfigChange = viewModel::setSampling,
             onSystemPromptChange = viewModel::setSystemPrompt,
@@ -500,5 +551,18 @@ private fun GenerationFailedBanner(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_generation_failed_dismiss)) }
             TextButton(onClick = onRetry) { Text(stringResource(R.string.chat_generation_failed_retry)) }
         }
+    }
+}
+
+/** The regenerate action alone, under a tool line or card that ends the conversation. Same look as the one in a reply's row. */
+@Composable
+private fun RegenerateButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(28.dp)) {
+        Icon(
+            imageVector = Icons.Default.Refresh,
+            contentDescription = stringResource(R.string.chat_regenerate),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }

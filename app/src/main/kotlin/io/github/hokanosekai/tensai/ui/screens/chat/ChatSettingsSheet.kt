@@ -202,6 +202,9 @@ internal fun SheetDragHandle() {
  *   any more is shown as is and never rewritten.
  * @param supportsThinking gates the thinking row, see [ChatViewModel.currentModelSupportsThinking]:
  *   the row stays visible but disabled, with a caption, when the model cannot think.
+ * @param supportsTools whether the loaded model's template takes tools, see [ChatViewModel.currentModelSupportsTools]:
+ *   the Tools row (TEN-173) is only there then. The sheet does not show the model's name, so the Tools badge is not either.
+ * @param toolsEnabled this conversation's Tools switch, committed on tap by [onToolsEnabledChange].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -216,6 +219,9 @@ fun ChatSettingsSheet(
     onEnableThinkingChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    supportsTools: Boolean = false,
+    toolsEnabled: Boolean = true,
+    onToolsEnabledChange: (Boolean) -> Unit = {},
 ) {
     TensaiBottomSheet(
         onDismissRequest = onDismiss,
@@ -404,6 +410,15 @@ fun ChatSettingsSheet(
                     }
                 }
 
+                // Only for a model whose template takes tools: the switch means nothing to another.
+                if (supportsTools) {
+                    Section(stringResource(R.string.chat_settings_section_tools)) {
+                        SheetCard {
+                            ToolsRow(checked = toolsEnabled, reducedMotion = reducedMotion, onCheckedChange = onToolsEnabledChange)
+                        }
+                    }
+                }
+
                 Section(stringResource(R.string.chat_settings_section_length)) {
                     MaxTokensChips(
                         selected = draft.maxTokens,
@@ -581,7 +596,7 @@ private fun ThinkingRow(checked: Boolean, enabled: Boolean, reducedMotion: Boole
 
 /** 52x32 switch from the kit. Purely visual: semantics live on the row that contains it. */
 @Composable
-private fun SwitchVisual(checked: Boolean, reducedMotion: Boolean) {
+internal fun SwitchVisual(checked: Boolean, reducedMotion: Boolean) {
     val spec = motionSpec<Dp>(reducedMotion)
     val thumbSize by animateDpAsState(if (checked) 24.dp else 16.dp, spec, label = "thumbSize")
     val thumbX by animateDpAsState(if (checked) 24.dp else 8.dp, spec, label = "thumbX")

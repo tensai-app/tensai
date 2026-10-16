@@ -4,11 +4,13 @@ import io.github.hokanosekai.tensai.agent.AgentEvent
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.ReplyGenerator
 import io.github.hokanosekai.tensai.agent.ToolCallOutcome
+import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter
 import io.github.hokanosekai.tensai.data.chat.SamplingJson
+import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -33,6 +35,7 @@ import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.runtime.residentModel
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -44,6 +47,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -72,6 +76,12 @@ internal fun worthWarmingUp(stats: DecodeStats): Boolean =
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
+
+/**
+ * The conversations with an agent turn running in this process, so a chat screen opened (or rebuilt) while the turn
+ * goes on still shows its calls as running rather than stopped. Process-wide for the reason [ActiveSessionTracker] is.
+ */
+private val runningAgentTurns = MutableStateFlow<Set<String>>(emptySet())
 
 /**
  * How an assistant reply's generation ended, as far as the *reader* is concerned — see
@@ -159,15 +169,19 @@ data class MessageStatsUi(
     val truncation: TruncationReason,
 )
 
-private fun MessageEntity.toUi(): ChatMessageUi? {
+internal fun MessageEntity.toUi(): ChatMessageUi? {
     val isUser = when (role) {
         "user" -> true
         "assistant" -> false
-        else -> return null // system/tool: nothing to render in V1, TEN-173 renders tool messages.
+        else -> return null // system/tool: tool messages are drawn as tool lines, see [buildChatItems].
     }
-    // The assistant message of a tool call with nothing said before it is a trace, not a reply.
-    if (role == "assistant" && content.isEmpty() && !toolCallsJson.isNullOrBlank()) return null
-    val stats = if (tokensGenerated != null && tokPerSec != null && ttftMs != null) {
+    // A thinking-off reply (Qwen3 `/no_think`) still carries an empty `<think>` pair: whitespace is no reasoning.
+    val shownThinking = thinking?.takeIf { it.isNotBlank() }
+    // The assistant message of a tool call with nothing said before it is a trace, not a reply: it shows only its
+    // thinking (as a reasoning block, no bubble) when it has some, and its calls are drawn by [buildChatItems].
+    if (role == "assistant" && content.isEmpty() && !toolCallsJson.isNullOrBlank() && shownThinking == null) return null
+    // No chip on a reply that made calls (nor on rows stored before that): it belongs to the answer.
+    val stats = if (tokensGenerated != null && tokPerSec != null && ttftMs != null && toolCallsJson.isNullOrBlank()) {
         val truncation = when (stopReason) {
             StopReason.ReasoningBudgetExhausted.name -> TruncationReason.Reasoning
             StopReason.ResponseBudgetExhausted.name, StopReason.TokenBudget.name -> TruncationReason.Response
@@ -187,7 +201,7 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
         id = id,
         isUser = isUser,
         content = content,
-        thinking = thinking,
+        thinking = shownThinking,
         stats = stats,
         // Read off the recorded reason, never inferred from what is missing. A row still streaming
         // has no stats and no reason either, so "absence means the user stopped it" would label
@@ -292,10 +306,11 @@ private data class ConversationSettings(
     val samplingJson: String? = null,
     val systemPrompt: String? = null,
     val enableThinking: Boolean = true,
+    val toolsEnabled: Boolean = true,
 )
 
 private fun ConversationEntity?.settings(): ConversationSettings =
-    if (this == null) ConversationSettings() else ConversationSettings(samplingJson, systemPrompt, enableThinking)
+    if (this == null) ConversationSettings() else ConversationSettings(samplingJson, systemPrompt, enableThinking, toolsEnabled)
 
 /**
  * Drives a single conversation's chat screen (TEN-32): streams [ChatRepository]'s persisted
@@ -328,6 +343,7 @@ class ChatViewModel(
     private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
     private val agentRuntime: AgentRuntime = RuntimeGraph.agentRuntime,
+    private val confirmationGate: UiConfirmationGate = RuntimeGraph.confirmationGate,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -349,10 +365,42 @@ class ChatViewModel(
         if (id == null) draft else chatRepository.observeConversation(id).map { it.settings() }
     }
 
-    /** This conversation's messages, oldest first, mapped for display (see [toUi]). Empty for a draft. */
-    val messages: Flow<List<ChatMessageUi>> = _conversationId.flatMapLatest { id ->
-        if (id == null) flowOf(emptyList()) else chatRepository.observeMessages(id)
-    }.map { list -> list.mapNotNull { it.toUi() } }
+    /** Tool calls of an assistant message, parsed once per version of its `toolCallsJson`: a rebuild of [items] runs per streamed token. */
+    private val parsedCalls = java.util.concurrent.ConcurrentHashMap<String, Pair<String, List<ToolCall>>>()
+
+    private fun callsOf(message: MessageEntity): List<ToolCall> {
+        val json = message.toolCallsJson.orEmpty()
+        parsedCalls[message.id]?.takeIf { it.first == json }?.let { return it.second }
+        return ToolCallsJson.decode(json).also { parsedCalls[message.id] = json to it }
+    }
+
+    /**
+     * What the list shows (TEN-173, TEN-174): the messages with the tool lines and confirmation cards of the
+     * agent's calls between them, see [buildChatItems]. Rebuilt from the stored rows as a turn writes them, so
+     * a chat looks the same running or reopened; only the live parts (a call still running, the card waiting
+     * for its answer) come from this process. Built off the main thread. Empty for a draft.
+     */
+    val items: Flow<List<ChatItem>> = _conversationId.flatMapLatest { id ->
+        if (id == null) {
+            flowOf(emptyList())
+        } else {
+            combine(
+                chatRepository.observeMessages(id),
+                chatRepository.observeToolCalls(id),
+                runningAgentTurns,
+                confirmationGate.pending,
+                confirmationGate.allowed,
+            ) { stored, calls, running, pending, allowed ->
+                buildChatItems(stored, calls, id in running, pending.keys, allowed, agentRuntime::requiresConfirmation, ::callsOf)
+            }.flowOn(Dispatchers.Default)
+        }
+    }
+
+    /** This conversation's messages, oldest first, mapped for display (see [toUi]): the message rows of [items], one subscription to the store. */
+    val messages: Flow<List<ChatMessageUi>> = items.map { list -> list.filterIsInstance<MessageItem>().map { it.message } }
+
+    /** The user's answer to the confirmation card of [callId]. The turn goes on with it. */
+    fun answerConfirmation(callId: String, allow: Boolean) = confirmationGate.answer(callId, allow)
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
@@ -369,6 +417,10 @@ class ChatViewModel(
     /** The running agent turn's stop signal, marked by [stop] so the reply it cuts is recorded as stopped. */
     @Volatile
     private var agentStopSignal: GenerationStopSignal? = null
+
+    /** The ids of the calls the running agent turn made, so [leave] denies the cards of this turn and no other. */
+    @Volatile
+    private var turnCallIds: Set<String> = emptySet()
 
     /**
      * Whether the stop button on *this* conversation's screen would stop a reply belonging to it
@@ -427,6 +479,14 @@ class ChatViewModel(
 
     /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
     val enableThinking: Flow<Boolean> = settings.map { it.enableThinking }
+
+    /** This conversation's persisted Tools switch, see [ConversationEntity.toolsEnabled]. On until the conversation row is read. */
+    val toolsEnabled: Flow<Boolean> = settings.map { it.toolsEnabled }
+
+    /** Flips this conversation's [ConversationEntity.toolsEnabled]: applies to the next [send]/[regenerate], like [setEnableThinking]. */
+    fun setToolsEnabled(enabled: Boolean) {
+        updateSettings({ it.copy(toolsEnabled = enabled) }) { id -> chatRepository.setToolsEnabled(id, enabled) }
+    }
 
     /** Flips this conversation's [ConversationEntity.enableThinking] — takes effect on the next [send]/[regenerate], not the one already streaming. */
     fun setEnableThinking(enabled: Boolean) {
@@ -497,6 +557,7 @@ class ChatViewModel(
                 samplingJson = settings.samplingJson,
                 systemPrompt = settings.systemPrompt,
                 enableThinking = settings.enableThinking,
+                toolsEnabled = settings.toolsEnabled,
             )
             _conversationId.value = id
             id
@@ -574,9 +635,13 @@ class ChatViewModel(
      * preparing for it stops and gives the CPU back. What it had already decoded stays in the
      * cache. Idempotent, and a no-op when nothing is warming up. Nothing else is torn down: a reply
      * still streaming must survive leaving the screen, see this class's KDoc.
+     *
+     * One thing is answered for the user: a confirmation card still waiting (TEN-174) is denied, nobody is left
+     * to tap it and the turn would hang on it. The model is told the action was refused.
      */
     fun leave() {
         warmUpJob?.cancel()
+        if (_agentRunning.value) confirmationGate.deny(turnCallIds)
     }
 
     /**
@@ -1250,7 +1315,7 @@ class ChatViewModel(
      * each step as it comes. A turn is several assistant messages: every [AgentEvent.ReplyStarted]
      * opens one (streamed and throttled as in [streamInto]), a reply that made calls keeps them in
      * its `toolCallsJson`, and each [AgentEvent.ToolCallFinished] adds the `tool` message and the audit
-     * row. Nothing is shown for them yet, [toUi] hides both until TEN-173.
+     * row. The list draws them as tool lines and confirmation cards, see [items].
      *
      * Stop ends the turn by cancellation, wherever it is, tool execution included (see [stop]). The
      * `finally` then closes what was cut: calls of the last reply that never finished get a `stopped`
@@ -1281,6 +1346,8 @@ class ChatViewModel(
 
         _generatingHere.value = true
         _agentRunning.value = true
+        runningAgentTurns.update { it + conversationId }
+        turnCallIds = emptySet()
         try {
             agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }).collect { event ->
                 when (event) {
@@ -1307,6 +1374,7 @@ class ChatViewModel(
                         if (event.calls.isNotEmpty()) {
                             callingReplyId = id
                             unanswered = event.calls
+                            turnCallIds = turnCallIds + event.calls.map { it.id }
                         }
                         // With calls (or calls dropped after the limit), the engine's own content is the one
                         // without the call markup.
@@ -1321,7 +1389,8 @@ class ChatViewModel(
                         // nothing coherent to close.
                         withContext(NonCancellable) {
                             if (event.calls.isNotEmpty() || hasPersistableContent(content, parser.thinking)) {
-                                chatRepository.updateAssistantMessage(id, content, parser.thinking, event.stats)
+                                // No stats on a reply that made calls: the chip belongs to the answer.
+                                chatRepository.updateAssistantMessage(id, content, parser.thinking, event.stats.takeIf { event.calls.isEmpty() })
                                 chatRepository.setToolCalls(id, event.calls)
                             } else {
                                 chatRepository.deleteMessage(id)
@@ -1341,6 +1410,7 @@ class ChatViewModel(
             }
         } finally {
             _agentRunning.value = false
+            runningAgentTurns.update { it - conversationId }
             _generatingHere.value = false
             agentStopSignal = null
             refreshContextUsage()

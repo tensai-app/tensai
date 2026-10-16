@@ -28,6 +28,9 @@ import io.github.hokanosekai.tensai.ui.screens.settings.DeviceScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.MemoryScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
+import io.github.hokanosekai.tensai.ui.screens.settings.ToolGroup
+import io.github.hokanosekai.tensai.ui.screens.settings.ToolGroupScreen
+import io.github.hokanosekai.tensai.ui.screens.settings.ToolsScreen
 
 /**
  * The app's destination graph. Chrome (drawer, top bar) is owned by [TensaiShell] — screens here
@@ -275,6 +278,7 @@ fun TensaiNavGraph(
                 onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
                 onNavigateToDevice = { navController.navigate(TensaiDestination.Device.route) },
                 onNavigateToMemory = { navController.navigate(TensaiDestination.Memory.route) },
+                onNavigateToTools = { navController.navigate(TensaiDestination.Tools.route) },
                 openTokenSheet = openTokenSheet,
                 onTokenSheetOpened = { openTokenSheet = false },
             )
@@ -287,6 +291,24 @@ fun TensaiNavGraph(
         composable(TensaiDestination.Memory.route) {
             MemoryScreen()
         }
+
+        composable(TensaiDestination.Tools.route) {
+            ToolsScreen(
+                onOpenGroup = { group ->
+                    navController.navigate(
+                        when (group) {
+                            ToolGroup.OnPhone -> TensaiDestination.ToolsOnPhone.route
+                            ToolGroup.PhoneActions -> TensaiDestination.ToolsPhoneActions.route
+                            ToolGroup.Internet -> TensaiDestination.ToolsInternet.route
+                        },
+                    )
+                },
+            )
+        }
+
+        composable(TensaiDestination.ToolsOnPhone.route) { ToolGroupScreen(ToolGroup.OnPhone) }
+        composable(TensaiDestination.ToolsPhoneActions.route) { ToolGroupScreen(ToolGroup.PhoneActions) }
+        composable(TensaiDestination.ToolsInternet.route) { ToolGroupScreen(ToolGroup.Internet) }
 
         composable(TensaiDestination.Licenses.route) {
             LicensesScreen()

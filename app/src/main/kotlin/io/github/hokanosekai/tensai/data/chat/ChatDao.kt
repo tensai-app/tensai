@@ -17,6 +17,12 @@ interface ChatDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
     fun observeMessages(conversationId: String): Flow<List<MessageEntity>>
 
+    @Query(
+        "SELECT * FROM tool_calls WHERE messageId IN (SELECT id FROM messages WHERE conversationId = :conversationId) " +
+            "ORDER BY startedAt ASC",
+    )
+    fun observeToolCalls(conversationId: String): Flow<List<ToolCallEntity>>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getConversation(id: String): ConversationEntity?
 

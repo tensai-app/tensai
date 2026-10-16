@@ -32,14 +32,14 @@ fun interface ReplyGenerator {
 
 /**
  * Asked before a call that [Tool.requiresConfirmation] runs. The chat's "tensai wants to ..." card is
- * TEN-174's implementation; the wait is not counted against the tool's timeout.
+ * [UiConfirmationGate] (TEN-174); the wait is not counted against the tool's timeout.
  */
 fun interface ConfirmationGate {
     /** `true` to run [call], `false` to refuse: the model is told so. */
     suspend fun confirm(call: ToolCall, tool: Tool): Boolean
 
     companion object {
-        /** Approves everything, until TEN-174 provides the real one. */
+        /** Approves everything: for tests and callers with no UI to ask. */
         val AutoApprove = ConfirmationGate { _, _ -> true }
     }
 }
@@ -86,8 +86,15 @@ class AgentRuntime(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
-    /** The tier of the active tool called [toolName], `null` when there is none of that name. */
-    fun tierOf(toolName: String): ToolTier? = registry.active().firstOrNull { it.name == toolName }?.tier
+    /** The tier of the registered tool called [toolName], granted or not, `null` when there is none of that name. */
+    fun tierOf(toolName: String): ToolTier? = registry.find(toolName)?.tier
+
+    /**
+     * Whether a call of [toolName] with [argsJson] goes through the [ConfirmationGate], read against every
+     * registered tool: a stored call is shown with or without its card whatever the grants are now.
+     */
+    fun requiresConfirmation(toolName: String, argsJson: String): Boolean =
+        registry.find(toolName)?.let { runCatching { it.requiresConfirmation(argsJson.ifBlank { "{}" }) }.getOrDefault(false) } ?: false
 
     /** The active tools as the prompt describes them. */
     fun definitions(): List<ToolDefinition> =
@@ -174,14 +181,15 @@ class AgentRuntime(
     }
 
     /**
-     * Ids the template could not provide, or that clash within the turn, get one, the `tool` message
-     * answers by id. Namespaced by a per-turn id so they do not repeat from one turn to the next.
+     * Every call gets an id of the runtime's own: templates and small models reuse `call_1` from one turn to the next,
+     * and the chat keys its rows and pairs results by id. The `tool` message
+     * answers by it. Namespaced by a per-turn id so they never repeat across turns.
      */
     private fun uniqueIds(calls: List<ToolCall>, turnId: String, replyIndex: Int, seen: MutableSet<String>): List<ToolCall> {
         return calls.mapIndexed { i, call ->
-            val id = if (call.id.isBlank() || call.id in seen) "call_${turnId}_${replyIndex}_$i" else call.id
+            val id = "call_${turnId}_${replyIndex}_$i"
             seen += id
-            if (id == call.id) call else call.copy(id = id)
+            call.copy(id = id)
         }
     }
 

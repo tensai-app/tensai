@@ -28,8 +28,8 @@ class ToolRegistryTest {
     )
 
     @Test
-    fun theDefaultGrantsAreLocalAndPhoneActionOnly() {
-        assertEquals(listOf("local", "phone"), ToolRegistry(all).active().map { it.name })
+    fun theDefaultGrantsAreEverythingButTheNetwork() {
+        assertEquals(listOf("local", "phone", "perm"), ToolRegistry(all).active().map { it.name })
     }
 
     @Test
@@ -85,7 +85,7 @@ class ToolRegistryTest {
             }),
         )
 
-        // Only the default grants (Local and PhoneAction): a Local tool shows up with no extra grant.
+        // Only the default grants (everything but Network): a Local tool shows up with no extra grant.
         val active = ToolRegistry.default(platformTools = platform).active()
 
         assertEquals(

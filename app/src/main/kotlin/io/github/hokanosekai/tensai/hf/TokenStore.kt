@@ -45,12 +45,15 @@ private val Context.hfTokenDataStore by preferencesDataStore(name = "tensai_hf_t
  * transient fault cannot wipe the user's token; it is read again next time.
  *
  * @param onMain whether the calling thread is the main one.
+ * @param keyName the DataStore key the sealed value lives under: another one stores a search provider's API key (TEN-174)
+ *   in the same way, next to the Hugging Face token's own.
  */
 class TokenStore(
     private val dataStore: DataStore<Preferences>,
     private val cipher: TokenCipher,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val onMain: () -> Boolean = { false },
+    keyName: String = "hf_token_sealed",
 ) {
     constructor(context: Context) : this(
         dataStore = context.hfTokenDataStore,
@@ -58,7 +61,7 @@ class TokenStore(
         onMain = { Looper.myLooper() == Looper.getMainLooper() },
     )
 
-    private val key = stringPreferencesKey("hf_token_sealed")
+    private val key = stringPreferencesKey(keyName)
     private val lock = Mutex()
 
     @Volatile private var cached: String? = null

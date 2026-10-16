@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.first
 
 /**
  * The one bottom sheet of the app, with the Claude app's behaviour:
- * - opens fully expanded,
+ * - opens fully expanded ([openExpanded]), or at half height for a sheet that is a glance first,
  * - a first swipe down settles at half the screen height (Material's PartiallyExpanded anchor),
  * - a second swipe dismisses,
  * - the content scrolls first (ModalBottomSheet's nested scroll hands the drag to the sheet only
@@ -47,6 +47,7 @@ internal fun TensaiBottomSheet(
     scrimColor: Color,
     dragHandle: @Composable (() -> Unit)? = { BottomSheetDefaults.DragHandle() },
     fullHeight: Boolean = true,
+    openExpanded: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
@@ -68,7 +69,7 @@ internal fun TensaiBottomSheet(
         // before it starts does nothing (the sheet has no anchors yet and show() then wins), so
         // wait for show() to set its target, then retarget: the running animation is interrupted
         // and carries on up to Expanded in one movement.
-        LaunchedEffect(sheetState) {
+        if (openExpanded) LaunchedEffect(sheetState) {
             snapshotFlow { sheetState.targetValue }.first { it != SheetValue.Hidden }
             if (sheetState.targetValue != SheetValue.Expanded) sheetState.expand()
         }

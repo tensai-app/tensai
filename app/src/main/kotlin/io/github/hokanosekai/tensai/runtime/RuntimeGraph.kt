@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.agent.DeviceInfoTool
 import io.github.hokanosekai.tensai.agent.MemoryTool
 import io.github.hokanosekai.tensai.agent.SearchChatsTool
 import io.github.hokanosekai.tensai.agent.TorchTool
+import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
@@ -20,7 +21,9 @@ import io.github.hokanosekai.tensai.data.ContextRepository
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
+import io.github.hokanosekai.tensai.data.SearchKeyStores
 import io.github.hokanosekai.tensai.data.ThemeRepository
+import io.github.hokanosekai.tensai.data.ToolSettingsRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.memory.MemoryDao
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -146,6 +149,9 @@ object RuntimeGraph {
 
         // TEN-144: decrypt the Hugging Face token once, off Main, so the HTTP clients' provider is a cache hit.
         applicationScope.launch(Dispatchers.IO) { runCatching { tokenStore.get() } }
+
+        // TEN-174: read the granted tiers once, so the first turn finds them in the snapshot.
+        applicationScope.launch(Dispatchers.IO) { runCatching { toolSettings.grants.first() } }
     }
 
     /**
@@ -318,22 +324,37 @@ object RuntimeGraph {
     /** Chat history — Room-backed, see [ChatRepository]. */
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
 
+    /** Which tiers the model may use and the search provider (TEN-174), the [io.github.hokanosekai.tensai.agent.TierGrants] of [toolRegistry]. */
+    val toolSettings: ToolSettingsRepository by lazy { ToolSettingsRepository(appContext) }
+
+    /** The API keys of the search providers that need one, encrypted (TEN-174). */
+    val searchKeys: SearchKeyStores by lazy { SearchKeyStores(appContext) }
+
+    /** Asks the user before a call that sends or deletes (TEN-174): the chat draws its card, see [UiConfirmationGate]. */
+    val confirmationGate: UiConfirmationGate by lazy { UiConfirmationGate() }
+
+    /** The built-in tools, filtered by the tiers granted in Settings. Settings lists them per tier. */
+    val toolRegistry: ToolRegistry by lazy {
+        ToolRegistry.default(
+            grants = toolSettings,
+            platformTools = listOf(
+                DeviceInfoTool(AndroidDeviceInfoSource(appContext)),
+                SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.first }),
+                ClipboardTool(AndroidClipboardAccess(appContext)),
+                TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
+                MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
+            ),
+        )
+    }
+
     /**
-     * The agent loop (TEN-172), shared by the chat and, later, the API server. Tier grants and the
-     * confirmation gate are the defaults until TEN-174 wires its own. Results are counted with the loaded
+     * The agent loop (TEN-172), shared by the chat and, later, the API server. Results are counted with the loaded
      * model's tokenizer, which answers nothing while a generation holds the engine.
      */
     val agentRuntime: AgentRuntime by lazy {
         AgentRuntime(
-            registry = ToolRegistry.default(
-                platformTools = listOf(
-                    DeviceInfoTool(AndroidDeviceInfoSource(appContext)),
-                    SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.first }),
-                    ClipboardTool(AndroidClipboardAccess(appContext)),
-                    TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
-                    MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
-                ),
-            ),
+            registry = toolRegistry,
+            gate = confirmationGate,
             // One bounded wait for a foreign generation to leave between two iterations, see [AgentRuntime].
             waitForQueue = {
                 withTimeoutOrNull(5_000) { inferenceQueue.state.first { it is QueueState.ModelReady } } != null

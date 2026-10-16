@@ -119,8 +119,9 @@ class AgentRuntimeTest {
         assertEquals(2, gen.requests.size)
         val second = gen.requests[1].messages
         assertEquals(listOf(MessageRole.User, MessageRole.Assistant, MessageRole.Tool), second.map { it.role })
-        assertEquals(listOf("c1"), second[1].toolCalls!!.map { it.id })
-        assertEquals("c1", second[2].toolCallId)
+        // The runtime gives the call an id of its own, not the model's "c1".
+        assertEquals(listOf(outcome.call.id), second[1].toolCalls!!.map { it.id })
+        assertEquals(outcome.call.id, second[2].toolCallId)
         assertEquals(outcome.output, second[2].content)
         assertEquals(AgentEvent.Done, events.last())
     }
@@ -136,13 +137,15 @@ class AgentRuntimeTest {
         val events = runtime(tool).run(userTurn, gen).toList()
 
         assertEquals(2, tool.runs)
-        assertEquals(listOf("a", "b"), events.outcomes().map { it.call.id })
+        val ids = events.outcomes().map { it.call.id }
+        assertEquals(2, ids.toSet().size)
+        assertEquals(events.filterIsInstance<AgentEvent.ReplyFinished>().first().calls.map { it.id }, ids)
         assertEquals(2, gen.requests.size)
         assertEquals(
             listOf(MessageRole.User, MessageRole.Assistant, MessageRole.Tool, MessageRole.Tool),
             gen.requests[1].messages.map { it.role },
         )
-        assertEquals(listOf("a", "b"), gen.requests[1].messages.filter { it.role == MessageRole.Tool }.map { it.toolCallId })
+        assertEquals(ids, gen.requests[1].messages.filter { it.role == MessageRole.Tool }.map { it.toolCallId })
     }
 
     @Test
@@ -405,7 +408,7 @@ class AgentRuntimeTest {
 
         val events = runtime(tool, gate = gate).run(userTurn, gen).toList()
 
-        assertEquals(listOf("s"), asked)
+        assertEquals(listOf(events.outcomes().single().call.id), asked)
         assertEquals(0, tool.runs)
         val outcome = events.outcomes().single()
         assertEquals(ToolCallStatus.Refused, outcome.status)
@@ -438,9 +441,9 @@ class AgentRuntimeTest {
             reply("done"),
         )
 
-        runtime(tool, gate = { c, _ -> asked.add(c.id) }).run(userTurn, gen).toList()
+        val events = runtime(tool, gate = { c, _ -> asked.add(c.id) }).run(userTurn, gen).toList()
 
-        assertEquals(listOf("b"), asked)
+        assertEquals(listOf(events.outcomes()[1].call.id), asked)
         assertEquals(2, tool.runs)
     }
 
@@ -549,14 +552,14 @@ class AgentRuntimeTest {
     }
 
     @Test
-    fun callIdsTheTemplateLeftBlankOrRepeatedGetUniqueOnes() = runBlocking {
+    fun everyCallGetsTheRuntimesOwnUniqueId() = runBlocking {
         val gen = ScriptedGenerator(reply(calls = listOf(call(""), call("x"), call("x"))), reply("ok"))
 
         val events = runtime(FakeTool()).run(userTurn, gen).toList()
 
         val ids = events.filterIsInstance<AgentEvent.ReplyFinished>().first().calls.map { it.id }
         assertEquals(3, ids.toSet().size)
-        assertEquals("x", ids[1])
+        assertTrue(ids.none { it == "x" || it.isBlank() })
         assertEquals(ids, gen.requests[1].messages.filter { it.role == MessageRole.Tool }.map { it.toolCallId })
     }
 

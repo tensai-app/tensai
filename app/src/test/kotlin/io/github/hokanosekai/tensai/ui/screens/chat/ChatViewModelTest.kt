@@ -7,11 +7,13 @@ import io.github.hokanosekai.tensai.agent.ToolResult
 import io.github.hokanosekai.tensai.agent.ToolTier
 import io.github.hokanosekai.tensai.agent.DateTimeTool
 import io.github.hokanosekai.tensai.agent.ToolRegistry
+import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
+import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
@@ -38,6 +40,7 @@ import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModelId
+import io.github.hokanosekai.tensai.ui.tools.ToolCallState
 import io.github.hokanosekai.tensai.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
@@ -48,6 +51,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -85,6 +89,7 @@ class ChatViewModelTest {
     private lateinit var modelRepository: ModelRepository
     private lateinit var sessionRepository: SessionRepository
     private var agentRuntime = AgentRuntime(ToolRegistry())
+    private var confirmationGate = UiConfirmationGate()
 
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
@@ -149,6 +154,7 @@ class ChatViewModelTest {
         sessionRepository = sessionRepository,
         scope = CoroutineScope(this.coroutineContext + viewModelJob),
         agentRuntime = agentRuntime,
+        confirmationGate = confirmationGate,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -1431,7 +1437,8 @@ class ChatViewModelTest {
 
         val stored = chatDao.observeMessages(id).first()
         assertEquals(listOf("user", "assistant", "tool", "assistant"), stored.map { it.role })
-        assertEquals("call_1", stored[2].toolCallId)
+        // The runtime gives every call an id of its own, the `tool` message answers by it.
+        assertEquals(ToolCallsJson.decode(stored[1].toolCallsJson).single().id, stored[2].toolCallId)
         assertEquals("datetime", stored[2].toolName)
         assertTrue(stored[1].toolCallsJson!!.contains("datetime"))
         assertEquals("It is late.", stored[3].content)
@@ -1507,11 +1514,165 @@ class ChatViewModelTest {
 
         val stored = chatDao.observeMessages(id).first()
         assertEquals(listOf("user", "assistant", "tool", "tool"), stored.map { it.role })
-        assertEquals(listOf("c1", "c2"), stored.filter { it.role == "tool" }.map { it.toolCallId })
+        assertEquals(ToolCallsJson.decode(stored[1].toolCallsJson).map { it.id }, stored.filter { it.role == "tool" }.map { it.toolCallId })
         assertEquals(listOf("stopped", "stopped"), chatDao.toolCalls.map { it.status })
         assertNull(viewModel.error.value)
         assertFalse(viewModel.canStop.first())
     }
+
+    /** TEN-173: the Tools switch is stored per conversation, and a draft's choice lands in the row its first send creates. */
+    @Test
+    fun theToolsSwitchIsPersistedPerConversationAndCarriedByADraft() = runBlocking {
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+        assertTrue(viewModel.toolsEnabled.first())
+
+        viewModel.setToolsEnabled(false)
+        awaitGeneration()
+
+        assertFalse(chatRepository.getConversation(id)!!.toolsEnabled)
+        assertFalse(viewModel.toolsEnabled.first())
+        assertTrue(newViewModel(chatRepository.createConversation(modelId = null)).toolsEnabled.first())
+
+        loadFakeModel()
+        val draft = newViewModel(null)
+        draft.setToolsEnabled(false)
+        awaitGeneration()
+        assertFalse(draft.toolsEnabled.first())
+        draft.send("hi")
+        awaitGeneration()
+
+        val created = draft.currentConversationId.value!!
+        assertFalse(chatRepository.getConversation(created)!!.toolsEnabled)
+    }
+
+    /** TEN-173: the stored rows of a tool turn come back as the question, one tool line, and the answer. */
+    @Test
+    fun aToolTurnShowsAsAMessageAToolLineAndTheAnswer() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += answerReply("It is late.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("what time is it?")
+        awaitGeneration()
+
+        val items = viewModel.items.first()
+        assertEquals(listOf("message", "line", "message"), items.map { if (it is MessageItem) "message" else "line" })
+        val line = items[1] as ToolLineItem
+        assertEquals(listOf("datetime"), line.calls.map { it.tool })
+        assertEquals(ToolCallState.Ok, line.calls.single().state)
+        assertEquals("It is late.", (items[2] as MessageItem).message.content)
+    }
+
+    /** A call that sends or deletes: the card is pending until answered, a Deny is a refusal the model is told about. */
+    @Test
+    fun denyingAConfirmationRefusesTheCallAndTheCardFoldsIntoDenied() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("Left it alone.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("erase fact 1")
+        val callId = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        val pending = viewModel.items.first().filterIsInstance<ConfirmationItem>().single()
+        assertEquals(ConfirmDecision.Pending, pending.decision)
+
+        viewModel.answerConfirmation(callId, allow = false)
+        awaitGeneration()
+
+        assertEquals("refused", chatDao.toolCalls.single().status)
+        assertEquals(0, eraser.runs)
+        val items = viewModel.items.first()
+        assertEquals(ConfirmDecision.Denied, items.filterIsInstance<ConfirmationItem>().single().decision)
+        assertTrue(items.none { it is ToolLineItem })
+    }
+
+    @Test
+    fun allowingAConfirmationRunsTheCall() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("Erased.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("erase fact 1")
+        val callId = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModel.answerConfirmation(callId, allow = true)
+        awaitGeneration()
+
+        assertEquals("ok", chatDao.toolCalls.single().status)
+        assertEquals(1, eraser.runs)
+        assertEquals(
+            ConfirmDecision.Allowed,
+            viewModel.items.first().filterIsInstance<ConfirmationItem>().single().decision,
+        )
+    }
+
+    /** Leaving the chat answers a waiting card with a Deny: nobody is left to tap it. */
+    @Test
+    fun leavingTheChatDeniesAWaitingConfirmation() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("Okay, not erasing.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("erase fact 1")
+        val callId = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModel.leave()
+        awaitGeneration()
+
+        assertEquals("refused", chatDao.toolCalls.single().status)
+        assertEquals(0, eraser.runs)
+        assertTrue(confirmationGate.pending.value.isEmpty())
+    }
+
+    /** Stop while the card waits: the pending call is dropped, never runs, and is closed as stopped. */
+    @Test
+    fun stoppingWhileAConfirmationWaitsDropsItAndRecordsStopped() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("erase fact 1")
+        val callId = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModel.stop()
+        awaitGeneration()
+
+        assertTrue(confirmationGate.pending.value.isEmpty())
+        assertEquals("stopped", chatDao.toolCalls.single().status)
+        assertEquals(0, eraser.runs)
+        val card = viewModel.items.first().filterIsInstance<ConfirmationItem>().single()
+        assertEquals(ConfirmDecision.Stopped, card.decision)
+    }
+
+    private class Eraser : Tool {
+        var runs = 0
+        override val name = "erase"
+        override val description = "deletes a fact"
+        override val parametersSchema = """{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"""
+        override val tier = ToolTier.Local
+        override val sendsOrDeletes = true
+        override suspend fun execute(argsJson: String): ToolResult {
+            runs++
+            return ToolResult.ok("erased")
+        }
+    }
+
+    private fun eraser() = Eraser()
 
     /** A reply that ended with [stopReason] after [tokens] tokens, as the engine would report it. */
     private fun finishedReply(tokens: Int, stopReason: StopReason = StopReason.Complete) = listOf(
@@ -1792,6 +1953,12 @@ class ChatViewModelTest {
         override suspend fun updateToolsEnabled(id: String, toolsEnabled: Boolean) = patch(id) { it.copy(toolsEnabled = toolsEnabled) }
 
         val toolCalls = mutableListOf<ToolCallEntity>()
+        private val toolCallsFlow = MutableStateFlow<List<ToolCallEntity>>(emptyList())
+
+        override fun observeToolCalls(conversationId: String): Flow<List<ToolCallEntity>> = combine(messagesFlow, toolCallsFlow) { byConversation, rows ->
+            val ids = byConversation[conversationId].orEmpty().map { it.id }.toSet()
+            rows.filter { it.messageId in ids }
+        }
 
         override suspend fun updateToolCalls(id: String, toolCallsJson: String?) {
             for (list in messages.values) {
@@ -1803,6 +1970,7 @@ class ChatViewModelTest {
 
         override suspend fun insertToolCall(toolCall: ToolCallEntity) {
             toolCalls += toolCall
+            toolCallsFlow.value = toolCalls.toList()
         }
 
         override suspend fun toolCallCount(messageId: String, callId: String): Int =
@@ -1810,11 +1978,13 @@ class ChatViewModelTest {
 
         override suspend fun deleteToolCallsForMessage(messageId: String) {
             toolCalls.removeAll { it.messageId == messageId }
+            toolCallsFlow.value = toolCalls.toList()
         }
 
         override suspend fun deleteToolCallsForConversation(conversationId: String) {
             val ids = messages[conversationId].orEmpty().map { it.id }.toSet()
             toolCalls.removeAll { it.messageId in ids }
+            toolCallsFlow.value = toolCalls.toList()
         }
 
         override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) {

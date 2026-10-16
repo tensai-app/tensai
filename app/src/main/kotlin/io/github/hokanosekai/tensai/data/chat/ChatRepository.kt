@@ -27,6 +27,9 @@ class ChatRepository(private val dao: ChatDao) {
     /** A single conversation's messages, oldest first. */
     fun observeMessages(conversationId: String): Flow<List<MessageEntity>> = dao.observeMessages(conversationId)
 
+    /** The audit rows of every tool call in a conversation, oldest first: what the chat's tool lines are built from (TEN-173). */
+    fun observeToolCalls(conversationId: String): Flow<List<ToolCallEntity>> = dao.observeToolCalls(conversationId)
+
     /** A single conversation, reactively — used by [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.enableThinking] to reflect [ConversationEntity.enableThinking] as it's toggled. */
     fun observeConversation(conversationId: String): Flow<ConversationEntity?> = dao.observeConversation(conversationId)
 

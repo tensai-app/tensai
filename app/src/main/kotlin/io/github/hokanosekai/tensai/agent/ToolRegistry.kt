@@ -1,16 +1,19 @@
 package io.github.hokanosekai.tensai.agent
 
 /**
- * Which tiers the user granted. The storage and the Settings screen are TEN-174, which replaces
- * [DefaultTierGrants]; this is only the seam [ToolRegistry] reads.
+ * Which tiers the user granted: the seam [ToolRegistry] reads. The persisted one is
+ * [io.github.hokanosekai.tensai.data.ToolSettingsRepository] (TEN-174).
  */
 fun interface TierGrants {
     fun granted(): Set<ToolTier>
 }
 
-/** Local and phone actions on, Android permissions and Network off, as the spec's defaults say. */
+/**
+ * Local, phone actions and Android permissions on, Network off. The permission tier is on because Android
+ * asks for each permission at first use; Settings shows it under "Phone actions".
+ */
 object DefaultTierGrants : TierGrants {
-    override fun granted(): Set<ToolTier> = setOf(ToolTier.Local, ToolTier.PhoneAction)
+    override fun granted(): Set<ToolTier> = setOf(ToolTier.Local, ToolTier.PhoneAction, ToolTier.AndroidPermission)
 }
 
 /**
@@ -37,6 +40,12 @@ class ToolRegistry(
         val granted = grants.granted()
         return all.values.filter { it.tier in granted }
     }
+
+    /** Every registered tool whatever the grants, in registration order: what Settings lists per tier. */
+    fun registered(): List<Tool> = all.values.toList()
+
+    /** The registered tool called [name], granted or not: a past call is still read against it. */
+    fun find(name: String): Tool? = all[name]
 
     companion object {
         /**
