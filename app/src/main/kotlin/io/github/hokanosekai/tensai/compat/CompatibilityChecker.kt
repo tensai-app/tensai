@@ -168,11 +168,20 @@ object CompatibilityChecker {
     /** The context the verdict split is priced at under Auto: the 4096 every verdict was priced at before TEN-150. */
     private const val TYPICAL_CTX = 4_096L
 
-    /** Architectures whose llama.cpp CPU path is disproportionately slow — prefer GPU offload. */
-    private val GPU_PREFERRED_ARCH_MARKERS = listOf("gemma3n", "gemma4", "phi")
+    /**
+     * Architectures whose llama.cpp CPU path is disproportionately slow, so GPU offload is preferred.
+     * nemotron_h (TEN-151, Nemotron-3-Nano-4B, hybrid Mamba-2): no first token after 3 min on CPU
+     * for a 170-token prompt, 1.7 tok/s on Vulkan. "nemotron_h", not "nemotron": the plain
+     * architecture is a dense transformer.
+     */
+    private val GPU_PREFERRED_ARCH_MARKERS = listOf("gemma3n", "gemma4", "phi", "nemotron_h")
 
-    /** Dense architectures — fastest on the big CPU cores (see this object's KDoc). */
-    private val DENSE_ARCH_MARKERS = listOf("qwen", "llama", "gemma")
+    /**
+     * Architectures fastest on the big CPU cores: the dense transformers (see this object's KDoc),
+     * and lfm2 (TEN-151, LFM2.5-2.6B: 3.6 tok/s on CPU against 3.1 on Vulkan, same time to first
+     * token).
+     */
+    private val DENSE_ARCH_MARKERS = listOf("qwen", "llama", "gemma", "lfm2")
 
     /**
      * The verdict for [model], from the very plan [LoadPolicy.compute] would load it with (TEN-150):

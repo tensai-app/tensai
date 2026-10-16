@@ -155,6 +155,26 @@ class CompatibilityCheckerTest {
         assertEquals(BackendHint.Auto, result.recommendedBackend)
     }
 
+    @Test
+    fun lfm2_prefersCpu_andNemotronH_prefersGpu() {
+        // TEN-151, measured on this device: LFM2.5-2.6B is faster on CPU, Nemotron-3-Nano-4B
+        // (hybrid Mamba-2) is unusable on CPU.
+        fun hintFor(architecture: String) = CompatibilityChecker.check(
+            model(
+                architecture = architecture,
+                paramCount = 2_600_000_000,
+                contextLength = 32_768,
+                embeddingLength = 2048,
+                blockCount = 30,
+                sizeBytes = 1_600_000_000,
+            ),
+            dimensity900_8gb,
+        ).recommendedBackend
+
+        assertEquals(BackendHint.Cpu, hintFor("lfm2"))
+        assertEquals(BackendHint.Gpu, hintFor("nemotron_h"))
+    }
+
     /**
      * The figures the traffic light's sentence is printed from (TEN-39).
      *
