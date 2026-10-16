@@ -7,15 +7,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
@@ -25,7 +21,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
@@ -83,13 +78,10 @@ fun ContextRing(
     val strokePx = with(density) { 2.5.dp.toPx() }
     val dashPx = with(density) { floatArrayOf(2.2.dp.toPx(), 2.38.dp.toPx()) }
 
-    Box(
-        modifier = modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
+    // An IconButton, like the ⋮ next to it: same 48dp target and same 40dp pressed state.
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.semantics { contentDescription = description },
     ) {
         Canvas(modifier = Modifier.size(20.dp)) {
             val radius = 8.75.dp.toPx()
