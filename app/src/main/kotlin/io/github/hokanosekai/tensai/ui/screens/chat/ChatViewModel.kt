@@ -840,8 +840,8 @@ class ChatViewModel(
      * Builds the sheet's figures. With a model resident, the messages without a token count, or
      * counted under another model ([MessageEntity.tokenCountModelId]), are counted now and persisted;
      * without one the stored counts are all there is and the breakdown is an estimate (see
-     * [contextBreakdown]). Reasoning is not counted: [ChatRepository.toEngineMessages] drops it from
-     * every prompt, so [ContextPart.Thinking] stays empty.
+     * [contextBreakdown]). Reasoning is counted for the current turn only (the rows after the last user
+     * message, see [ChatRepository.toEngineMessages]): that is all of it a prompt holds.
      */
     private suspend fun buildContextSheet(): ContextSheetState {
         val info = inferenceQueue.state.value.residentModel
@@ -854,6 +854,8 @@ class ChatViewModel(
         // The facts ride in the first user message, so they weigh on the prompt from the first send on.
         val memoryBlock = if (history.any { it.role == "user" }) memoryPrompt.blockFor(id) else null
         val partKey = info?.let { it.modelId ?: it.name } ?: conversation?.modelId
+        val thinkingTexts = history.drop(history.indexOfLast { it.role == "user" } + 1)
+            .filter { it.role == "assistant" && !it.thinking.isNullOrBlank() }.map { it.thinking!! }
 
         if (info != null) {
             val countedWith = info.modelId ?: info.name
@@ -865,7 +867,7 @@ class ChatViewModel(
                 it.role == "assistant" && !it.toolCallsJson.isNullOrBlank() && it.id !in toolCallTokens
             }
             val texts = stale.map { it.content } + uncountedCalls.map { it.toolCallsJson!! } +
-                listOfNotNull(systemPrompt, definitionsText, memoryBlock)
+                listOfNotNull(systemPrompt, definitionsText, memoryBlock) + thinkingTexts
             val counted = if (texts.isEmpty()) emptyList() else inferenceQueue.countTokens(texts)
             if (counted != null) {
                 stale.forEachIndexed { i, message -> chatRepository.setTokenCount(message.id, counted[i], countedWith) }
@@ -873,7 +875,8 @@ class ChatViewModel(
                 var next = stale.size + uncountedCalls.size
                 if (systemPrompt != null) partTokens.put(partKey, systemPrompt, counted[next++])
                 if (definitionsText != null) partTokens.put(partKey, definitionsText, counted[next++])
-                if (memoryBlock != null) partTokens.put(partKey, memoryBlock, counted[next])
+                if (memoryBlock != null) partTokens.put(partKey, memoryBlock, counted[next++])
+                thinkingTexts.forEach { partTokens.put(partKey, it, counted[next++]) }
                 if (stale.isNotEmpty() && id != null) history = chatRepository.observeMessages(id).first()
             }
         }
@@ -885,6 +888,7 @@ class ChatViewModel(
             assistant = inPrompt.filter { it.role == "assistant" }.sumOf { it.tokenCount ?: 0 },
             toolDefinitions = definitionsText?.let { partTokens.get(partKey, it) } ?: 0,
             memory = memoryBlock?.let { partTokens.get(partKey, it) } ?: 0,
+            thinking = thinkingTexts.sumOf { partTokens.get(partKey, it) ?: 0 },
             // An assistant message of calls only has no content, so it is counted here and not above.
             toolResults = inPrompt.filter { it.role == "tool" }.sumOf { it.tokenCount ?: 0 } +
                 history.filter { it.role == "assistant" }.sumOf { toolCallTokens[it.id] ?: 0 },

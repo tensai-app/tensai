@@ -157,12 +157,15 @@ enum class ToolChoice {
  *
  * @param toolCalls calls an assistant message made, replayed next to their results. `null` or empty for none.
  * @param toolCallId for [MessageRole.Tool], the [ToolCall.id] the message answers.
+ * @param reasoning for an assistant message of the turn in progress, the reasoning that led to its calls (TEN-191).
+ *   The template renders it or not (Qwen3: after the last user message only). `null` or empty for none.
  */
 data class ChatMessage(
     val role: MessageRole,
     val content: String,
     val toolCalls: List<ToolCall>? = null,
     val toolCallId: String? = null,
+    val reasoning: String? = null,
 )
 
 /**

@@ -26,8 +26,9 @@ class ChatRepositoryToolsTest {
         toolCallId: String? = null,
         toolName: String? = null,
         createdAt: Long = 0,
+        thinking: String? = null,
     ) = MessageEntity(
-        id = id, conversationId = "c", role = role, content = content, thinking = null,
+        id = id, conversationId = "c", role = role, content = content, thinking = thinking,
         toolCallsJson = toolCallsJson, tokensGenerated = null, tokPerSec = null, ttftMs = null,
         stopReason = null, createdAt = createdAt, toolCallId = toolCallId, toolName = toolName,
     )
@@ -52,6 +53,45 @@ class ChatRepositoryToolsTest {
         assertEquals("""{"time":"14:03"}""", engine[2].content)
         assertNull(engine[3].toolCalls)
         assertNull(engine[0].toolCallId)
+    }
+
+    @Test
+    fun reasoningIsReplayedOnlyForTheCurrentTurn() {
+        val calls = ToolCallsJson.encode(listOf(datetimeCall))
+        val history = listOf(
+            message("1", "user", "first"),
+            message("2", "assistant", "", toolCallsJson = calls, thinking = "old plan"),
+            message("3", "tool", "14:03", toolCallId = "call_1"),
+            message("4", "assistant", "It is 14:03.", thinking = "old answer"),
+            message("5", "user", "second"),
+            message("6", "assistant", "", toolCallsJson = calls, thinking = "current plan"),
+            message("7", "tool", "14:04", toolCallId = "call_1"),
+        )
+
+        val engine = repository.toEngineMessages(history, systemPrompt = null)
+
+        assertEquals(listOf(null, null, null, null, null, "current plan", null), engine.map { it.reasoning })
+    }
+
+    @Test
+    fun noReasoningIsReplayedWhenThereIsNoThinking() {
+        val calls = ToolCallsJson.encode(listOf(datetimeCall))
+        for (thinking in listOf(null, "", "  \n")) {
+            val history = listOf(
+                message("1", "user", "time?"),
+                message("2", "assistant", "", toolCallsJson = calls, thinking = thinking),
+                message("3", "tool", "14:03", toolCallId = "call_1"),
+            )
+
+            assertNull("thinking=$thinking", repository.toEngineMessages(history, null)[1].reasoning)
+        }
+    }
+
+    @Test
+    fun noReasoningWithoutAUserRow() {
+        val history = listOf(message("1", "assistant", "hi", thinking = "plan"))
+
+        assertNull(repository.toEngineMessages(history, null).single().reasoning)
     }
 
     @Test

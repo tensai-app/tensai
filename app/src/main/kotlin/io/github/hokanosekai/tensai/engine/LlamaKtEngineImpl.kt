@@ -338,6 +338,7 @@ class LlamaKtEngineImpl(
         content = content,
         toolCalls = toolCalls.orEmpty().map { LlamaToolCall(it.id, it.name, it.argumentsJson) },
         toolCallId = toolCallId,
+        reasoningContent = reasoning.orEmpty(),
     )
 
     private fun MessageRole.toLibRole(): String = when (this) {

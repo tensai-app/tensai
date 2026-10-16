@@ -244,13 +244,14 @@ class ChatRepository(private val dao: ChatDao) {
     /**
      * Converts a conversation's stored history into the engine's [ChatMessage] format — [messages]
      * is expected in [observeMessages]'s chronological order. [systemPrompt], if non-blank, is
-     * prepended as a [MessageRole.System] message. Thinking content is dropped (the engine only
-     * takes rendered content). An assistant message's stored tool calls and the `tool` messages that
+     * prepended as a [MessageRole.System] message. Thinking is dropped, except the one of the
+     * assistant messages after the last user message (TEN-191): the current turn's reasoning, which the template
+     * keeps for them and the KV cache holds, so the next pass does not restart it. An assistant message's stored tool calls and the `tool` messages that
      * answer them are replayed (TEN-172), so the next turn sees what the tools returned; arguments the
      * model wrote as invalid JSON are replayed as `{}`, see [ToolCall.replayable].
      *
      * An assistant turn with empty content and no tool call is left out (TEN-110), whatever its thinking: thinking
-     * is never replayed, so a thinking-only row would otherwise render as an empty assistant turn.
+     * is not replayed once its turn is over, and a thinking-only row would otherwise render as an empty assistant turn.
      * Such a row is a stop before the answer (kept so the user sees it), a reply cut inside its
      * reasoning, or one a killed process left behind. None is something the assistant said, and an
      * empty assistant turn in the rendered prompt would only break strict templates and the prefix
@@ -263,7 +264,10 @@ class ChatRepository(private val dao: ChatDao) {
      * message: see [io.github.hokanosekai.tensai.data.memory.MemoryContext].
      */
     fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?, memory: String? = null): List<ChatMessage> {
-        val history = withAnsweredCallsOnly(messages)
+        val answered = withAnsweredCallsOnly(messages)
+        val lastUser = answered.indexOfLast { it.role == "user" }
+        val currentTurn = if (lastUser < 0) emptySet() else answered.subList(lastUser + 1, answered.size).mapTo(HashSet()) { it.id }
+        val history = answered
             .filterNot { it.role == "assistant" && it.content.isEmpty() && it.toolCallsJson.isNullOrBlank() }
             .map {
                 ChatMessage(
@@ -271,6 +275,7 @@ class ChatRepository(private val dao: ChatDao) {
                     content = it.content,
                     toolCalls = ToolCallsJson.decode(it.toolCallsJson).takeIf { calls -> calls.isNotEmpty() }?.map { c -> c.replayable() },
                     toolCallId = it.toolCallId,
+                    reasoning = it.thinking?.takeIf { t -> it.role == "assistant" && it.id in currentTurn && t.isNotBlank() },
                 )
             }
             .mergeAdjacentUserTurns()

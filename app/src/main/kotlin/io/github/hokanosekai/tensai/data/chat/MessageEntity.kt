@@ -39,8 +39,8 @@ import androidx.room.PrimaryKey
  * @param createdAt epoch millis when the message row was created — drives
  *   [ChatDao.observeMessages]'s sort.
  * @param tokenCount tokens of [content] under the tokenizer of the model [tokenCountModelId] names, or
- *   `null` until the context sheet (TEN-161) counted it. Never the thinking: it is not replayed into
- *   the prompt, see [ChatRepository.toEngineMessages].
+ *   `null` until the context sheet (TEN-161) counted it. Never the thinking: only the current turn's
+ *   reasoning, between a call and its result, is replayed, see [ChatRepository.toEngineMessages].
  * @param tokenCountModelId the loaded model's id (or name, for a load with no row) [tokenCount] was
  *   counted with. A count under another model is stale: a different tokenizer, a different figure.
  */

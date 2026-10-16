@@ -150,7 +150,7 @@ class AgentRuntime(
                 emit(AgentEvent.Done)
                 return@flow
             }
-            history += ChatMessage(MessageRole.Assistant, turn!!.content, toolCalls = calls.map { it.replayable() })
+            history += ChatMessage(MessageRole.Assistant, turn!!.content, toolCalls = calls.map { it.replayable() }, reasoning = turn!!.reasoning)
             for ((i, call) in calls.withIndex()) {
                 val outcome = executeCall(call, tools, overLimit = callsMade + i >= MaxToolCallsPerTurn)
                 emit(AgentEvent.ToolCallFinished(outcome))
