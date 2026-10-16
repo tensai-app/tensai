@@ -74,6 +74,7 @@ class SettingsViewModel(
     private val checkToken: suspend (String) -> HfTokenCheck = { RuntimeGraph.hfClient.checkToken(it) },
     models: Flow<List<ModelEntity>> = RuntimeGraph.modelRepository.models,
     sessions: Flow<List<SessionEntity>> = RuntimeGraph.sessionRepository.observeSessions(),
+    memoryCount: Flow<Int> = RuntimeGraph.memoryDao.observeCount(),
     volumeTotalBytes: Flow<Long> = RuntimeGraph.modelRepository.storageUsage().map { it.totalBytes },
     queueState: Flow<QueueState> = RuntimeGraph.inferenceQueue.state,
     private val deviceProfile: () -> DeviceProfile? = {
@@ -97,6 +98,9 @@ class SettingsViewModel(
 
     /** The share of memory Auto may spend, see [AutoMemoryShare]. */
     val autoShare: Flow<AutoMemoryShare> = contextRepository.autoShare
+
+    /** How many facts the `memory` tool holds (TEN-176), for the Memory row. */
+    val memoryCount: Flow<Int> = memoryCount
 
     /** Whether a download may start on mobile data without asking, see [DownloadPreferences]. */
     val allowMobileData: Flow<Boolean> = downloadPreferences.allowMobileData

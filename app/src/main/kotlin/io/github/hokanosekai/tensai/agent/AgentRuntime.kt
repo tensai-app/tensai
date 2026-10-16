@@ -31,7 +31,7 @@ fun interface ReplyGenerator {
 }
 
 /**
- * Asked before a tool with [Tool.sendsOrDeletes] runs. The chat's "tensai wants to ..." card is
+ * Asked before a call that [Tool.requiresConfirmation] runs. The chat's "tensai wants to ..." card is
  * TEN-174's implementation; the wait is not counted against the tool's timeout.
  */
 fun interface ConfirmationGate {
@@ -216,7 +216,7 @@ class AgentRuntime(
         ToolArgs.check(tool.parametersSchema, args)?.let {
             return outcome(ToolCallStatus.Error, "Error: invalid arguments for '${tool.name}': $it. Expected: ${tool.parametersSchema}")
         }
-        if (tool.sendsOrDeletes) {
+        if (tool.requiresConfirmation(args)) {
             val approved = try {
                 gate.confirm(call, tool)
             } catch (e: CancellationException) {

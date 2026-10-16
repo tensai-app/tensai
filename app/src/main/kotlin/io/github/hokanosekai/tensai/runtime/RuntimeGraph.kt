@@ -4,6 +4,14 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.util.Log
 import io.github.hokanosekai.tensai.agent.AgentRuntime
+import io.github.hokanosekai.tensai.agent.AndroidClipboardAccess
+import io.github.hokanosekai.tensai.agent.AndroidDeviceInfoSource
+import io.github.hokanosekai.tensai.agent.AndroidTorchControl
+import io.github.hokanosekai.tensai.agent.ClipboardTool
+import io.github.hokanosekai.tensai.agent.DeviceInfoTool
+import io.github.hokanosekai.tensai.agent.MemoryTool
+import io.github.hokanosekai.tensai.agent.SearchChatsTool
+import io.github.hokanosekai.tensai.agent.TorchTool
 import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
@@ -14,6 +22,7 @@ import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
+import io.github.hokanosekai.tensai.data.memory.MemoryDao
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.data.session.SessionRepository
@@ -303,6 +312,9 @@ object RuntimeGraph {
         )
     }
 
+    /** What the `memory` tool remembers (TEN-176), also read by Settings > Memory. */
+    val memoryDao: MemoryDao by lazy { database.memoryDao() }
+
     /** Chat history — Room-backed, see [ChatRepository]. */
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
 
@@ -313,7 +325,15 @@ object RuntimeGraph {
      */
     val agentRuntime: AgentRuntime by lazy {
         AgentRuntime(
-            registry = ToolRegistry.default(),
+            registry = ToolRegistry.default(
+                platformTools = listOf(
+                    DeviceInfoTool(AndroidDeviceInfoSource(appContext)),
+                    SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.first }),
+                    ClipboardTool(AndroidClipboardAccess(appContext)),
+                    TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
+                    MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
+                ),
+            ),
             // One bounded wait for a foreign generation to leave between two iterations, see [AgentRuntime].
             waitForQueue = {
                 withTimeoutOrNull(5_000) { inferenceQueue.state.first { it is QueueState.ModelReady } } != null

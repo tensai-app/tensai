@@ -61,11 +61,14 @@ class AgentRuntimeTest {
         override val name: String = "echo",
         override val tier: ToolTier = ToolTier.Local,
         override val sendsOrDeletes: Boolean = false,
+        val confirmWhen: (String) -> Boolean = { sendsOrDeletes },
         override val parametersSchema: String = """{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""",
         val body: suspend (String) -> ToolResult = { ToolResult.ok("echo:$it") },
     ) : Tool {
         override val description = "test tool"
         var runs = 0
+
+        override fun requiresConfirmation(argsJson: String) = confirmWhen(argsJson)
 
         override suspend fun execute(argsJson: String): ToolResult {
             runs++
@@ -419,6 +422,26 @@ class AgentRuntimeTest {
 
         assertEquals(1, tool.runs)
         assertEquals(ToolCallStatus.Ok, events.outcomes().single().status)
+    }
+
+    @Test
+    fun confirmationIsDecidedPerCallNotPerTool() = runBlocking {
+        val tool = FakeTool(name = "multi", sendsOrDeletes = true, confirmWhen = { it.contains("delete") })
+        val asked = mutableListOf<String>()
+        val gen = ScriptedGenerator(
+            reply(
+                calls = listOf(
+                    call("a", name = "multi", args = """{"text":"read"}"""),
+                    call("b", name = "multi", args = """{"text":"delete"}"""),
+                ),
+            ),
+            reply("done"),
+        )
+
+        runtime(tool, gate = { c, _ -> asked.add(c.id) }).run(userTurn, gen).toList()
+
+        assertEquals(listOf("b"), asked)
+        assertEquals(2, tool.runs)
     }
 
     @Test

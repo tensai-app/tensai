@@ -39,7 +39,11 @@ class ToolRegistry(
     }
 
     companion object {
-        /** The built-in tools. Only `datetime` until the other tools of v0.3.0 land. */
-        fun default(grants: TierGrants = DefaultTierGrants) = ToolRegistry(listOf(DateTimeTool()), grants)
+        /**
+         * The built-in tools: the two that need nothing from Android, then [platformTools] (device info,
+         * chat search, clipboard, torch, memory), which the app builds because they need a `Context` or the database.
+         */
+        fun default(grants: TierGrants = DefaultTierGrants, platformTools: List<Tool> = emptyList()) =
+            ToolRegistry(listOf(DateTimeTool(), CalculateTool()) + platformTools, grants)
     }
 }

@@ -702,6 +702,23 @@
     <string name="repo_storage_free">Free</string>
     <string name="repo_storage_manage">Manage models</string>
     <string name="device_title">This device</string>
+    <string name="memory_title">Memory</string>
+    <string name="settings_group_agent">Agent</string>
+    <string name="memory_empty_title">Nothing remembered yet.</string>
+    <string name="memory_empty_hint">Ask tensai to remember something.</string>
+    <string name="memory_note">Saved when you ask tensai to remember something. Stays on this phone.</string>
+    <string name="memory_forget_fact">Forget %1$s</string>
+    <string name="memory_forget_all">Forget everything</string>
+    <string name="memory_forget_all_title">Forget everything?</string>
+    <plurals name="memory_facts_count">
+        <item quantity="one">%1$d fact</item>
+        <item quantity="other">%1$d facts</item>
+    </plurals>
+    <plurals name="memory_forget_all_body">
+        <item quantity="one">tensai forgets this fact. This can\'t be undone.</item>
+        <item quantity="other">tensai forgets all %1$d facts. This can\'t be undone.</item>
+    </plurals>
+    <string name="memory_forget_all_confirm">Forget</string>
     <string name="device_copy">Copy device info</string>
     <string name="device_copied">Device info copied</string>
     <string name="device_loading">Reading the device…</string>

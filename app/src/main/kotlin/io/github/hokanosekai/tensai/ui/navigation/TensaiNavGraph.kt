@@ -25,6 +25,7 @@ import io.github.hokanosekai.tensai.ui.screens.models.RepoScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.screens.settings.DeviceScreen
+import io.github.hokanosekai.tensai.ui.screens.settings.MemoryScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
 
@@ -273,6 +274,7 @@ fun TensaiNavGraph(
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
                 onNavigateToDevice = { navController.navigate(TensaiDestination.Device.route) },
+                onNavigateToMemory = { navController.navigate(TensaiDestination.Memory.route) },
                 openTokenSheet = openTokenSheet,
                 onTokenSheetOpened = { openTokenSheet = false },
             )
@@ -280,6 +282,10 @@ fun TensaiNavGraph(
 
         composable(TensaiDestination.Device.route) {
             DeviceScreen(copyRequests = deviceCopyRequests)
+        }
+
+        composable(TensaiDestination.Memory.route) {
+            MemoryScreen()
         }
 
         composable(TensaiDestination.Licenses.route) {

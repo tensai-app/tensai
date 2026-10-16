@@ -54,8 +54,47 @@ class ToolRegistryTest {
     }
 
     @Test
-    fun theDefaultRegistryHoldsOnlyDatetime() {
-        assertEquals(listOf("datetime"), ToolRegistry.default().active().map { it.name })
+    fun theDefaultRegistryHoldsTheToolsThatNeedNoPlatform() {
+        assertEquals(listOf("datetime", "calculate"), ToolRegistry.default().active().map { it.name })
+    }
+
+    @Test
+    fun everyLocalToolIsRegisteredUnderTierLocalAndNeedsNoPermission() {
+        val platform = listOf(
+            DeviceInfoTool { error("not read here") },
+            SearchChatsTool(object : io.github.hokanosekai.tensai.data.chat.ChatSearchDao {
+                override suspend fun search(pattern: String, limit: Int, excludeConversationId: String?) = emptyList<io.github.hokanosekai.tensai.data.chat.ChatSearchHit>()
+            }),
+            ClipboardTool(object : ClipboardAccess {
+                override fun read(): String? = null
+                override fun write(text: String) = Unit
+            }),
+            TorchTool(object : TorchControl {
+                override val available = false
+                override fun set(on: Boolean) = Unit
+            }),
+            MemoryTool(object : io.github.hokanosekai.tensai.data.memory.MemoryDao {
+                override suspend fun insert(fact: io.github.hokanosekai.tensai.data.memory.MemoryFactEntity) = 1L
+                override suspend fun recent(limit: Int) = emptyList<io.github.hokanosekai.tensai.data.memory.MemoryFactEntity>()
+                override fun observeAll() = kotlinx.coroutines.flow.emptyFlow<List<io.github.hokanosekai.tensai.data.memory.MemoryFactEntity>>()
+                override suspend fun count() = 0
+                override fun observeCount() = kotlinx.coroutines.flow.emptyFlow<Int>()
+                override suspend fun findIdByText(text: String): Long? = null
+                override suspend fun delete(id: Long) = 0
+                override suspend fun deleteAll() = Unit
+            }),
+        )
+
+        // Only the default grants (Local and PhoneAction): a Local tool shows up with no extra grant.
+        val active = ToolRegistry.default(platformTools = platform).active()
+
+        assertEquals(
+            listOf("datetime", "calculate", "device_info", "search_chats", "clipboard", "torch", "memory"),
+            active.map { it.name },
+        )
+        assertTrue(active.all { it.tier == ToolTier.Local })
+        assertEquals(listOf("memory"), active.filter { it.sendsOrDeletes }.map { it.name })
+        assertEquals(emptyList<String>(), active.filter { it.requiresConfirmation("""{"action":"list"}""") }.map { it.name })
     }
 
     @Test

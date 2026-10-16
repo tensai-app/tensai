@@ -56,6 +56,12 @@ interface Tool {
     val sendsOrDeletes: Boolean get() = false
 
     /**
+     * Whether this very call needs the gate. Defaults to [sendsOrDeletes]; a tool with several actions
+     * overrides it to ask only for the ones that send or delete (`memory` asks for `forget`, not `list`).
+     */
+    fun requiresConfirmation(argsJson: String): Boolean = sendsOrDeletes
+
+    /**
      * Runs the tool, on [kotlinx.coroutines.Dispatchers.IO]. [argsJson] is a JSON object that passed the
      * `required` check. May throw: the runtime turns an exception into an error result for the model.
      *

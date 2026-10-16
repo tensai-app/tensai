@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Percent
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
@@ -100,6 +101,7 @@ import kotlinx.coroutines.launch
  * @param onNavigateToModels where "Manage models" goes.
  * @param onNavigateToLicenses where the open-source licenses row goes.
  * @param onNavigateToDevice where the "This device" row goes.
+ * @param onNavigateToMemory where the "Memory" row goes.
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  */
@@ -108,6 +110,7 @@ fun SettingsScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToLicenses: () -> Unit,
     onNavigateToDevice: () -> Unit,
+    onNavigateToMemory: () -> Unit,
     modifier: Modifier = Modifier,
     openTokenSheet: Boolean = false,
     onTokenSheetOpened: () -> Unit = {},
@@ -124,6 +127,7 @@ fun SettingsScreen(
     val inference = inferenceState
     val tokenMask by viewModel.tokenMask.collectAsState(initial = null)
     val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
+    val memoryCount by viewModel.memoryCount.collectAsState(initial = 0)
 
     val snackbarHostState = remember { SnackbarHostState() }
     val uiScope = rememberCoroutineScope()
@@ -285,6 +289,19 @@ fun SettingsScreen(
                                 InferenceFacts.Unknown -> unknown
                             },
                         )
+                    },
+                )
+            }
+
+            SectionLabel(stringResource(R.string.settings_group_agent))
+            SectionCard {
+                SettingsRow(
+                    icon = Icons.Rounded.Bookmark,
+                    title = stringResource(R.string.memory_title),
+                    onClick = onNavigateToMemory,
+                    trailing = {
+                        ValueText(pluralStringResource(R.plurals.memory_facts_count, memoryCount, memoryCount))
+                        Chevron()
                     },
                 )
             }

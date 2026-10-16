@@ -287,7 +287,8 @@ private fun partColor(part: ContextPart): Color {
         ContextPart.System, ContextPart.Reserved -> muted
         ContextPart.User -> primary
         ContextPart.Assistant -> lerp(primary, MaterialTheme.tensaiColors.success, 0.45f)
-        ContextPart.ToolDefinitions, ContextPart.ToolResults -> lerp(primary, MaterialTheme.tensaiColors.success, 0.8f)
+        ContextPart.ToolDefinitions -> lerp(MaterialTheme.tensaiColors.success, primary, 0.25f)
+        ContextPart.ToolResults -> lerp(MaterialTheme.tensaiColors.warning, MaterialTheme.tensaiColors.success, 0.55f)
         ContextPart.Thinking -> lerp(primary, MaterialTheme.colorScheme.error, 0.5f)
         ContextPart.Overhead -> muted.copy(alpha = 0.5f)
         ContextPart.Free -> Color.Transparent

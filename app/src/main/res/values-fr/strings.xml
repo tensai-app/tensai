@@ -613,6 +613,25 @@
     <string name="repo_storage_free">Libre</string>
     <string name="repo_storage_manage">Gérer les modèles</string>
     <string name="device_title">Cet appareil</string>
+    <string name="memory_title">Mémoire</string>
+    <string name="settings_group_agent">Agent</string>
+    <string name="memory_empty_title">Rien de retenu pour le moment.</string>
+    <string name="memory_empty_hint">Demander à tensai de retenir quelque chose.</string>
+    <string name="memory_note">Enregistré quand tensai est invité à retenir quelque chose. Reste sur ce téléphone.</string>
+    <string name="memory_forget_fact">Oublier %1$s</string>
+    <string name="memory_forget_all">Tout oublier</string>
+    <string name="memory_forget_all_title">Tout oublier ?</string>
+    <plurals name="memory_facts_count">
+        <item quantity="one">%1$d fait</item>
+        <item quantity="many">%1$d faits</item>
+        <item quantity="other">%1$d faits</item>
+    </plurals>
+    <plurals name="memory_forget_all_body">
+        <item quantity="one">tensai oublie %1$d fait. Action irréversible.</item>
+        <item quantity="many">tensai oublie les %1$d faits. Action irréversible.</item>
+        <item quantity="other">tensai oublie les %1$d faits. Action irréversible.</item>
+    </plurals>
+    <string name="memory_forget_all_confirm">Oublier</string>
     <string name="device_copy">Copier les infos de l\'appareil</string>
     <string name="device_copied">Infos copiées</string>
     <string name="device_loading">Lecture de l\'appareil…</string>

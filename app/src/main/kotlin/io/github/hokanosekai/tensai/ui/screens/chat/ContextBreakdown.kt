@@ -3,7 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.chat
 import kotlin.math.roundToInt
 
 /** One slice of the context window, in the order the sheet lists them. */
-enum class ContextPart { System, User, Assistant, ToolDefinitions, ToolResults, Thinking, Overhead, Reserved, Free }
+enum class ContextPart { System, User, Assistant, Thinking, ToolDefinitions, ToolResults, Overhead, Reserved, Free }
 
 /** A [ContextPart] with something in it: [percent] is of the whole window, 0 when under half a percent (shown "<1"). */
 data class ContextPartRow(val part: ContextPart, val tokens: Int, val percent: Int)
@@ -29,8 +29,8 @@ data class ContextBreakdown(
     val usedPercent: Int get() = if (length <= 0) 0 else (used * 100f / length).roundToInt().coerceIn(0, 100)
 }
 
-/** Token counts of what the conversation sends, per part. */
 /**
+ * Token counts of what the conversation sends, per part.
  * [toolDefinitions]: the tools' name, description and schema as text, an approximation of what the
  * template renders (its own wrapping stays in overhead). [toolResults]: `tool` messages plus the
  * serialized calls of assistant messages (TEN-172).
@@ -96,9 +96,9 @@ fun contextBreakdown(
         row(ContextPart.System, parts.system),
         row(ContextPart.User, parts.user),
         row(ContextPart.Assistant, parts.assistant),
+        row(ContextPart.Thinking, parts.thinking),
         row(ContextPart.ToolDefinitions, parts.toolDefinitions),
         row(ContextPart.ToolResults, parts.toolResults),
-        row(ContextPart.Thinking, parts.thinking),
         row(ContextPart.Overhead, overhead),
         row(ContextPart.Reserved, reserved),
         row(ContextPart.Free, free),

@@ -385,6 +385,7 @@ class SettingsViewModelTest {
         sessionRepository = sessionRepository,
         models = models,
         sessions = sessionDao.observeAll(),
+        memoryCount = flowOf(0),
         volumeTotalBytes = volumeTotalBytes,
         queueState = queueState,
         deviceProfile = { profile },

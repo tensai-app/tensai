@@ -56,6 +56,7 @@ private fun chromeForRoute(route: String?): TensaiChrome = when {
     route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> TensaiChrome.Detail
     route == TensaiDestination.Settings.route -> TensaiChrome.Detail
     route == TensaiDestination.Device.route -> TensaiChrome.Detail
+    route == TensaiDestination.Memory.route -> TensaiChrome.Detail
     route == TensaiDestination.Licenses.route -> TensaiChrome.Detail
     route == TensaiDestination.Server.route -> TensaiChrome.Detail
     // Chats draws its own bar, which turns into the selection bar in place.
@@ -69,6 +70,7 @@ private fun detailTitleForRoute(route: String?): Int? = when {
     route?.startsWith(TensaiDestination.Repo.PREFIX) == true -> R.string.nav_hugging_face
     route == TensaiDestination.Settings.route -> R.string.nav_settings
     route == TensaiDestination.Device.route -> R.string.device_title
+    route == TensaiDestination.Memory.route -> R.string.memory_title
     route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Server.route -> R.string.nav_server
     else -> null

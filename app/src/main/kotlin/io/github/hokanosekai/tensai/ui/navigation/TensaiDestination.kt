@@ -10,6 +10,7 @@ sealed class TensaiDestination(val route: String) {
     data object Models : TensaiDestination("models")
     data object Settings : TensaiDestination("settings")
     data object Device : TensaiDestination("settings/device")
+    data object Memory : TensaiDestination("settings/memory")
     data object Licenses : TensaiDestination("settings/licenses")
     data object Server : TensaiDestination("server")
 

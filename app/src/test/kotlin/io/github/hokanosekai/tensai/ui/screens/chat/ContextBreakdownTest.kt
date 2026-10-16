@@ -42,10 +42,11 @@ class ContextBreakdownTest {
 
     @Test
     fun theOrderIsTheSheetsOwn() {
-        val b = contextBreakdown(100, 50, ContextCounts(system = 1, user = 1, assistant = 1, thinking = 1), 16)
+        val b = contextBreakdown(100, 50, ContextCounts(system = 1, user = 1, assistant = 1, thinking = 1, toolDefinitions = 1, toolResults = 1), 16)
         assertEquals(
             listOf(
                 ContextPart.System, ContextPart.User, ContextPart.Assistant, ContextPart.Thinking,
+                ContextPart.ToolDefinitions, ContextPart.ToolResults,
                 ContextPart.Overhead, ContextPart.Reserved, ContextPart.Free,
             ),
             b.rows.map { it.part },

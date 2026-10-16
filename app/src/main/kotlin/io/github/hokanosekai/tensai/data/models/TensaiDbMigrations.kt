@@ -309,6 +309,18 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v17 -> v18 (TEN-176): the `memory_facts` table, what the `memory` tool remembers. Brand new, nothing to backfill.
+     */
+    val MIGRATION_17_18 = object : Migration(17, 18) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `memory_facts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `sourceConversationId` TEXT)",
+            )
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -327,5 +339,6 @@ object TensaiDbMigrations {
         MIGRATION_14_15,
         MIGRATION_15_16,
         MIGRATION_16_17,
+        MIGRATION_17_18,
     )
 }

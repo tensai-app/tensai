@@ -5,9 +5,12 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import io.github.hokanosekai.tensai.data.chat.ChatDao
+import io.github.hokanosekai.tensai.data.chat.ChatSearchDao
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
+import io.github.hokanosekai.tensai.data.memory.MemoryDao
+import io.github.hokanosekai.tensai.data.memory.MemoryFactEntity
 import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.download.DownloadDao
@@ -66,6 +69,9 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
  * Version 17 added tool calling (TEN-172): `messages.toolCallId`/`toolName`, `conversations.toolsEnabled` and the
  * [ToolCallEntity] table, see [TensaiDbMigrations.MIGRATION_16_17].
  *
+ * Version 18 added the [MemoryFactEntity] table (TEN-176): what the `memory` tool remembers about the user, see
+ * [TensaiDbMigrations.MIGRATION_17_18]. A new table only.
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -79,8 +85,9 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         SessionEntity::class,
         DownloadEntity::class,
         ToolCallEntity::class,
+        MemoryFactEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
@@ -92,6 +99,10 @@ abstract class TensaiDb : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
 
     abstract fun downloadDao(): DownloadDao
+
+    abstract fun chatSearchDao(): ChatSearchDao
+
+    abstract fun memoryDao(): MemoryDao
 
     companion object {
         private const val DB_NAME = "tensai.db"
