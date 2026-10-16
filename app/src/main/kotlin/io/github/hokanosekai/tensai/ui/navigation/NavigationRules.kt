@@ -66,8 +66,9 @@ internal fun NavController.perform(op: NavOp) {
         // singleTop: a double tap must not stack two copies of the screen.
         is NavOp.Push -> navigate(op.route) { launchSingleTop = true }
         NavOp.Pop -> popBackStack()
-        is NavOp.ReplaceRoot -> navigate(op.route) {
-            popUpTo(graph.id) { inclusive = true }
-        }
+        // Every screen off, the graph entry kept: popping the graph too (inclusive) brings its start
+        // destination back under the new root, and on a first launch that start is the onboarding
+        // (back from the first chat then reopened "Welcome to tensai").
+        is NavOp.ReplaceRoot -> navigate(op.route) { popUpTo(graph.id) }
     }
 }
