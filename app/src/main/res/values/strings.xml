@@ -249,7 +249,7 @@
     <string name="chat_reply_failed">generation failed</string>
     <string name="chat_reply_stopped">stopped</string>
 
-    <!-- ==================== Server, V2 preview (TEN-40) ==================== -->
+    <!-- ==================== Server, preview (TEN-40) ==================== -->
 
     <!--
          Static preview of the LAN API server: nothing on the screen works yet. The endpoint and
@@ -258,7 +258,7 @@
     -->
     <string name="server_title">API server</string>
     <string name="server_explainer">Expose your models on your local network, chat from any device</string>
-    <string name="server_coming_in_v2">Coming in V2</string>
+    <string name="server_coming_soon">Coming soon</string>
     <string name="server_serve_on_lan">Serve on LAN</string>
     <string name="server_endpoint_example" translatable="false">http://192.168.1.42:8080/v1</string>
     <string name="server_token_example" translatable="false">Bearer ······</string>
@@ -277,6 +277,8 @@
     <string name="nav_model_details">Model details</string>
     <string name="nav_settings">Settings</string>
     <string name="nav_server">Server</string>
+    <!-- The drawer badge next to Server: the API server is not built yet (after v1.0.0, see the roadmap). -->
+    <string name="nav_server_badge">Soon</string>
     <string name="drawer_new_chat">New chat</string>
     <string name="drawer_recents">Recents</string>
     <string name="nav_chats">Chats</string>

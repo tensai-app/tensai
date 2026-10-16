@@ -187,11 +187,11 @@
     <string name="chat_reply_failed">échec de la génération</string>
     <string name="chat_reply_stopped">interrompue</string>
 
-    <!-- ==================== Server, V2 preview (TEN-40) ==================== -->
+    <!-- ==================== Server, preview (TEN-40) ==================== -->
 
     <string name="server_title">Serveur d\'API</string>
     <string name="server_explainer">Exposer les modèles sur le réseau local et discuter depuis n\'importe quel appareil</string>
-    <string name="server_coming_in_v2">Prévu pour la V2</string>
+    <string name="server_coming_soon">Bientôt disponible</string>
     <string name="server_serve_on_lan">Servir sur le LAN</string>
 
     <!-- ==================== Strings moved out of composables (TEN-41) ==================== -->
@@ -207,6 +207,7 @@
     <string name="nav_model_details">Détails du modèle</string>
     <string name="nav_settings">Paramètres</string>
     <string name="nav_server">Serveur</string>
+    <string name="nav_server_badge">Bientôt</string>
     <string name="drawer_new_chat">Nouvelle discussion</string>
     <string name="drawer_recents">Récentes</string>
     <string name="nav_chats">Discussions</string>

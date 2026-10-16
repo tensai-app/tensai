@@ -133,7 +133,7 @@ fun TensaiDrawerContent(
                             ) {
                                 Text(stringResource(R.string.nav_server))
                                 Text(
-                                    text = "V2",
+                                    text = stringResource(R.string.nav_server_badge),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

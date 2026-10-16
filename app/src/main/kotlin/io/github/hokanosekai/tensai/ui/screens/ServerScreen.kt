@@ -47,7 +47,7 @@ import io.github.hokanosekai.tensai.ui.theme.ThemeMode
 private const val PreviewAlpha = 0.5f
 
 /**
- * Server (TEN-40): static "Coming in V2" preview of the LAN API server, marked "V2" in the drawer.
+ * Server (TEN-40): static "Coming soon" preview of the LAN API server, marked "Soon" in the drawer.
  *
  * Zero logic on purpose. The rows below the chip show what the screen will hold once the server
  * exists, and none of them reacts to anything: the toggle is disabled, the icons are plain icons
@@ -115,7 +115,7 @@ private fun ServerContent() {
             modifier = Modifier.padding(top = 16.dp).alpha(PreviewAlpha),
         ) {
             Text(
-                text = stringResource(R.string.server_coming_in_v2),
+                text = stringResource(R.string.server_coming_soon),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
