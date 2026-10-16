@@ -105,6 +105,33 @@ class ChatRepositoryTitleTest {
             stopReason: String?,
         ) = Unit
 
+        override suspend fun updateToolsEnabled(id: String, toolsEnabled: Boolean) = patch(id) { it.copy(toolsEnabled = toolsEnabled) }
+
+        val toolCalls = mutableListOf<ToolCallEntity>()
+
+        override suspend fun updateToolCalls(id: String, toolCallsJson: String?) {
+            for (list in messages.values) {
+                val index = list.indexOfFirst { it.id == id }
+                if (index >= 0) list[index] = list[index].copy(toolCallsJson = toolCallsJson)
+            }
+        }
+
+        override suspend fun insertToolCall(toolCall: ToolCallEntity) {
+            toolCalls += toolCall
+        }
+
+        override suspend fun toolCallCount(messageId: String, callId: String): Int =
+            toolCalls.count { it.messageId == messageId && it.callId == callId }
+
+        override suspend fun deleteToolCallsForMessage(messageId: String) {
+            toolCalls.removeAll { it.messageId == messageId }
+        }
+
+        override suspend fun deleteToolCallsForConversation(conversationId: String) {
+            val ids = messages[conversationId].orEmpty().map { it.id }.toSet()
+            toolCalls.removeAll { it.messageId in ids }
+        }
+
         override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) = Unit
 
         override suspend fun deleteMessagesForConversation(conversationId: String) {

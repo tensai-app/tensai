@@ -27,6 +27,9 @@ import com.tensai.llamakt.ChatMessage as LlamaChatMessage
 import com.tensai.llamakt.GgufMetadata as LlamaGgufMetadata
 import com.tensai.llamakt.SamplingParams as LlamaSamplingParams
 import com.tensai.llamakt.LoadStage as LlamaLoadStage
+import com.tensai.llamakt.ToolCall as LlamaToolCall
+import com.tensai.llamakt.ToolChoice as LlamaToolChoice
+import com.tensai.llamakt.ToolDefinition as LlamaToolDefinition
 
 /**
  * [LlamaKtEngine] implementation wrapping llama.kt's `LlamaEngine`.
@@ -317,6 +320,13 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         KvCacheType.Q4_0 -> "q4_0"
     }
 
+    private fun ChatMessage.toLib() = LlamaChatMessage(
+        role = role.toLibRole(),
+        content = content,
+        toolCalls = toolCalls.orEmpty().map { LlamaToolCall(it.id, it.name, it.argumentsJson) },
+        toolCallId = toolCallId,
+    )
+
     private fun MessageRole.toLibRole(): String = when (this) {
         MessageRole.System -> "system"
         MessageRole.User -> "user"
@@ -363,7 +373,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
             // when the `launch(dispatcher)` below actually happens, and between building this flow
             // and collecting it there is an arbitrary amount of time for a close to land.
             checkOpen()
-            val libMessages = request.messages.map { LlamaChatMessage(it.role.toLibRole(), it.content) }
+            val libMessages = request.messages.map { it.toLib() }
             val reasoningBudget = request.sampling.reasoningBudget
             // With a split budget, llama.kt still needs a single nPredict — the whole decode,
             // reasoning and answer together, is held to the sum of the two caps (TEN-61/TEN-69).
@@ -382,7 +392,25 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                 var budgetStopReason: StopReason? = null
 
                 try {
-                    val prompt = llamaEngine.formatChat(libMessages, request.sampling.enableThinking)
+                    // Tools are the only difference: no tools keeps the plain formatChat, byte for byte
+                    // what ran before TEN-172, and reads no chat result after the decode.
+                    val withTools = request.tools.isNotEmpty()
+                    var toolsIgnored = false
+                    val prompt = if (withTools) {
+                        val formatted = llamaEngine.formatChatWithTools(
+                            libMessages,
+                            request.tools.map { LlamaToolDefinition(it.name, it.description, it.parametersJson) },
+                            toolChoice = when (request.toolChoice) {
+                                ToolChoice.Auto -> LlamaToolChoice.Auto
+                                ToolChoice.None -> LlamaToolChoice.None
+                            },
+                            enableThinking = request.sampling.enableThinking,
+                        )
+                        toolsIgnored = formatted.toolsIgnored
+                        formatted.prompt
+                    } else {
+                        llamaEngine.formatChat(libMessages, request.sampling.enableThinking)
+                    }
                     // TEN-113: a blank prompt for a non-empty conversation is a failed render, not
                     // a prompt. Thrown into the catch below (Error event) rather than tokenized and
                     // decoded from an empty context.
@@ -516,6 +544,22 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                                 ),
                             )
                         } else {
+                            // Right after completion and before anything touches the engine: there is one
+                            // result slot, and a tokensPredicted of 0 leaves it cleared or partial.
+                            if (withTools && tokensPredicted > 0) {
+                                val chat = llamaEngine.lastChatResult()
+                                trySend(
+                                    DecodeEvent.ToolTurn(
+                                        content = chat?.content.orEmpty(),
+                                        reasoning = chat?.reasoningContent?.ifEmpty { null },
+                                        toolCalls = chat?.toolCalls.orEmpty()
+                                            .map { ToolCall(it.id, it.name, it.argumentsJson) },
+                                        toolsIgnored = chat?.toolsIgnored ?: toolsIgnored,
+                                        toolParseFailed = chat?.toolParseFailed ?: false,
+                                        truncated = chat?.truncated ?: false,
+                                    ),
+                                )
+                            }
                             val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                             val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
                             val tokPerSec = generationTokPerSec(tokensPredicted, elapsedMs, ttftMs)
@@ -577,7 +621,7 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                     try {
                         val prompt = WarmUpPrompt.build(messages) { rendered ->
                             llamaEngine.formatChat(
-                                rendered.map { LlamaChatMessage(it.role.toLibRole(), it.content) },
+                                rendered.map { it.toLib() },
                                 enableThinking,
                             )
                         } ?: return@async false

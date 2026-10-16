@@ -3,6 +3,8 @@ package io.github.hokanosekai.tensai.runtime
 import android.content.Context
 import android.net.ConnectivityManager
 import android.util.Log
+import io.github.hokanosekai.tensai.agent.AgentRuntime
+import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
@@ -34,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Pragmatic, framework-free composition root for V1.
@@ -302,6 +305,22 @@ object RuntimeGraph {
 
     /** Chat history — Room-backed, see [ChatRepository]. */
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
+
+    /**
+     * The agent loop (TEN-172), shared by the chat and, later, the API server. Tier grants and the
+     * confirmation gate are the defaults until TEN-174 wires its own. Results are counted with the loaded
+     * model's tokenizer, which answers nothing while a generation holds the engine.
+     */
+    val agentRuntime: AgentRuntime by lazy {
+        AgentRuntime(
+            registry = ToolRegistry.default(),
+            // One bounded wait for a foreign generation to leave between two iterations, see [AgentRuntime].
+            waitForQueue = {
+                withTimeoutOrNull(5_000) { inferenceQueue.state.first { it is QueueState.ModelReady } } != null
+            },
+            countTokens = { text -> inferenceQueue.countTokens(listOf(text))?.firstOrNull() },
+        )
+    }
 
     /**
      * Persisted KV-cache/prompt state per conversation (TEN-34) — see [SessionRepository].

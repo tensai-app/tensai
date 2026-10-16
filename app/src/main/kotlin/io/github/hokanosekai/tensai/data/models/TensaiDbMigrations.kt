@@ -286,6 +286,29 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v16 -> v17 (TEN-172): tool calling.
+     * - `messages.toolCallId` and `messages.toolName`, for the `tool` messages that carry a result.
+     *   Nullable, no default: every existing row is not one.
+     * - `conversations.toolsEnabled`. `DEFAULT 1` because SQLite needs one to add a NOT NULL column,
+     *   and tools were not there before, so on is what a conversation should read from now on.
+     * - the `tool_calls` audit table and its `messageId` index. Brand new, nothing to backfill.
+     */
+    val MIGRATION_16_17 = object : Migration(16, 17) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `toolCallId` TEXT")
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `toolName` TEXT")
+            db.execSQL("ALTER TABLE `conversations` ADD COLUMN `toolsEnabled` INTEGER NOT NULL DEFAULT 1")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `tool_calls` (`id` TEXT NOT NULL, `messageId` TEXT NOT NULL, " +
+                    "`callId` TEXT NOT NULL, `tool` TEXT NOT NULL, `tier` TEXT, `server` TEXT, " +
+                    "`argsJson` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, " +
+                    "`resultTokens` INTEGER NOT NULL, `status` TEXT NOT NULL, `destination` TEXT, PRIMARY KEY(`id`))",
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_tool_calls_messageId` ON `tool_calls` (`messageId`)")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -303,5 +326,6 @@ object TensaiDbMigrations {
         MIGRATION_13_14,
         MIGRATION_14_15,
         MIGRATION_15_16,
+        MIGRATION_16_17,
     )
 }

@@ -355,6 +355,8 @@
     <string name="context_part_system">System prompt</string>
     <string name="context_part_user">Messages · you</string>
     <string name="context_part_assistant">Messages · assistant</string>
+    <string name="context_part_tool_definitions">Tool definitions</string>
+    <string name="context_part_tool_results">Tool results</string>
     <string name="context_part_thinking">Thinking</string>
     <string name="context_part_overhead">Template overhead</string>
     <string name="context_part_reserved">Reserved for reply</string>

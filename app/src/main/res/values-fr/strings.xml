@@ -288,6 +288,8 @@
     <string name="context_part_system">Prompt système</string>
     <string name="context_part_user">Messages · toi</string>
     <string name="context_part_assistant">Messages · assistant</string>
+    <string name="context_part_tool_definitions">Définitions d\'outils</string>
+    <string name="context_part_tool_results">Résultats d\'outils</string>
     <string name="context_part_thinking">Réflexion</string>
     <string name="context_part_overhead">Surcoût du template</string>
     <string name="context_part_reserved">Réservé à la réponse</string>

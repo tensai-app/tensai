@@ -1,10 +1,17 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
 import android.content.ContextWrapper
+import io.github.hokanosekai.tensai.agent.AgentRuntime
+import io.github.hokanosekai.tensai.agent.Tool
+import io.github.hokanosekai.tensai.agent.ToolResult
+import io.github.hokanosekai.tensai.agent.ToolTier
+import io.github.hokanosekai.tensai.agent.DateTimeTool
+import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
@@ -22,6 +29,7 @@ import io.github.hokanosekai.tensai.engine.LlamaKtEngine
 import io.github.hokanosekai.tensai.engine.LoadedModel
 import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.MessageRole
+import io.github.hokanosekai.tensai.engine.ToolCall
 import io.github.hokanosekai.tensai.engine.ModelLoadConfig
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
@@ -76,6 +84,7 @@ class ChatViewModelTest {
     private lateinit var chatRepository: ChatRepository
     private lateinit var modelRepository: ModelRepository
     private lateinit var sessionRepository: SessionRepository
+    private var agentRuntime = AgentRuntime(ToolRegistry())
 
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
@@ -139,10 +148,11 @@ class ChatViewModelTest {
         modelRepository = modelRepository,
         sessionRepository = sessionRepository,
         scope = CoroutineScope(this.coroutineContext + viewModelJob),
+        agentRuntime = agentRuntime,
     )
 
-    private suspend fun loadFakeModel(supportsThinking: Boolean = false) {
-        importModel(supportsThinking = supportsThinking)
+    private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
+        importModel(supportsThinking = supportsThinking, supportsTools = supportsTools)
         loadImportedModel(MODEL_ID)
     }
 
@@ -156,6 +166,7 @@ class ChatViewModelTest {
         fileName: String = "fake.gguf",
         importedAt: Long = 0L,
         supportsThinking: Boolean = false,
+        supportsTools: Boolean = false,
     ) {
         modelDao.insert(
             ModelEntity(
@@ -171,6 +182,7 @@ class ChatViewModelTest {
                 embeddingLength = 1L,
                 blockCount = 1L,
                 supportsThinking = supportsThinking,
+                supportsTools = supportsTools,
                 importedAt = importedAt,
             ),
         )
@@ -1390,6 +1402,117 @@ class ChatViewModelTest {
         assertEquals("third", awaitAssistantReply(id, expectedCount = 4)[2].content)
     }
 
+    private val datetimeCall = ToolCall("call_1", "datetime", "{}")
+
+    private fun toolCallsReply(vararg calls: ToolCall) =
+        listOf(DecodeEvent.ToolTurn("", null, calls.toList(), toolsIgnored = false, toolParseFailed = false, truncated = false))
+
+    private fun answerReply(text: String) = listOf(
+        DecodeEvent.Token(text),
+        DecodeEvent.ToolTurn(text, null, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = false),
+    )
+
+    /**
+     * TEN-172: a model that takes tools runs the agent loop. The calls, their results and the final
+     * answer are all persisted (and replayed into the second generation), while the chat list shows
+     * the question and the answer only, until TEN-173 renders the rest.
+     */
+    @Test
+    fun aToolTurnPersistsTheCallsAndResultsButTheListShowsOnlyTheAnswer() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += answerReply("It is late.")
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("what time is it?")
+        awaitGeneration()
+
+        val stored = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool", "assistant"), stored.map { it.role })
+        assertEquals("call_1", stored[2].toolCallId)
+        assertEquals("datetime", stored[2].toolName)
+        assertTrue(stored[1].toolCallsJson!!.contains("datetime"))
+        assertEquals("It is late.", stored[3].content)
+        val row = chatDao.toolCalls.single()
+        assertEquals(stored[1].id, row.messageId)
+        assertEquals("ok", row.status)
+        assertEquals("Local", row.tier)
+        assertEquals(
+            listOf(MessageRole.User, MessageRole.Assistant, MessageRole.Tool),
+            engine.lastRequest!!.messages.map { it.role },
+        )
+        assertEquals(listOf("datetime"), engine.lastRequest!!.tools.map { it.name })
+        assertEquals(listOf("what time is it?", "It is late."), viewModel.messages.first().map { it.content })
+        assertTrue(QueueState.ModelReady::class.isInstance(inferenceQueue.state.value))
+    }
+
+    /** The conversation's switch is off: the plain path, no tool in the request, as before TEN-172. */
+    @Test
+    fun withToolsSwitchedOffTheTurnIsPlain() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val id = chatRepository.createConversation(modelId = null, toolsEnabled = false)
+
+        newViewModel(id).send("hi")
+        awaitGeneration()
+
+        assertTrue(engine.lastRequest!!.tools.isEmpty())
+        assertEquals(listOf("user", "assistant"), chatDao.observeMessages(id).first().map { it.role })
+    }
+
+    /** A model whose template takes no tools never goes through the loop, whatever the registry holds. */
+    @Test
+    fun aModelWithoutToolSupportTakesThePlainPath() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = false)
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("hi")
+        awaitGeneration()
+
+        assertTrue(engine.lastRequest!!.tools.isEmpty())
+    }
+
+    /**
+     * Stop while a tool runs: the queue is idle then, so the turn is ended through its own job. The
+     * running call and the one behind it never finished, and each still gets a `stopped` result so the
+     * stored reply does not hang open.
+     */
+    @Test
+    fun stoppingDuringAToolRecordsStoppedResultsForTheCallsThatDidNotFinish() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val hanging = object : Tool {
+            override val name = "hang"
+            override val description = "never returns"
+            override val parametersSchema = """{"type":"object","properties":{}}"""
+            override val tier = ToolTier.Local
+            override suspend fun execute(argsJson: String): ToolResult {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(hanging, DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"), ToolCall("c2", "datetime", "{}"))
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("go")
+        entered.await()
+        assertTrue(viewModel.canStop.first())
+        viewModel.stop()
+        awaitGeneration()
+
+        val stored = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool", "tool"), stored.map { it.role })
+        assertEquals(listOf("c1", "c2"), stored.filter { it.role == "tool" }.map { it.toolCallId })
+        assertEquals(listOf("stopped", "stopped"), chatDao.toolCalls.map { it.status })
+        assertNull(viewModel.error.value)
+        assertFalse(viewModel.canStop.first())
+    }
+
     /** A reply that ended with [stopReason] after [tokens] tokens, as the engine would report it. */
     private fun finishedReply(tokens: Int, stopReason: StopReason = StopReason.Complete) = listOf(
         DecodeEvent.Token("a long answer"),
@@ -1664,6 +1787,34 @@ class ChatViewModelTest {
                     return
                 }
             }
+        }
+
+        override suspend fun updateToolsEnabled(id: String, toolsEnabled: Boolean) = patch(id) { it.copy(toolsEnabled = toolsEnabled) }
+
+        val toolCalls = mutableListOf<ToolCallEntity>()
+
+        override suspend fun updateToolCalls(id: String, toolCallsJson: String?) {
+            for (list in messages.values) {
+                val index = list.indexOfFirst { it.id == id }
+                if (index >= 0) list[index] = list[index].copy(toolCallsJson = toolCallsJson)
+            }
+            messagesFlow.value = messages.mapValues { it.value.toList() }
+        }
+
+        override suspend fun insertToolCall(toolCall: ToolCallEntity) {
+            toolCalls += toolCall
+        }
+
+        override suspend fun toolCallCount(messageId: String, callId: String): Int =
+            toolCalls.count { it.messageId == messageId && it.callId == callId }
+
+        override suspend fun deleteToolCallsForMessage(messageId: String) {
+            toolCalls.removeAll { it.messageId == messageId }
+        }
+
+        override suspend fun deleteToolCallsForConversation(conversationId: String) {
+            val ids = messages[conversationId].orEmpty().map { it.id }.toSet()
+            toolCalls.removeAll { it.messageId in ids }
         }
 
         override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) {
@@ -1942,6 +2093,9 @@ class ChatViewModelTest {
         private var usedCells = 0
         var saveShouldFail = false
         var scriptedEvents: List<DecodeEvent>? = null
+
+        /** One scripted stream per decode, in order, taken before [scriptedEvents]: an agent turn decodes several times. */
+        val scriptQueue = ArrayDeque<List<DecodeEvent>>()
         var hangBeforeTerminal = false
 
         /** What [LoadedModel.tokenize] answers, one token per character by default. */
@@ -1988,7 +2142,7 @@ class ChatViewModelTest {
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
                 lastRequest = request
-                val scripted = scriptedEvents
+                val scripted = scriptQueue.removeFirstOrNull() ?: scriptedEvents
                 (scripted ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
                 usedCells += TOKENS_PER_TURN
                 if (hangBeforeTerminal) awaitCancellation()

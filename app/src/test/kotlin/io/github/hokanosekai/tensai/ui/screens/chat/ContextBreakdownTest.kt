@@ -143,4 +143,41 @@ class ContextBreakdownTest {
         assertEquals(EffectiveBackend.Cpu, effectiveBackendOf("CPU"))
         assertNull(effectiveBackendOf("unknown"))
     }
+
+    @Test
+    fun toolDefinitionsAndResultsAreTheirOwnRowsAndNotOverhead() {
+        val b = contextBreakdown(
+            length = 1000,
+            cacheUsed = 300,
+            counts = ContextCounts(user = 100, assistant = 50, toolDefinitions = 60, toolResults = 40),
+            reserve = 16,
+        )
+
+        assertEquals(60, b.tokens(ContextPart.ToolDefinitions))
+        assertEquals(40, b.tokens(ContextPart.ToolResults))
+        assertEquals(50, b.tokens(ContextPart.Overhead))
+        assertEquals(
+            listOf(
+                ContextPart.User, ContextPart.Assistant, ContextPart.ToolDefinitions, ContextPart.ToolResults,
+                ContextPart.Overhead, ContextPart.Reserved, ContextPart.Free,
+            ),
+            b.rows.map { it.part },
+        )
+        assertEquals(1000, b.rows.sumOf { it.tokens })
+    }
+
+    @Test
+    fun aCacheSmallerThanTheToolShareMakesItAnEstimate() {
+        val b = contextBreakdown(length = 1000, cacheUsed = 100, counts = ContextCounts(user = 50, toolResults = 80), reserve = 16)
+
+        assertTrue(b.estimate)
+        assertEquals(130, b.used)
+    }
+
+    @Test
+    fun theFallbackMessageFollowsTheLanguage() {
+        assertEquals("I couldn't finish with the tools available.", toolFallbackMessage("en"))
+        assertEquals("I couldn't finish with the tools available.", toolFallbackMessage("de"))
+        assertEquals("Je n'ai pas pu terminer avec les outils disponibles.", toolFallbackMessage("fr"))
+    }
 }

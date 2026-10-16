@@ -1,11 +1,14 @@
 package io.github.hokanosekai.tensai.data.chat
 
+import io.github.hokanosekai.tensai.agent.ToolCallOutcome
 import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.MessageRole
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
+import io.github.hokanosekai.tensai.engine.ToolCall
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.Flow
 
 /** Max length of a [ConversationEntity.title] auto-derived from the first user message. */
@@ -43,6 +46,7 @@ class ChatRepository(private val dao: ChatDao) {
         samplingJson: String? = null,
         systemPrompt: String? = null,
         enableThinking: Boolean = true,
+        toolsEnabled: Boolean = true,
     ): String {
         val id = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
@@ -54,6 +58,7 @@ class ChatRepository(private val dao: ChatDao) {
                 samplingJson = samplingJson,
                 systemPrompt = systemPrompt?.ifBlank { null },
                 enableThinking = enableThinking,
+                toolsEnabled = toolsEnabled,
                 createdAt = now,
                 updatedAt = now,
             ),
@@ -168,38 +173,140 @@ class ChatRepository(private val dao: ChatDao) {
     /** The conversation itself, or `null` if it doesn't exist (e.g. deleted meanwhile). */
     suspend fun getConversation(conversationId: String): ConversationEntity? = dao.getConversation(conversationId)
 
-    /** Persists [tokenCount] on [id], counted with [modelId], see [MessageEntity.tokenCount]. */
+    /** Persists [enabled] as [conversationId]'s [ConversationEntity.toolsEnabled]. No-op if the conversation doesn't exist. */
+    suspend fun setToolsEnabled(conversationId: String, enabled: Boolean) {
+        dao.updateToolsEnabled(conversationId, enabled)
+    }
+
+    /** Stores [calls] on the assistant message [id], see [MessageEntity.toolCallsJson]. */
+    suspend fun setToolCalls(id: String, calls: List<ToolCall>) {
+        dao.updateToolCalls(id, calls.takeIf { it.isNotEmpty() }?.let(ToolCallsJson::encode))
+    }
+
+    /**
+     * Records a finished tool call: the `tool` message the model will be shown next turn, and the
+     * audit row. [assistantMessageId] is the reply that made the call.
+     */
+    suspend fun recordToolCall(conversationId: String, assistantMessageId: String, outcome: ToolCallOutcome) {
+        dao.insertToolResult(
+            toolResultMessage(conversationId, outcome),
+            toolCallRow(assistantMessageId, outcome),
+        )
+    }
+
+    private fun toolResultMessage(conversationId: String, outcome: ToolCallOutcome): MessageEntity {
+        val call = outcome.call
+        return MessageEntity(
+            id = UUID.randomUUID().toString(),
+            conversationId = conversationId,
+            role = MessageRole.Tool.toStorageString(),
+            content = outcome.output,
+            thinking = null,
+            toolCallsJson = null,
+            tokensGenerated = null,
+            tokPerSec = null,
+            ttftMs = null,
+            stopReason = null,
+            createdAt = nextCreatedAt(),
+            toolCallId = call.id,
+            toolName = call.name,
+        )
+    }
+
+    private fun toolCallRow(assistantMessageId: String, outcome: ToolCallOutcome): ToolCallEntity {
+        val call = outcome.call
+        return ToolCallEntity(
+                id = UUID.randomUUID().toString(),
+                messageId = assistantMessageId,
+                callId = call.id,
+                tool = call.name,
+                tier = outcome.tier?.name,
+            server = null,
+            argsJson = call.argumentsJson,
+            startedAt = outcome.startedAt,
+            durationMs = outcome.durationMs,
+            resultTokens = outcome.resultTokens,
+            status = outcome.status.storageName,
+            destination = outcome.destination,
+    )
+}
+
+/** Persists [tokenCount] on [id], counted with [modelId], see [MessageEntity.tokenCount]. */
     suspend fun setTokenCount(id: String, tokenCount: Int, modelId: String) = dao.updateTokenCount(id, tokenCount, modelId)
 
     /** Deletes a single message by [id] — used by [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel.regenerate] to drop the assistant reply being redone. */
-    suspend fun deleteMessage(id: String) = dao.deleteMessage(id)
+    suspend fun deleteMessage(id: String) = dao.deleteMessageAndToolCalls(id)
 
     /**
      * Converts a conversation's stored history into the engine's [ChatMessage] format — [messages]
      * is expected in [observeMessages]'s chronological order. [systemPrompt], if non-blank, is
      * prepended as a [MessageRole.System] message. Thinking content is dropped (the engine only
-     * takes rendered content) and every [ChatMessage.toolCalls] comes out `null` — no message with
-     * a stored tool call exists yet, see [MessageEntity]'s KDoc.
+     * takes rendered content). An assistant message's stored tool calls and the `tool` messages that
+     * answer them are replayed (TEN-172), so the next turn sees what the tools returned; arguments the
+     * model wrote as invalid JSON are replayed as `{}`, see [ToolCall.replayable].
      *
-     * An assistant turn with empty content is left out (TEN-110), whatever its thinking: thinking
+     * An assistant turn with empty content and no tool call is left out (TEN-110), whatever its thinking: thinking
      * is never replayed, so a thinking-only row would otherwise render as an empty assistant turn.
      * Such a row is a stop before the answer (kept so the user sees it), a reply cut inside its
      * reasoning, or one a killed process left behind. None is something the assistant said, and an
      * empty assistant turn in the rendered prompt would only break strict templates and the prefix
      * the warm-up and session reuse (TEN-88) match against.
      * Dropping it can leave two user turns side by side, which are merged: see
-     * [mergeAdjacentUserTurns].
+     *
+     * A call only stays in the history next to its result: see [withAnsweredCallsOnly].
      */
     fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?): List<ChatMessage> {
-        val history = messages
-            .filterNot { it.role == "assistant" && it.content.isEmpty() }
-            .map { ChatMessage(role = it.role.toEngineRole(), content = it.content, toolCalls = null) }
+        val history = withAnsweredCallsOnly(messages)
+            .filterNot { it.role == "assistant" && it.content.isEmpty() && it.toolCallsJson.isNullOrBlank() }
+            .map {
+                ChatMessage(
+                    role = it.role.toEngineRole(),
+                    content = it.content,
+                    toolCalls = ToolCallsJson.decode(it.toolCallsJson).takeIf { calls -> calls.isNotEmpty() }?.map { c -> c.replayable() },
+                    toolCallId = it.toolCallId,
+                )
+            }
             .mergeAdjacentUserTurns()
         return if (!systemPrompt.isNullOrBlank()) {
             listOf(ChatMessage(role = MessageRole.System, content = systemPrompt, toolCalls = null)) + history
         } else {
             history
         }
+    }
+
+    /**
+     * Repairs what a stop or a killed process can leave: an assistant message whose calls got no `tool`
+     * message right after it (a template would be handed calls with no results), or a `tool` message with
+     * no call. Per assistant message, only the calls answered by the `tool` messages that directly follow
+     * it are kept, with those results; the rest is dropped. Nothing is written back, the stored rows stay.
+     */
+    private fun withAnsweredCallsOnly(messages: List<MessageEntity>): List<MessageEntity> {
+        val out = ArrayList<MessageEntity>(messages.size)
+        var i = 0
+        while (i < messages.size) {
+            val m = messages[i]
+            if (m.role == "assistant" && !m.toolCallsJson.isNullOrBlank()) {
+                var j = i + 1
+                while (j < messages.size && messages[j].role == "tool") j++
+                val results = messages.subList(i + 1, j)
+                val calls = ToolCallsJson.decode(m.toolCallsJson)
+                val answered = calls.filter { c -> results.any { it.toolCallId == c.id } }
+                out += m.copy(
+                    toolCallsJson = when (answered.size) {
+                        calls.size -> m.toolCallsJson
+                        0 -> null
+                        else -> ToolCallsJson.encode(answered)
+                    },
+                )
+                out += results.filter { r -> answered.any { it.id == r.toolCallId } }
+                i = j
+            } else {
+                // A `tool` message reaching here follows no assistant message with calls: an orphan.
+                if (m.role != "tool") out += m
+                i++
+            }
+        }
+        return out
     }
 
     private suspend fun insertMessage(conversationId: String, role: MessageRole, content: String): String {
@@ -216,11 +323,19 @@ class ChatRepository(private val dao: ChatDao) {
                 tokPerSec = null,
                 ttftMs = null,
                 stopReason = null,
-                createdAt = System.currentTimeMillis(),
+                createdAt = nextCreatedAt(),
             ),
         )
         return id
     }
+
+    /**
+     * Wall clock, but never twice the same value: messages sort by [MessageEntity.createdAt] alone, and a
+     * reply, its tool results and the next reply can land in one millisecond.
+     */
+    private fun nextCreatedAt(): Long = lastCreatedAt.updateAndGet { maxOf(System.currentTimeMillis(), it + 1) }
+
+    private val lastCreatedAt = AtomicLong(0)
 }
 
 /**

@@ -25,6 +25,9 @@ import androidx.room.PrimaryKey
  *   is passed as `true` for this conversation's generations (TEN-33) — toggled from `ChatScreen`,
  *   gated on the loaded model's [io.github.hokanosekai.tensai.data.models.ModelEntity.supportsThinking].
  *   Added in schema version 4, see [io.github.hokanosekai.tensai.data.models.TensaiDb]'s KDoc.
+ * @param toolsEnabled whether the model may call tools in this conversation (TEN-172). Read by
+ *   [io.github.hokanosekai.tensai.ui.screens.chat.ChatViewModel] when the model's template takes tools;
+ *   the switch to flip it is TEN-173's. Added in schema version 17, `true` for every existing row.
  * @param createdAt epoch millis when the conversation was created.
  * @param updatedAt epoch millis of the most recent message — drives [ChatDao.observeConversations]'s sort.
  */
@@ -38,4 +41,5 @@ data class ConversationEntity(
     val enableThinking: Boolean,
     val createdAt: Long,
     val updatedAt: Long,
+    val toolsEnabled: Boolean = true,
 )

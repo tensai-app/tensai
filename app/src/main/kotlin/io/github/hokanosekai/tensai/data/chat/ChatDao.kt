@@ -49,6 +49,9 @@ interface ChatDao {
     @Query("UPDATE conversations SET enableThinking = :enableThinking WHERE id = :id")
     suspend fun updateEnableThinking(id: String, enableThinking: Boolean)
 
+    @Query("UPDATE conversations SET toolsEnabled = :toolsEnabled WHERE id = :id")
+    suspend fun updateToolsEnabled(id: String, toolsEnabled: Boolean)
+
     /** Sampling override dropped and thinking back on, atomically: the sheet's Reset. */
     @Query("UPDATE conversations SET samplingJson = NULL, enableThinking = 1 WHERE id = :id")
     suspend fun resetSamplingAndThinking(id: String)
@@ -75,6 +78,34 @@ interface ChatDao {
         stopReason: String?,
     )
 
+    /** Stores the calls an assistant message made, see [MessageEntity.toolCallsJson]. */
+    @Query("UPDATE messages SET toolCallsJson = :toolCallsJson WHERE id = :id")
+    suspend fun updateToolCalls(id: String, toolCallsJson: String?)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertToolCall(toolCall: ToolCallEntity)
+
+    @Query("SELECT COUNT(*) FROM tool_calls WHERE messageId = :messageId AND callId = :callId")
+    suspend fun toolCallCount(messageId: String, callId: String): Int
+
+    /**
+     * Writes a call's `tool` message and audit row together, or nothing when the reply already has a
+     * result for that call id (a stop's cleanup racing the result it was cleaning up after). `true` when written.
+     */
+    @Transaction
+    suspend fun insertToolResult(message: MessageEntity, toolCall: ToolCallEntity): Boolean {
+        if (toolCallCount(toolCall.messageId, toolCall.callId) > 0) return false
+        insertMessage(message)
+        insertToolCall(toolCall)
+        return true
+    }
+
+    @Query("DELETE FROM tool_calls WHERE messageId = :messageId")
+    suspend fun deleteToolCallsForMessage(messageId: String)
+
+    @Query("DELETE FROM tool_calls WHERE messageId IN (SELECT id FROM messages WHERE conversationId = :conversationId)")
+    suspend fun deleteToolCallsForConversation(conversationId: String)
+
     /** Records [tokenCount] for [id], counted with [modelId], see [MessageEntity.tokenCount]. */
     @Query("UPDATE messages SET tokenCount = :tokenCount, tokenCountModelId = :modelId WHERE id = :id")
     suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String)
@@ -86,12 +117,20 @@ interface ChatDao {
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteMessage(id: String)
 
+    /** Deletes a message and the audit rows of the calls it made, see [ChatRepository.deleteMessage]. */
+    @Transaction
+    suspend fun deleteMessageAndToolCalls(id: String) {
+        deleteToolCallsForMessage(id)
+        deleteMessage(id)
+    }
+
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteConversationById(id: String)
 
     /** Deletes [id] and every message under it — cascaded manually, there is no Room FK. */
     @Transaction
     suspend fun deleteConversation(id: String) {
+        deleteToolCallsForConversation(id)
         deleteMessagesForConversation(id)
         deleteConversationById(id)
     }

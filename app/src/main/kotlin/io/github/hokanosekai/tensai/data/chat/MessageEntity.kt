@@ -7,11 +7,8 @@ import androidx.room.PrimaryKey
 /**
  * A single message in a [ConversationEntity]'s history.
  *
- * The schema is tool-ready without a migration: [toolCallsJson] is reserved for a future
- * assistant tool-call message and [role] already accepts `"tool"` (mirroring
- * [io.github.hokanosekai.tensai.engine.MessageRole]) — both are unused (always `null`/absent) until
- * tool-calling ships, so filling them in later is just writing to an existing nullable column, not
- * a schema change.
+ * Tool calling (TEN-172): an assistant message that made calls carries them in [toolCallsJson], and
+ * each result is its own `tool` message (see [toolCallId], [toolName]).
  *
  * @param id stable identifier — the anchor [ChatDao.updateMessage] targets while an assistant
  *   reply streams in (see [ChatRepository.startAssistantMessage]).
@@ -22,8 +19,10 @@ import androidx.room.PrimaryKey
  *   in place via [ChatDao.updateMessage].
  * @param thinking the model's separated `<think>` content, or `null` — reserved for TEN-33, unset
  *   in V1.
- * @param toolCallsJson reserved placeholder for a future tool-call message — see class KDoc.
- *   Always `null` in V1.
+ * @param toolCallsJson the calls an assistant message made, as [ToolCallsJson] encodes them, or `null`
+ *   for none. An assistant message with calls may have empty [content]: it is not a stop before the answer.
+ * @param toolCallId for a `tool` message, the id of the call it answers, `null` otherwise (schema v17).
+ * @param toolName for a `tool` message, the tool that ran, `null` otherwise (schema v17).
  * @param tokensGenerated see [io.github.hokanosekai.tensai.engine.DecodeStats.tokensGenerated] —
  *   `null` until the assistant message finishes generating (or for non-assistant messages).
  * @param tokPerSec see [io.github.hokanosekai.tensai.engine.DecodeStats.tokPerSec]. Definition
@@ -63,4 +62,6 @@ data class MessageEntity(
     val createdAt: Long,
     val tokenCount: Int? = null,
     val tokenCountModelId: String? = null,
+    val toolCallId: String? = null,
+    val toolName: String? = null,
 )

@@ -107,31 +107,62 @@ enum class MessageRole {
 }
 
 /**
- * Placeholder for a single tool invocation requested by the model.
+ * A single tool invocation requested by the model (TEN-172).
  *
- * Reserved for future tool-calling support — no current engine
- * implementation produces or interprets this yet.
- *
- * @param id engine/model-assigned call identifier.
+ * @param id call identifier, echoed by the `tool` message that answers it ([ChatMessage.toolCallId]).
  * @param name name of the tool being invoked.
- * @param argumentsJson tool arguments, as a raw JSON string.
+ * @param argumentsJson tool arguments, as the model wrote them: a JSON object string that may not
+ *   match the tool's schema.
  */
 data class ToolCall(
     val id: String,
     val name: String,
     val argumentsJson: String,
+) {
+    /**
+     * This call as it can be replayed into a prompt: llama.kt refuses a call whose arguments are not
+     * a JSON object, and a model that wrote garbage must not break every later turn. Valid arguments
+     * are kept as they are, anything else becomes `{}`. The stored call keeps what the model wrote.
+     */
+    fun replayable(): ToolCall = try {
+        org.json.JSONObject(argumentsJson)
+        this
+    } catch (_: org.json.JSONException) {
+        copy(argumentsJson = "{}")
+    }
+}
+
+/**
+ * A tool the model may call, as the prompt describes it.
+ *
+ * @param parametersJson JSON Schema of the arguments, as a string.
+ */
+data class ToolDefinition(
+    val name: String,
+    val description: String,
+    val parametersJson: String,
 )
+
+/** Whether the model may call the tools of a [DecodeRequest]. */
+enum class ToolChoice {
+    /** The model decides. */
+    Auto,
+
+    /** The tools stay described in the prompt (same prefix, same KV cache) but no call is allowed. */
+    None,
+}
 
 /**
  * A single message in a chat conversation.
  *
- * @param toolCalls reserved placeholder for tool-calling support — see
- *   [ToolCall]. Always `null` until an engine implementation supports it.
+ * @param toolCalls calls an assistant message made, replayed next to their results. `null` or empty for none.
+ * @param toolCallId for [MessageRole.Tool], the [ToolCall.id] the message answers.
  */
 data class ChatMessage(
     val role: MessageRole,
     val content: String,
     val toolCalls: List<ToolCall>? = null,
+    val toolCallId: String? = null,
 )
 
 /**
@@ -365,10 +396,15 @@ enum class StopReason {
  * @param messages the conversation so far, in order. Implementations are
  *   expected to apply the model's own chat template.
  * @param sampling see [SamplingConfig].
+ * @param tools tools rendered into the prompt. Empty (the default) is the plain path, untouched by
+ *   tool calling: same formatting, no parse of the reply, no [DecodeEvent.ToolTurn].
+ * @param toolChoice see [ToolChoice]. Ignored when [tools] is empty.
  */
 data class DecodeRequest(
     val messages: List<ChatMessage>,
     val sampling: SamplingConfig = SamplingConfig(),
+    val tools: List<ToolDefinition> = emptyList(),
+    val toolChoice: ToolChoice = ToolChoice.Auto,
 )
 
 /**
@@ -433,6 +469,28 @@ sealed class DecodeEvent {
      *   found none.
      */
     data class Parsed(val content: String, val reasoning: String?) : DecodeEvent()
+
+    /**
+     * The finished reply of a request with [DecodeRequest.tools], as the engine's chat parser split
+     * it (TEN-172). Emitted once, before [Done], and only for a decode that generated something:
+     * an interrupted or failed one reports nothing. Never emitted for a request without tools.
+     *
+     * @param content the answer, call markup stripped (the raw reply when [toolParseFailed]).
+     * @param reasoning the reasoning, or `null`.
+     * @param toolCalls the calls found. Empty when there are none, when the reply was [truncated]
+     *   (its last call would be half-written) or when the parse failed.
+     * @param toolsIgnored the model's template could not render the tools: the model never heard of them.
+     * @param toolParseFailed the parser rejected the reply (a malformed call, typically). Nothing is thrown for it.
+     * @param truncated the reply stopped on the token cap or a full context window, not on its own end.
+     */
+    data class ToolTurn(
+        val content: String,
+        val reasoning: String?,
+        val toolCalls: List<ToolCall>,
+        val toolsIgnored: Boolean,
+        val toolParseFailed: Boolean,
+        val truncated: Boolean,
+    ) : DecodeEvent()
 
     /** Generation finished normally (EOS, stop sequence, or [SamplingConfig.maxTokens] reached). */
     data class Done(val stats: DecodeStats) : DecodeEvent()

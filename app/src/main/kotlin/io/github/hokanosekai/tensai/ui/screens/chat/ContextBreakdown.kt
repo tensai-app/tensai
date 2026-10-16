@@ -3,7 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.chat
 import kotlin.math.roundToInt
 
 /** One slice of the context window, in the order the sheet lists them. */
-enum class ContextPart { System, User, Assistant, Thinking, Overhead, Reserved, Free }
+enum class ContextPart { System, User, Assistant, ToolDefinitions, ToolResults, Thinking, Overhead, Reserved, Free }
 
 /** A [ContextPart] with something in it: [percent] is of the whole window, 0 when under half a percent (shown "<1"). */
 data class ContextPartRow(val part: ContextPart, val tokens: Int, val percent: Int)
@@ -30,8 +30,20 @@ data class ContextBreakdown(
 }
 
 /** Token counts of what the conversation sends, per part. */
-data class ContextCounts(val system: Int = 0, val user: Int = 0, val assistant: Int = 0, val thinking: Int = 0) {
-    val sum: Int get() = system + user + assistant + thinking
+/**
+ * [toolDefinitions]: the tools' name, description and schema as text, an approximation of what the
+ * template renders (its own wrapping stays in overhead). [toolResults]: `tool` messages plus the
+ * serialized calls of assistant messages (TEN-172).
+ */
+data class ContextCounts(
+    val system: Int = 0,
+    val user: Int = 0,
+    val assistant: Int = 0,
+    val thinking: Int = 0,
+    val toolDefinitions: Int = 0,
+    val toolResults: Int = 0,
+) {
+    val sum: Int get() = system + user + assistant + thinking + toolDefinitions + toolResults
 }
 
 /**
@@ -62,6 +74,8 @@ fun contextBreakdown(
         user = counts.user.coerceAtLeast(0),
         assistant = counts.assistant.coerceAtLeast(0),
         thinking = counts.thinking.coerceAtLeast(0),
+        toolDefinitions = counts.toolDefinitions.coerceAtLeast(0),
+        toolResults = counts.toolResults.coerceAtLeast(0),
     )
     val sum = parts.sum
     val estimate = cacheUsed == null || cacheUsed < sum
@@ -82,6 +96,8 @@ fun contextBreakdown(
         row(ContextPart.System, parts.system),
         row(ContextPart.User, parts.user),
         row(ContextPart.Assistant, parts.assistant),
+        row(ContextPart.ToolDefinitions, parts.toolDefinitions),
+        row(ContextPart.ToolResults, parts.toolResults),
         row(ContextPart.Thinking, parts.thinking),
         row(ContextPart.Overhead, overhead),
         row(ContextPart.Reserved, reserved),

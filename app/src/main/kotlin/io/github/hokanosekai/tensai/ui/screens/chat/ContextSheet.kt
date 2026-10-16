@@ -269,6 +269,8 @@ private fun partLabel(part: ContextPart): String = stringResource(
         ContextPart.System -> R.string.context_part_system
         ContextPart.User -> R.string.context_part_user
         ContextPart.Assistant -> R.string.context_part_assistant
+        ContextPart.ToolDefinitions -> R.string.context_part_tool_definitions
+        ContextPart.ToolResults -> R.string.context_part_tool_results
         ContextPart.Thinking -> R.string.context_part_thinking
         ContextPart.Overhead -> R.string.context_part_overhead
         ContextPart.Reserved -> R.string.context_part_reserved
@@ -285,6 +287,7 @@ private fun partColor(part: ContextPart): Color {
         ContextPart.System, ContextPart.Reserved -> muted
         ContextPart.User -> primary
         ContextPart.Assistant -> lerp(primary, MaterialTheme.tensaiColors.success, 0.45f)
+        ContextPart.ToolDefinitions, ContextPart.ToolResults -> lerp(primary, MaterialTheme.tensaiColors.success, 0.8f)
         ContextPart.Thinking -> lerp(primary, MaterialTheme.colorScheme.error, 0.5f)
         ContextPart.Overhead -> muted.copy(alpha = 0.5f)
         ContextPart.Free -> Color.Transparent

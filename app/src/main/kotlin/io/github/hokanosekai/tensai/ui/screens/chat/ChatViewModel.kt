@@ -1,5 +1,9 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
+import io.github.hokanosekai.tensai.agent.AgentEvent
+import io.github.hokanosekai.tensai.agent.AgentRuntime
+import io.github.hokanosekai.tensai.agent.ReplyGenerator
+import io.github.hokanosekai.tensai.agent.ToolCallOutcome
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
@@ -19,6 +23,7 @@ import io.github.hokanosekai.tensai.engine.LoadedModelInfo
 import io.github.hokanosekai.tensai.engine.ReasoningBudget
 import io.github.hokanosekai.tensai.engine.SamplingConfig
 import io.github.hokanosekai.tensai.engine.StopReason
+import io.github.hokanosekai.tensai.engine.ToolCall
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.GenerationStopSignal
@@ -26,6 +31,7 @@ import io.github.hokanosekai.tensai.runtime.InferenceQueue
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.runtime.residentModel
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -157,8 +163,10 @@ private fun MessageEntity.toUi(): ChatMessageUi? {
     val isUser = when (role) {
         "user" -> true
         "assistant" -> false
-        else -> return null // system/tool: nothing to render in V1.
+        else -> return null // system/tool: nothing to render in V1, TEN-173 renders tool messages.
     }
+    // The assistant message of a tool call with nothing said before it is a trace, not a reply.
+    if (role == "assistant" && content.isEmpty() && !toolCallsJson.isNullOrBlank()) return null
     val stats = if (tokensGenerated != null && tokPerSec != null && ttftMs != null) {
         val truncation = when (stopReason) {
             StopReason.ReasoningBudgetExhausted.name -> TruncationReason.Reasoning
@@ -265,6 +273,17 @@ internal fun hasPersistableContent(content: String, thinking: String?): Boolean 
 internal fun keepsEmptyTurn(stopReason: StopReason?): Boolean = stopReason == StopReason.Cancelled
 
 /**
+ * What an agent turn ends on when the model, after its tool calls, wrote no answer at all (TEN-172).
+ * Stored text, so it follows the app language ([language] is a two-letter code) rather than a resource.
+ */
+internal fun toolFallbackMessage(language: String): String =
+    if (language == "fr") {
+        "Je n'ai pas pu terminer avec les outils disponibles."
+    } else {
+        "I couldn't finish with the tools available."
+    }
+
+/**
  * The per-conversation settings the chat screen edits, in the shape [ConversationEntity] stores
  * them. Read off the row once there is one, held in memory for a draft (TEN-106) and handed to
  * [ChatRepository.createConversation] on the draft's first send. The defaults are a fresh row's.
@@ -308,6 +327,7 @@ class ChatViewModel(
     private val modelRepository: ModelRepository = RuntimeGraph.modelRepository,
     private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
+    private val agentRuntime: AgentRuntime = RuntimeGraph.agentRuntime,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -341,6 +361,16 @@ class ChatViewModel(
     private val _generatingHere = MutableStateFlow(false)
 
     /**
+     * `true` for as long as an agent turn *this* instance started is running, tool execution included:
+     * the queue is idle then, so [canStop] cannot read it off [queueState]. See [stop].
+     */
+    private val _agentRunning = MutableStateFlow(false)
+
+    /** The running agent turn's stop signal, marked by [stop] so the reply it cuts is recorded as stopped. */
+    @Volatile
+    private var agentStopSignal: GenerationStopSignal? = null
+
+    /**
      * Whether the stop button on *this* conversation's screen would stop a reply belonging to it
      * (TEN-79).
      *
@@ -359,8 +389,9 @@ class ChatViewModel(
      * one saying "mine" is enough; requiring both would inherit both weaknesses.
      */
     val canStop: Flow<Boolean> =
-        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId) { state, active, here, id ->
-            state is QueueState.Generating && (here || (id != null && active?.first == id))
+        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId, _agentRunning) { state, active, here, id, agent ->
+            // An agent turn is stoppable between its generations too: a tool runs while the queue is idle.
+            agent || (state is QueueState.Generating && (here || (id != null && active?.first == id)))
         }
 
     /**
@@ -382,6 +413,16 @@ class ChatViewModel(
         combine(inferenceQueue.state, modelRepository.models) { state, models ->
             val loadedId = state.residentModel?.modelId ?: return@combine false
             models.any { it.id == loadedId && it.thinkingAvailable }
+        }
+
+    /**
+     * Whether the currently loaded model's chat template takes tools, the Tools badge's own rule
+     * ([io.github.hokanosekai.tensai.data.models.ModelEntity.toolsAvailable]). Gates the agent path of [generateReply].
+     */
+    val currentModelSupportsTools: Flow<Boolean> =
+        combine(inferenceQueue.state, modelRepository.models) { state, models ->
+            val loadedId = state.residentModel?.modelId ?: return@combine false
+            models.any { it.id == loadedId && it.toolsAvailable }
         }
 
     /** This conversation's persisted thinking toggle — see [ConversationEntity.enableThinking]. Defaults to `true` (matching [SamplingConfig.enableThinking]'s default) until the conversation row is read. */
@@ -598,6 +639,14 @@ class ChatViewModel(
      */
     fun stop() {
         inferenceQueue.cancelActive()
+        // The notification's Stop only calls [InferenceQueue.cancelActive], so it does nothing during a tool: only
+        // this in-app Stop ends the turn there (see [AgentRuntime]).
+        // A tool running between two generations has no queue job to cancel: end the whole turn, its
+        // `finally` records what was cut. Marked first, for the reason [InferenceQueue.cancelActive] does.
+        if (_agentRunning.value) {
+            agentStopSignal?.markRequested()
+            generationJob?.cancel()
+        }
     }
 
     /**
@@ -623,10 +672,10 @@ class ChatViewModel(
         _error.value = null
         warmUpJob?.cancel()
         generationJob = scope.launch {
-            val last = chatRepository.observeMessages(conversationId).first().lastOrNull()
-            if (last != null && last.role == "assistant") {
-                chatRepository.deleteMessage(last.id)
-            }
+            // The whole last turn: with tools it is replies and tool results, not one assistant message.
+            chatRepository.observeMessages(conversationId).first()
+                .takeLastWhile { it.role == "assistant" || it.role == "tool" }
+                .forEach { chatRepository.deleteMessage(it.id) }
             generateReply(conversationId)
         }
     }
@@ -670,6 +719,10 @@ class ChatViewModel(
     private var lastWindow = 0
     private var lastOverhead: Int? = null
     private var lastSystemCount: Pair<String, Int>? = null
+    private var lastToolDefinitionsCount: Pair<String, Int>? = null
+
+    /** Tokens of an assistant message's serialized tool calls, by message id: not stored, counted once per instance. */
+    private val toolCallTokens = HashMap<String, Int>()
 
     fun openContextSheet() {
         _contextSheetOpen.value = true
@@ -698,17 +751,34 @@ class ChatViewModel(
         var history = id?.let { chatRepository.observeMessages(it).first() }.orEmpty()
         val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
 
+        // Tools only weigh on the prompt when the agent path would run: their definitions are rendered
+        // into it, and the calls and results of earlier turns are replayed (TEN-172).
+        val toolsInPlay = conversation?.toolsEnabled != false && agentRuntime.hasTools() &&
+            (info?.modelId?.let { modelId -> modelRepository.models.first().any { it.id == modelId && it.toolsAvailable } } ?: false)
+        val definitionsText = if (toolsInPlay) {
+            agentRuntime.definitions().joinToString("\n") { "${it.name}: ${it.description} ${it.parametersJson}" }
+        } else {
+            null
+        }
+
         if (info != null) {
             val countedWith = info.modelId ?: info.name
             val stale = history.filter {
-                (it.role == "user" || it.role == "assistant") && it.content.isNotEmpty() &&
+                (it.role == "user" || it.role == "assistant" || it.role == "tool") && it.content.isNotEmpty() &&
                     (it.tokenCount == null || it.tokenCountModelId != countedWith)
             }
-            val texts = stale.map { it.content } + listOfNotNull(systemPrompt)
+            val uncountedCalls = history.filter {
+                it.role == "assistant" && !it.toolCallsJson.isNullOrBlank() && it.id !in toolCallTokens
+            }
+            val texts = stale.map { it.content } + uncountedCalls.map { it.toolCallsJson!! } +
+                listOfNotNull(systemPrompt, definitionsText)
             val counted = if (texts.isEmpty()) emptyList() else inferenceQueue.countTokens(texts)
             if (counted != null) {
                 stale.forEachIndexed { i, message -> chatRepository.setTokenCount(message.id, counted[i], countedWith) }
-                if (systemPrompt != null) lastSystemCount = systemPrompt to counted.last()
+                uncountedCalls.forEachIndexed { i, message -> toolCallTokens[message.id] = counted[stale.size + i] }
+                var next = stale.size + uncountedCalls.size
+                if (systemPrompt != null) lastSystemCount = systemPrompt to counted[next++]
+                if (definitionsText != null) lastToolDefinitionsCount = definitionsText to counted[next]
                 if (stale.isNotEmpty() && id != null) history = chatRepository.observeMessages(id).first()
             }
         }
@@ -718,6 +788,10 @@ class ChatViewModel(
             system = systemPrompt?.let { prompt -> lastSystemCount?.takeIf { it.first == prompt }?.second } ?: 0,
             user = inPrompt.filter { it.role == "user" }.sumOf { it.tokenCount ?: 0 },
             assistant = inPrompt.filter { it.role == "assistant" }.sumOf { it.tokenCount ?: 0 },
+            toolDefinitions = definitionsText?.let { text -> lastToolDefinitionsCount?.takeIf { it.first == text }?.second } ?: 0,
+            // An assistant message of calls only has no content, so it is counted here and not above.
+            toolResults = inPrompt.filter { it.role == "tool" }.sumOf { it.tokenCount ?: 0 } +
+                history.filter { it.role == "assistant" }.sumOf { toolCallTokens[it.id] ?: 0 },
         )
         if (info != null) lastWindow = info.nCtxEffective
         val owner = ActiveSessionTracker.current.value?.first
@@ -729,7 +803,9 @@ class ChatViewModel(
             reserve = ContextBudget.ReservedTokens,
             lastOverhead = lastOverhead,
         )
-        if (!breakdown.estimate) {
+        // Not measured while tools are in the count: their template wrapping lands in the overhead too, and
+        // would stick to the estimate of a conversation that has none.
+        if (!breakdown.estimate && counts.toolDefinitions + counts.toolResults == 0) {
             lastOverhead = breakdown.rows.firstOrNull { it.part == ContextPart.Overhead }?.tokens ?: 0
         }
 
@@ -812,7 +888,22 @@ class ChatViewModel(
 
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
+        // Tools need a template that takes them, the conversation's switch on, and a tool the user granted.
+        // Anything else is the plain path below, untouched by tool calling (TEN-172).
+        if (conversation?.toolsEnabled != false && currentModelSupportsTools.first() && agentRuntime.hasTools()) {
+            streamAgentTurn(conversationId, decodeRequestFor(conversation, history))
+            return
+        }
         val assistantId = chatRepository.startAssistantMessage(conversationId)
+        val request = decodeRequestFor(conversation, history)
+        val finished = streamInto(assistantId, request)
+        if (model != null && finished != null && worthWarmingUp(finished)) {
+            warmUpAfterReply(conversationId, model)
+        }
+    }
+
+    /** The plain [DecodeRequest] of [conversation]'s next reply, see [generateReply] for where each setting comes from. */
+    private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>): DecodeRequest {
         val enableThinking = conversation?.enableThinking ?: true
         val thinkingActive = enableThinking && currentModelSupportsThinking.first()
         val sampling = SamplingJson.decode(conversation?.samplingJson)
@@ -821,14 +912,10 @@ class ChatViewModel(
         } else {
             null
         }
-        val request = DecodeRequest(
+        return DecodeRequest(
             messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
             sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
-        val finished = streamInto(assistantId, request)
-        if (model != null && finished != null && worthWarmingUp(finished)) {
-            warmUpAfterReply(conversationId, model)
-        }
     }
 
     /**
@@ -1079,6 +1166,8 @@ class ChatViewModel(
                         }
                     }
                     is DecodeEvent.Done -> stats = event.stats
+                    // Only a request with tools yields one, and this path never has any.
+                    is DecodeEvent.ToolTurn -> Unit
                     // The cause is deliberately not kept. Nothing downstream is allowed to show it
                     // (TEN-39), so holding on to it would only be an invitation to.
                     is DecodeEvent.Error -> failed = true
@@ -1154,5 +1243,139 @@ class ChatViewModel(
             }
         }
         return finished
+    }
+
+    /**
+     * The agent path of [generateReply] (TEN-172): runs [request] through [agentRuntime] and records
+     * each step as it comes. A turn is several assistant messages: every [AgentEvent.ReplyStarted]
+     * opens one (streamed and throttled as in [streamInto]), a reply that made calls keeps them in
+     * its `toolCallsJson`, and each [AgentEvent.ToolCallFinished] adds the `tool` message and the audit
+     * row. Nothing is shown for them yet, [toUi] hides both until TEN-173.
+     *
+     * Stop ends the turn by cancellation, wherever it is, tool execution included (see [stop]). The
+     * `finally` then closes what was cut: calls of the last reply that never finished get a `stopped`
+     * result (a flow cannot emit once cancelled, so the runtime leaves that to us) and a reply cut
+     * mid-stream ends as [streamInto]'s would, kept when it has content or was stopped.
+     */
+    private suspend fun streamAgentTurn(conversationId: String, request: DecodeRequest) {
+        val stopSignal = GenerationStopSignal()
+        agentStopSignal = stopSignal
+        var parser = ReplyStreamSplitter()
+        // The reply being streamed, and the last one that made calls: the audit rows point at it.
+        var openReplyId: String? = null
+        var callingReplyId: String? = null
+        // Calls of [callingReplyId] with no result recorded yet.
+        var unanswered = emptyList<ToolCall>()
+        var lastStats: DecodeStats? = null
+        var failed = false
+        var lastPersistAt = 0L
+
+        suspend fun persistThrottled() {
+            val now = System.currentTimeMillis()
+            val id = openReplyId ?: return
+            if (now - lastPersistAt >= StreamPersistIntervalMs) {
+                chatRepository.updateAssistantMessage(id, parser.content, parser.thinking)
+                lastPersistAt = now
+            }
+        }
+
+        _generatingHere.value = true
+        _agentRunning.value = true
+        try {
+            agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }).collect { event ->
+                when (event) {
+                    AgentEvent.TurnStarted -> Unit
+                    is AgentEvent.ReplyStarted -> {
+                        parser = ReplyStreamSplitter()
+                        lastPersistAt = 0L
+                        // Not cancellable: an id that never reaches [openReplyId] is a row nobody closes.
+                        openReplyId = withContext(NonCancellable) { chatRepository.startAssistantMessage(conversationId) }
+                    }
+                    is AgentEvent.Token -> {
+                        parser.accept(event.text)
+                        persistThrottled()
+                    }
+                    is AgentEvent.Parsed -> {
+                        parser.acceptParsed(event.content, event.reasoning)
+                        persistThrottled()
+                    }
+                    is AgentEvent.ReplyFinished -> {
+                        val id = openReplyId ?: return@collect
+                        openReplyId = null
+                        parser.finish()
+                        // Before any write: a stop landing in the middle of them must still find these calls to close.
+                        if (event.calls.isNotEmpty()) {
+                            callingReplyId = id
+                            unanswered = event.calls
+                        }
+                        // With calls (or calls dropped after the limit), the engine's own content is the one
+                        // without the call markup.
+                        var content = if ((event.calls.isNotEmpty() || event.droppedCalls) && event.content != null) event.content else parser.content
+                        // The answer after tool use came out empty: say so rather than leave bare calls on screen.
+                        val noAnswer = event.index > 0 && event.calls.isEmpty() &&
+                            !hasPersistableContent(content, parser.thinking) &&
+                            event.stats?.stopReason != StopReason.ContextBudgetExhausted &&
+                            event.stats?.stopReason != StopReason.ContextBudgetClipped
+                        if (noAnswer) content = toolFallbackMessage(Locale.getDefault().language)
+                        // Not cancellable: the reply and its calls land together, or the `finally` below has
+                        // nothing coherent to close.
+                        withContext(NonCancellable) {
+                            if (event.calls.isNotEmpty() || hasPersistableContent(content, parser.thinking)) {
+                                chatRepository.updateAssistantMessage(id, content, parser.thinking, event.stats)
+                                chatRepository.setToolCalls(id, event.calls)
+                            } else {
+                                chatRepository.deleteMessage(id)
+                            }
+                        }
+                        lastStats = event.stats
+                    }
+                    is AgentEvent.ToolCallStarted -> Unit
+                    is AgentEvent.ToolCallFinished -> {
+                        val replyId = callingReplyId ?: return@collect
+                        withContext(NonCancellable) { chatRepository.recordToolCall(conversationId, replyId, event.outcome) }
+                        unanswered = unanswered.filterNot { it.id == event.outcome.call.id }
+                    }
+                    AgentEvent.Done -> Unit
+                    is AgentEvent.Error -> failed = true
+                }
+            }
+        } finally {
+            _agentRunning.value = false
+            _generatingHere.value = false
+            agentStopSignal = null
+            refreshContextUsage()
+            var keptCutReply = false
+            withContext(NonCancellable) {
+                val replyId = callingReplyId
+                if (replyId != null) {
+                    for (call in unanswered) {
+                        val outcome = ToolCallOutcome.stopped(call, agentRuntime.tierOf(call.name), System.currentTimeMillis())
+                        chatRepository.recordToolCall(conversationId, replyId, outcome)
+                    }
+                }
+                openReplyId?.let { id ->
+                    parser.finish()
+                    val stopReason = when {
+                        failed -> StopReason.Failed
+                        stopSignal.wasRequested -> StopReason.Cancelled
+                        else -> null
+                    }
+                    keptCutReply = hasPersistableContent(parser.content, parser.thinking)
+                    if (keptCutReply || keepsEmptyTurn(stopReason)) {
+                        chatRepository.updateAssistantMessage(id, parser.content, parser.thinking, stopReason = stopReason)
+                    } else {
+                        chatRepository.deleteMessage(id)
+                    }
+                }
+            }
+            // The same two banners as [streamInto], read off the last reply that finished.
+            if (lastStats?.stopReason == StopReason.ContextBudgetExhausted ||
+                lastStats?.stopReason == StopReason.ContextBudgetClipped
+            ) {
+                _error.value = ChatError.ContextWindowFull
+            } else if (failed && !keptCutReply) {
+                _error.value = ChatError.GenerationFailed
+            }
+        }
     }
 }

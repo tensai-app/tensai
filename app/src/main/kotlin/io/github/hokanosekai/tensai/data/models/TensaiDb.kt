@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
 import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.download.DownloadDao
@@ -62,6 +63,9 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
  *
  * Version 16 added `messages.tokenCount` and `messages.tokenCountModelId` (TEN-161), see [TensaiDbMigrations.MIGRATION_15_16].
  *
+ * Version 17 added tool calling (TEN-172): `messages.toolCallId`/`toolName`, `conversations.toolsEnabled` and the
+ * [ToolCallEntity] table, see [TensaiDbMigrations.MIGRATION_16_17].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -74,8 +78,9 @@ import io.github.hokanosekai.tensai.download.DownloadEntity
         MessageEntity::class,
         SessionEntity::class,
         DownloadEntity::class,
+        ToolCallEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {
