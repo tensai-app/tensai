@@ -10,7 +10,12 @@ package io.github.hokanosekai.tensai.engine
 open class EngineException(message: String?, cause: Throwable? = null) : Exception(message, cause)
 
 /** A model failed to load (bad path, corrupt/unsupported file, native load aborted, …). */
-class ModelLoadException(message: String?, cause: Throwable? = null) : EngineException(message, cause)
+class ModelLoadException(
+    message: String?,
+    cause: Throwable? = null,
+    /** The first error line llama.cpp logged during the failed load (TEN-167), null when it logged none. */
+    val nativeReason: String? = null,
+) : EngineException(message, cause)
 
 /** A decode (completion) request failed after the model was successfully loaded. */
 class InferenceException(message: String?, cause: Throwable? = null) : EngineException(message, cause)

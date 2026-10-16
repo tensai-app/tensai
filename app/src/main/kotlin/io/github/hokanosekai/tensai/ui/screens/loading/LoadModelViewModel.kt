@@ -18,6 +18,7 @@ import io.github.hokanosekai.tensai.runtime.LoadPlan
 import io.github.hokanosekai.tensai.runtime.LoadPolicy
 import io.github.hokanosekai.tensai.runtime.LoadProgressMap
 import io.github.hokanosekai.tensai.runtime.QueueState
+import io.github.hokanosekai.tensai.runtime.residentModelId
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -95,6 +96,8 @@ sealed class LoadUiState {
          * when the device has no GPU backend, and [BackendHint.Gpu] silently falls back the same way.
          */
         val canRetryOnCpu: Boolean,
+        /** The architecture named by [LoadFailure.UnsupportedArchitecture]'s sentence. */
+        val detail: String? = null,
     ) : LoadUiState()
 }
 
@@ -169,6 +172,17 @@ class LoadModelViewModel(
             val profile = deviceProfile()
             val prefs = contextPrefs()
             val compatibility = CompatibilityChecker.check(model, profile, prefs.setting, prefs.autoShare)
+            // No override for these: there is no "Load anyway", and the engine would only refuse. Not even
+            // an attempt, so llama.cpp is not asked (and does not log its error) twice, see TEN-167.
+            if (compatibility.verdict.isBlocked && queue.residentModelId != model.id) {
+                _state.value = LoadUiState.GenericFailed(
+                    model,
+                    if (compatibility.verdict == Verdict.DraftModel) LoadFailure.IncompleteModel else LoadFailure.UnsupportedArchitecture,
+                    canRetryOnCpu = false,
+                    detail = compatibility.architecture,
+                )
+                return@launch
+            }
             if (compatibility.verdict == Verdict.WontFit && !confirmedOverride) {
                 _state.value = LoadUiState.Blocked(model, compatibility)
                 return@launch
@@ -282,6 +296,7 @@ class LoadModelViewModel(
                     model,
                     LoadFailure.of(e),
                     canRetryOnCpu = config.backend != BackendHint.Cpu && (profile.hasVulkan || profile.hasOpenCl),
+                    detail = LoadFailure.unknownArchitectureOf(e),
                 )
             } finally {
                 progressJob.cancel()

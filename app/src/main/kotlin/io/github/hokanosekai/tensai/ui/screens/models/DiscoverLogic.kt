@@ -53,7 +53,7 @@ internal object DiscoverLogic {
         val steady = OnboardingCatalog.steadyProfile(profile)
         return catalog
             .map { it to CompatibilityChecker.check(it.facts, steady).verdict }
-            .filter { (_, verdict) -> verdict != Verdict.WontFit }
+            .filter { (_, verdict) -> verdict != Verdict.WontFit && !verdict.isBlocked }
             .sortedWith(compareBy({ (_, verdict) -> verdict.ordinal }, { (model, _) -> -model.facts.paramCount }))
             .map { (model, verdict) ->
                 RepoCardModel(
@@ -104,9 +104,9 @@ internal object DiscoverLogic {
         )
     }
 
-    /** Whether [card] passes [filters]: "Fits my phone" drops [Verdict.WontFit], Tools and Vision need the badge. */
+    /** Whether [card] passes [filters]: "Fits my phone" drops [Verdict.WontFit] and the blocked ones, Tools and Vision need the badge. */
     fun matches(card: RepoCardModel, filters: DiscoverFilters): Boolean =
-        (!filters.fits || card.verdict != Verdict.WontFit) && (!filters.tools || card.tools) && (!filters.vision || card.vision)
+        (!filters.fits || (card.verdict != Verdict.WontFit && !card.verdict.isBlocked)) && (!filters.tools || card.tools) && (!filters.vision || card.vision)
 
     /**
      * The repos of a feed that are listed under [filters], in display order. A repo whose card has not

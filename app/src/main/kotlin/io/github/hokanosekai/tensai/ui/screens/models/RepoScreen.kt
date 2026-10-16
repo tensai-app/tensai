@@ -320,7 +320,7 @@ private fun QuantRowItem(row: QuantRow, onClick: () -> Unit) {
             .background(if (row.selected) MaterialTheme.tensaiTints.primary08 else Color.Transparent)
             .selectable(selected = row.selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .alpha(if (row.verdict == Verdict.WontFit) 0.55f else 1f),
+            .alpha(if (row.verdict == Verdict.WontFit || row.verdict.isBlocked) 0.55f else 1f),
     ) {
         Radio(row.selected)
         Column(modifier = Modifier.weight(1f)) {
@@ -576,6 +576,24 @@ private fun ActionBar(
                                 variant = TensaiButtonVariant.Outlined,
                             )
                         }
+                    }
+                    is RepoAction.Blocked -> {
+                        Text(
+                            text = stringResource(
+                                if (action.verdict == Verdict.DraftModel) R.string.model_draft_explanation else R.string.model_unsupported_explanation,
+                                action.architecture,
+                            ),
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TensaiButton(
+                            text = stringResource(R.string.repo_download_blocked),
+                            onClick = {},
+                            size = TensaiButtonSize.Lg,
+                            icon = Icons.Default.Download,
+                            enabled = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     is RepoAction.NeedsToken -> TokenCard(invalid = action.invalid, onOpenSettings = onOpenSettings)
                     is RepoAction.NeedsLicense -> LicenseCard(onOpenPage = onOpenPage, onRetry = { onRetry(action.id) })

@@ -48,6 +48,8 @@ internal fun compatLabel(verdict: Verdict): String = stringResource(
         Verdict.RunsWell -> R.string.model_compat_runs_well
         Verdict.TightFit -> R.string.model_compat_tight_fit
         Verdict.WontFit -> R.string.model_compat_wont_fit
+        Verdict.Unsupported -> R.string.model_compat_unsupported
+        Verdict.DraftModel -> R.string.model_compat_draft
     },
 )
 
@@ -66,3 +68,14 @@ internal fun compatExplanation(compatibility: Compatibility): String = stringRes
     formatGigabytes(compatibility.estimatedBytes),
     formatGigabytes(compatibility.deviceRamBytes),
 )
+
+/**
+ * Why a [Verdict.isBlocked] model has no Load action: the one sentence cards, the picker and the
+ * detail screen share (TEN-167). Takes the [Compatibility] like [compatExplanation], so the
+ * architecture named is the one the verdict was decided from.
+ */
+@Composable
+internal fun blockedExplanation(compatibility: Compatibility): String = when (compatibility.verdict) {
+    Verdict.DraftModel -> stringResource(R.string.model_draft_explanation)
+    else -> stringResource(R.string.model_unsupported_explanation, compatibility.architecture)
+}

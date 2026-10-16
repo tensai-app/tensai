@@ -152,6 +152,7 @@ fun LoadingScreen(
 
             is LoadUiState.GenericFailed -> GenericFailDialog(
                 failure = state.failure,
+                detail = state.detail,
                 onRetry = viewModel::retry,
                 onRetryOnCpu = viewModel::retryOnCpu,
                 canRetryOnCpu = state.canRetryOnCpu,
@@ -340,6 +341,7 @@ private fun OomDialog(model: ModelEntity, onSeeSmallerModels: () -> Unit, onClos
 @Composable
 private fun GenericFailDialog(
     failure: LoadFailure,
+    detail: String?,
     onRetry: () -> Unit,
     onRetryOnCpu: () -> Unit,
     canRetryOnCpu: Boolean,
@@ -350,19 +352,27 @@ private fun GenericFailDialog(
         icon = Icons.Default.ErrorOutline,
         iconTint = MaterialTheme.colorScheme.error,
         title = stringResource(R.string.load_failed_title),
-        body = stringResource(
-            when (failure) {
-                LoadFailure.UnreadableModel -> R.string.load_failed_unreadable
-                LoadFailure.EngineBusy -> R.string.load_failed_busy
-                LoadFailure.Unknown -> R.string.load_failed_unknown
-            },
-        ),
+        body = when {
+            failure == LoadFailure.UnsupportedArchitecture && !detail.isNullOrBlank() ->
+                stringResource(R.string.load_failed_unsupported, detail)
+            else -> stringResource(
+                when (failure) {
+                    LoadFailure.UnreadableModel, LoadFailure.UnsupportedArchitecture -> R.string.load_failed_unreadable
+                    LoadFailure.EngineBusy -> R.string.load_failed_busy
+                    LoadFailure.IncompleteModel -> R.string.load_failed_incomplete
+                    LoadFailure.Unknown -> R.string.load_failed_unknown
+                },
+            )
+        },
         actions = buildList {
             add(TensaiDialogAction(stringResource(R.string.action_close), onClose))
-            if (canRetryOnCpu) {
-                add(TensaiDialogAction(stringResource(R.string.loading_retry_on_cpu), onRetryOnCpu))
+            // The same file fails the same way: a retry is a dead button (TEN-167).
+            if (!failure.isDeterministic) {
+                if (canRetryOnCpu) {
+                    add(TensaiDialogAction(stringResource(R.string.loading_retry_on_cpu), onRetryOnCpu))
+                }
+                add(TensaiDialogAction(stringResource(R.string.loading_retry), onRetry))
             }
-            add(TensaiDialogAction(stringResource(R.string.loading_retry), onRetry))
         },
     )
 }

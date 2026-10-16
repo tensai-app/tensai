@@ -230,6 +230,7 @@ fun ModelDetailScreen(
                     val plannedCtx = compatibility.plannedCtx
                     val backend = rememberBackendTag(compatibility)
                     val wontFit = compatibility.verdict == Verdict.WontFit && !isLoaded
+                    val blocked = compatibility.verdict.isBlocked && !isLoaded
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -275,6 +276,7 @@ fun ModelDetailScreen(
                             CardFacts(cardFacts(model.displayQuant, model.sizeBytes, if (exists) backend else null), modifier = Modifier.padding(top = 8.dp))
                             CardChips(cardChips(tools = model.toolsAvailable, thinking = model.thinkingAvailable, noTemplate = !model.hasChatTemplate), modifier = Modifier.padding(top = 12.dp))
                             if (wontFit && exists) WontFitLine(compatibility, modifier = Modifier.padding(top = 8.dp))
+                            if (blocked && exists) BlockedLine(compatibility, modifier = Modifier.padding(top = 8.dp))
                         }
 
                         SectionLabel(stringResource(R.string.model_detail_section_model))
@@ -441,7 +443,7 @@ fun ModelDetailScreen(
                         ) {
                             // Same selection as the card; a missing, unloaded file has only the
                             // "Remove from library" button below.
-                            val action = modelAction(isLoaded, exists, wontFit)
+                            val action = modelAction(isLoaded, exists, wontFit, blocked)
                             if (action != ModelAction.Remove) {
                                 ModelActionButton(
                                     action = action,

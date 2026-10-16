@@ -115,6 +115,7 @@ internal fun ModelCard(
     downloaded: Boolean = false,
 ) {
     val wontFit = compatibility?.verdict == Verdict.WontFit && !isLoaded
+    val blocked = compatibility?.verdict?.isBlocked == true && !isLoaded
     val params = if (model.paramCount > 0) formatParamCount(model.paramCount) else null
     ModelCardFrame(
         title = model.shownName,
@@ -141,8 +142,11 @@ internal fun ModelCard(
                 if (wontFit && compatibility != null) {
                     WontFitLine(compatibility, modifier = Modifier.padding(bottom = 8.dp))
                 }
+                if (blocked && compatibility != null) {
+                    BlockedLine(compatibility, modifier = Modifier.padding(bottom = 8.dp))
+                }
                 ModelActionButton(
-                    action = modelAction(isLoaded, fileExists, wontFit),
+                    action = modelAction(isLoaded, fileExists, wontFit, blocked),
                     onLoad = onLoadClick,
                     onUnload = onUnloadClick,
                     onRemove = { onDeleteClick(false) },
@@ -265,6 +269,18 @@ internal fun WontFitLine(compatibility: Compatibility, modifier: Modifier = Modi
     )
 }
 
+/** Why a blocked model cannot be loaded, in the spot [WontFitLine] takes for a memory verdict (TEN-167). */
+@Composable
+internal fun BlockedLine(compatibility: Compatibility, modifier: Modifier = Modifier) {
+    Text(
+        text = blockedExplanation(compatibility),
+        fontSize = 12.5.sp,
+        lineHeight = 18.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier,
+    )
+}
+
 /** The full-width button for a [ModelAction]. */
 @Composable
 internal fun ModelActionButton(
@@ -282,6 +298,14 @@ internal fun ModelActionButton(
             onClick = onLoad,
             variant = TensaiButtonVariant.Tonal,
             icon = Icons.Default.PlayArrow,
+            modifier = modifier,
+        )
+        ModelAction.LoadBlocked -> TensaiButton(
+            text = stringResource(R.string.model_load),
+            onClick = onLoad,
+            variant = TensaiButtonVariant.Tonal,
+            icon = Icons.Default.PlayArrow,
+            enabled = false,
             modifier = modifier,
         )
         ModelAction.LoadAnyway -> TensaiButton(
@@ -359,7 +383,7 @@ internal fun CompatIndicator(compatibility: Compatibility, modifier: Modifier = 
 internal fun verdictColor(verdict: Verdict): Color = when (verdict) {
     Verdict.RunsWell -> MaterialTheme.tensaiColors.success
     Verdict.TightFit -> MaterialTheme.tensaiColors.warning
-    Verdict.WontFit -> MaterialTheme.colorScheme.error
+    Verdict.WontFit, Verdict.Unsupported, Verdict.DraftModel -> MaterialTheme.colorScheme.error
 }
 
 /**

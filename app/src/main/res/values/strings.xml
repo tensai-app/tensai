@@ -204,6 +204,10 @@
     <string name="model_compat_runs_well">Runs well</string>
     <string name="model_compat_tight_fit">Tight fit</string>
     <string name="model_compat_wont_fit">Won\'t fit</string>
+    <string name="model_compat_unsupported">Not supported</string>
+    <string name="model_compat_draft">Draft model</string>
+    <string name="model_unsupported_explanation">This app can\'t run the %1$s architecture yet.</string>
+    <string name="model_draft_explanation">Draft model for speculative decoding, it can\'t run on its own.</string>
     <!--
          %1$s is the memory this model needs, %2$s what the phone has, both already formatted as
          sizes. The two numbers come from Compatibility.estimatedBytes/deviceRamBytes and nowhere
@@ -238,6 +242,8 @@
     <string name="load_failed_unreadable">This file may be damaged, or it isn\'t a model this app can run. Re-importing only helps if your copy was damaged.</string>
     <string name="load_failed_busy">Something else was still using the model. Give it a moment and try again.</string>
     <string name="load_failed_unknown">Loading stopped before it finished.</string>
+    <string name="load_failed_unsupported">Unknown architecture: %1$s. This app can\'t run it yet.</string>
+    <string name="load_failed_incomplete">This file is incomplete or uses a layout this app can\'t read.</string>
 
     <!-- Chat > a reply that produced nothing at all before breaking. See ChatError.GenerationFailed. -->
     <string name="chat_generation_failed">That reply didn\'t come through. Try again?</string>
@@ -667,6 +673,7 @@
     <string name="repo_show_less">Show less</string>
     <string name="repo_open_on_hf">Open on Hugging Face</string>
     <string name="repo_download">Download · %1$s</string>
+    <string name="repo_download_blocked">Download</string>
     <string name="repo_load">Load model</string>
     <string name="repo_resume">Resume</string>
     <string name="repo_retry">Retry</string>

@@ -49,4 +49,41 @@ class LoadFailureTest {
         assertEquals(LoadFailure.UnreadableModel, LoadFailure.of(ModelLoadException("truncated gguf")))
         assertEquals(LoadFailure.EngineBusy, LoadFailure.of(QueueBusyException("queue is not ready")))
     }
+
+    @Test
+    fun theTwoKnownLlamaCppReasonsAreClassified() {
+        val unknownArch = ModelLoadException(
+            "x",
+            nativeReason = "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'spark2_5'",
+        )
+        assertEquals(LoadFailure.UnsupportedArchitecture, LoadFailure.of(unknownArch))
+        assertEquals("spark2_5", LoadFailure.unknownArchitectureOf(unknownArch))
+
+        val draftHead = ModelLoadException(
+            "x",
+            nativeReason = "llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 81, got 58",
+        )
+        assertEquals(LoadFailure.IncompleteModel, LoadFailure.of(draftHead))
+        assertEquals(null, LoadFailure.unknownArchitectureOf(draftHead))
+    }
+
+    @Test
+    fun anUnsupportedArchitectureMessageIsClassifiedToo() {
+        val e = ModelLoadException("x", nativeReason = "llama_model_load: error loading model: unsupported model architecture: 'clip'")
+        assertEquals(LoadFailure.UnsupportedArchitecture, LoadFailure.of(e))
+        assertEquals("clip", LoadFailure.unknownArchitectureOf(e))
+    }
+
+    @Test
+    fun anyOtherReasonStaysUnreadable() {
+        assertEquals(LoadFailure.UnreadableModel, LoadFailure.of(ModelLoadException("x", nativeReason = "tensor 'token_embd.weight' has wrong shape")))
+    }
+
+    @Test
+    fun onlyTheDeterministicFailuresSkipTheRetry() {
+        assertEquals(
+            setOf(LoadFailure.UnsupportedArchitecture, LoadFailure.IncompleteModel),
+            LoadFailure.entries.filter { it.isDeterministic }.toSet(),
+        )
+    }
 }

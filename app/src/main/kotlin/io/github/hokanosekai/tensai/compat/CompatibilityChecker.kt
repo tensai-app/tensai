@@ -22,6 +22,16 @@ enum class Verdict {
      * backend.
      */
     WontFit,
+
+    /** This build's llama.cpp does not know the model's architecture (TEN-167): not a memory question, it cannot load at all. */
+    Unsupported,
+
+    /** A speculative-decoding draft head (DFlash, EAGLE, MTP): not loadable on its own (TEN-167). */
+    DraftModel,
+    ;
+
+    /** The model cannot be loaded whatever the memory: [Unsupported] and [DraftModel], which have no "Load anyway". */
+    val isBlocked: Boolean get() = this == Unsupported || this == DraftModel
 }
 
 /**
@@ -61,6 +71,8 @@ data class Compatibility(
     val recommendedBackend: BackendHint,
     val verdictBytes: Long = estimatedBytes,
     val plannedCtx: Int = 0,
+    /** The model's architecture, for the "can't run the <arch> architecture" line of [Verdict.Unsupported]. */
+    val architecture: String = "",
 )
 
 /**
@@ -79,6 +91,8 @@ data class ModelFacts(
     val kvFullElementsPerToken: Long = 0,
     val kvSwaElementsPerToken: Long = 0,
     val slidingWindow: Long = 0,
+    /** Display name, file name and repo, for [ModelSupport.isDraftOnly]; empty when unknown. */
+    val names: List<String> = emptyList(),
 )
 
 /**
@@ -114,6 +128,7 @@ private fun ModelEntity.facts() = ModelFacts(
     kvFullElementsPerToken = kvFullElementsPerToken,
     kvSwaElementsPerToken = kvSwaElementsPerToken,
     slidingWindow = slidingWindow,
+    names = listOf(displayName, fileName, sourceRepo.orEmpty()),
 )
 
 /**
@@ -241,9 +256,11 @@ object CompatibilityChecker {
         val verdictBytes = if (LoadPolicy.effectiveSetting(model, global) == ContextSetting.Auto) typical else estimatedBytes
         // availableRamBytes only ever softens a verdict here, never decides fit: "the system is
         // busy right now" is the one question a free-memory reading answers honestly.
+        val blocking = ModelSupport.blockingVerdict(facts.architecture, facts.names)
         val tightFit = !wontFit && (verdictBytes > profile.availableRamBytes || isLikelySlow(facts))
 
         val verdict = when {
+            blocking != null -> blocking
             wontFit -> Verdict.WontFit
             tightFit -> Verdict.TightFit
             else -> Verdict.RunsWell
@@ -259,6 +276,7 @@ object CompatibilityChecker {
                 is LoadPlan.Feasible -> plan.nCtx
                 is LoadPlan.Infeasible -> plan.floor.nCtx
             },
+            architecture = facts.architecture,
         )
     }
 

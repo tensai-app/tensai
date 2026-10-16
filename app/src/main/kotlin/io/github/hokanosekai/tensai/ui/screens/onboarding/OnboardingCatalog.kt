@@ -96,7 +96,9 @@ internal object OnboardingCatalog {
         val steady = steadyProfile(profile)
         val rated = catalog.sortedBy { it.facts.paramCount }
             .map { RatedModel(it, CompatibilityChecker.check(it.facts, steady)) }
-        val pick = rated.lastOrNull { it.compatibility.verdict == Verdict.RunsWell } ?: rated.first()
+        // A blocked entry (unsupported architecture, draft head) is never offered; only a catalog with nothing else falls back to it.
+        val usable = rated.filterNot { it.compatibility.verdict.isBlocked }.ifEmpty { rated }
+        val pick = usable.lastOrNull { it.compatibility.verdict == Verdict.RunsWell } ?: usable.first()
         return Recommendation(pick, rated.filter { it !== pick })
     }
 }

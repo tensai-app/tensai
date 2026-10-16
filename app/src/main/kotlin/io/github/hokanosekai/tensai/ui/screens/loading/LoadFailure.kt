@@ -22,6 +22,18 @@ enum class LoadFailure {
     /** The engine refused the file itself — truncated, corrupt, or a GGUF variant it can't read. */
     UnreadableModel,
 
+    /**
+     * llama.cpp does not know the file's architecture (TEN-167). Deterministic: retrying, on CPU or
+     * not, fails the same way, so the dialog offers no retry.
+     */
+    UnsupportedArchitecture,
+
+    /**
+     * The file has fewer tensors than its architecture needs: truncated, or a layout this app cannot
+     * read (a draft head for speculative decoding is one, but the message does not say so) (TEN-167). Deterministic, like [UnsupportedArchitecture].
+     */
+    IncompleteModel,
+
     /** Something else was already using the queue. Retrying in a moment is a real fix for this one. */
     EngineBusy,
 
@@ -30,7 +42,16 @@ enum class LoadFailure {
 
     ;
 
+    /** A retry (same backend or CPU) cannot change the outcome: the file or this build is the problem. */
+    val isDeterministic: Boolean get() = this == UnsupportedArchitecture || this == IncompleteModel
+
     companion object {
+        private val UNKNOWN_ARCH = Regex("(?:unknown|unsupported) model architecture: '([^']*)'")
+
+        /** The architecture llama.cpp reported as unknown for [throwable], null for any other failure. */
+        fun unknownArchitectureOf(throwable: Throwable): String? =
+            (throwable as? ModelLoadException)?.nativeReason?.let { UNKNOWN_ARCH.find(it)?.groupValues?.get(1) }
+
         /**
          * Classifies a load failure. Total over every throwable that *is* a failure — with the
          * same one exception [ImportFailure.of][io.github.hokanosekai.tensai.ui.screens.models.ImportFailure.Companion.of]
@@ -50,9 +71,21 @@ enum class LoadFailure {
          */
         fun of(throwable: Throwable): LoadFailure = when (throwable) {
             is CancellationException -> throw throwable
-            is ModelLoadException -> UnreadableModel
+            is ModelLoadException -> classifyNativeReason(throwable.nativeReason)
             is QueueBusyException -> EngineBusy
             else -> Unknown
         }
     }
+}
+
+/**
+ * The two llama.cpp messages that mean something specific (TEN-167), seen on device: an
+ * `unknown model architecture: 'spark2_5'`, and `done_getting_tensors: wrong number of tensors;
+ * expected 81, got 58` (a DFlash head). Anything else, or no reason at all, is a plain unreadable file.
+ */
+internal fun classifyNativeReason(reason: String?): LoadFailure = when {
+    reason == null -> LoadFailure.UnreadableModel
+    "unknown model architecture" in reason || "unsupported model architecture" in reason -> LoadFailure.UnsupportedArchitecture
+    "wrong number of tensors" in reason -> LoadFailure.IncompleteModel
+    else -> LoadFailure.UnreadableModel
 }

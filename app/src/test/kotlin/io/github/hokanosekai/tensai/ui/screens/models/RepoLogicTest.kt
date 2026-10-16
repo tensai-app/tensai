@@ -382,4 +382,23 @@ class RepoLogicTest {
         assertTrue(cut.length <= RepoLogic.README_MAX_CHARS)
         assertTrue(text.startsWith(cut))
     }
+
+    // ---- blocked verdicts (TEN-167)
+
+    @Test
+    fun anUnsupportedFileOffersNoDownload() {
+        val blocked = io.github.hokanosekai.tensai.compat.Compatibility(
+            verdict = io.github.hokanosekai.tensai.compat.Verdict.Unsupported,
+            estimatedBytes = 0,
+            deviceRamBytes = 0,
+            recommendedBackend = io.github.hokanosekai.tensai.engine.BackendHint.Auto,
+            architecture = "spark2_5",
+        )
+        assertEquals(
+            RepoAction.Blocked(io.github.hokanosekai.tensai.compat.Verdict.Unsupported, "spark2_5"),
+            RepoLogic.action(q4, false, false, null, null, 0, 0, blocked = blocked),
+        )
+        // Already in the library: still blocked, consistent with the card.
+        assertEquals(RepoAction.Blocked(io.github.hokanosekai.tensai.compat.Verdict.Unsupported, "spark2_5"), RepoLogic.action(q4, false, false, "m1", null, 0, 0, blocked = blocked))
+    }
 }

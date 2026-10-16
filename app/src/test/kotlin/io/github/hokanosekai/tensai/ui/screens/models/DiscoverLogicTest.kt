@@ -197,4 +197,42 @@ class DiscoverLogicTest {
     fun importsWithoutAnOriginAreNotMatched() {
         assertTrue(DiscoverLogic.onDeviceRepos(listOf(model("a", null), model("b", ""))).isEmpty())
     }
+
+    // ---- blocked verdicts (TEN-167)
+
+    private val knownArchitectures = setOf("qwen3", "llama")
+
+    private fun withKnownArchitectures(block: () -> Unit) {
+        io.github.hokanosekai.tensai.compat.SupportedArchitectures.source = { knownArchitectures }
+        io.github.hokanosekai.tensai.compat.SupportedArchitectures.reset()
+        try {
+            block()
+        } finally {
+            io.github.hokanosekai.tensai.compat.SupportedArchitectures.source = { null }
+            io.github.hokanosekai.tensai.compat.SupportedArchitectures.reset()
+        }
+    }
+
+    @Test
+    fun aRepoWithAnUnsupportedKnownArchitectureIsNotSupported() = withKnownArchitectures {
+        val d = detail(quant("Q4_K_M", 1200)).copy(architecture = "spark2_5")
+        val card = DiscoverLogic.cardFor(summary(), d, device(totalGb = 12))
+        assertEquals(Verdict.Unsupported, card!!.verdict)
+        assertTrue(!DiscoverLogic.matches(card, DiscoverFilters(fits = true)))
+        assertTrue(DiscoverLogic.matches(card, DiscoverFilters(fits = false)))
+    }
+
+    @Test
+    fun aRepoWithNoArchitectureIsNotGuessedUnsupported() = withKnownArchitectures {
+        val d = detail(quant("Q4_K_M", 1200)).copy(architecture = "")
+        val card = DiscoverLogic.cardFor(summary(), d, device(totalGb = 12))
+        assertEquals(Verdict.RunsWell, card!!.verdict)
+    }
+
+    @Test
+    fun aDraftHeadRepoIsMarkedByItsName() = withKnownArchitectures {
+        val d = detail(quant("Q4_K_M", 1200)).let { it.copy(summary = it.summary.copy(id = "z-lab/Qwen3-8B-DFlash-b16", name = "Qwen3-8B-DFlash-b16")) }
+        val card = DiscoverLogic.cardFor(d.summary, d, device(totalGb = 12))
+        assertEquals(Verdict.DraftModel, card!!.verdict)
+    }
 }

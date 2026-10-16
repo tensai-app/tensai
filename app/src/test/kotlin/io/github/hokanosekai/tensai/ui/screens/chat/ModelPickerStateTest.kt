@@ -81,4 +81,19 @@ class ModelPickerStateTest {
         assertEquals(PickerTap.Pick, pickerTap(row("b", Verdict.TightFit), null))
         assertEquals(PickerTap.Ignore, pickerLoadAnyway(row("b", Verdict.TightFit), null))
     }
+
+    @Test
+    fun aBlockedRowOnlyExplainsOnTap() {
+        val unsupported = PickerRow("a", "a", null, Verdict.Unsupported, loaded = false, architecture = "spark2_5")
+        assertTrue(unsupported.blocked)
+        assertEquals(PickerTap.ToggleConfirm, pickerTap(unsupported, busy = null))
+        assertEquals(PickerTap.Ignore, pickerLoadAnyway(unsupported, busy = null))
+        assertEquals(PickerTap.Ignore, pickerTap(unsupported, busy = PickerBusy.Reply))
+    }
+
+    @Test
+    fun blockedRowsSortAfterWontFit() {
+        val ordered = orderPickerRows(listOf(row("a", Verdict.DraftModel), row("b", Verdict.Unsupported), row("c", Verdict.WontFit)))
+        assertEquals(listOf("c", "b", "a"), ordered.map { it.name })
+    }
 }

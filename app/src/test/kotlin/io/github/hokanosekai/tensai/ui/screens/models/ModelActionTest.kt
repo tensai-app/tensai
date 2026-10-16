@@ -50,4 +50,11 @@ class ModelActionTest {
         assertNull(sessionsOfModel("a", all) { null })
         assertNull(sessionsOfModel("zzz", all) { 10L })
     }
+
+    @Test
+    fun blockedModelOffersADisabledLoadUntilLoadedOrMissing() {
+        assertEquals(ModelAction.LoadBlocked, modelAction(isLoaded = false, fileExists = true, wontFit = false, blocked = true))
+        assertEquals(ModelAction.Unload, modelAction(isLoaded = true, fileExists = true, wontFit = false, blocked = true))
+        assertEquals(ModelAction.Remove, modelAction(isLoaded = false, fileExists = false, wontFit = false, blocked = true))
+    }
 }

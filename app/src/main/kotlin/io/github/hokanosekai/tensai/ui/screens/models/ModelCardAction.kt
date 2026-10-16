@@ -21,6 +21,9 @@ internal enum class ModelAction {
     /** Won't fit and not loaded: outlined "Load anyway". */
     LoadAnyway,
 
+    /** Unsupported architecture or draft head, not loaded: the Load button, disabled (TEN-167). */
+    LoadBlocked,
+
     /** Loaded, file on disk: outlined "Unload". */
     Unload,
 
@@ -35,10 +38,11 @@ internal enum class ModelAction {
  * Which action a model offers, from its state. A missing file wins over everything (nothing can be
  * loaded), then being resident (the way out is Unload, whatever the verdict), then the verdict.
  */
-internal fun modelAction(isLoaded: Boolean, fileExists: Boolean, wontFit: Boolean): ModelAction = when {
+internal fun modelAction(isLoaded: Boolean, fileExists: Boolean, wontFit: Boolean, blocked: Boolean = false): ModelAction = when {
     !fileExists && isLoaded -> ModelAction.UnloadMissing
     !fileExists -> ModelAction.Remove
     isLoaded -> ModelAction.Unload
+    blocked -> ModelAction.LoadBlocked
     wontFit -> ModelAction.LoadAnyway
     else -> ModelAction.Load
 }

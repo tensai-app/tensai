@@ -156,6 +156,10 @@
     <string name="model_compat_runs_well">Fonctionne bien</string>
     <string name="model_compat_tight_fit">Juste</string>
     <string name="model_compat_wont_fit">Ne tiendra pas</string>
+    <string name="model_compat_unsupported">Non pris en charge</string>
+    <string name="model_compat_draft">Modèle brouillon</string>
+    <string name="model_unsupported_explanation">Cette app ne sait pas encore exécuter l\'architecture %1$s.</string>
+    <string name="model_draft_explanation">Modèle brouillon pour le décodage spéculatif, il ne tourne pas seul.</string>
     <string name="model_compat_explanation">nécessite ~%1$s, le téléphone dispose de %2$s</string>
     <string name="model_compat_load_anyway">Charger quand même</string>
 
@@ -176,6 +180,8 @@
     <string name="load_failed_unreadable">Ce fichier est peut-être endommagé, ou ce n\'est pas un modèle que l\'application sait exécuter. Le réimporter n\'aide que si la copie était endommagée.</string>
     <string name="load_failed_busy">Le modèle était encore utilisé par autre chose. Patienter un instant et réessayer.</string>
     <string name="load_failed_unknown">Le chargement s\'est arrêté avant la fin.</string>
+    <string name="load_failed_unsupported">Architecture inconnue : %1$s. Cette app ne sait pas encore l\'exécuter.</string>
+    <string name="load_failed_incomplete">Ce fichier est incomplet ou utilise une structure que cette app ne sait pas lire.</string>
 
     <string name="chat_generation_failed">Cette réponse n\'a pas abouti. Réessayer ?</string>
     <string name="chat_generation_failed_retry">Réessayer</string>
@@ -578,6 +584,7 @@
     <string name="repo_show_less">Afficher moins</string>
     <string name="repo_open_on_hf">Ouvrir sur Hugging Face</string>
     <string name="repo_download">Télécharger · %1$s</string>
+    <string name="repo_download_blocked">Télécharger</string>
     <string name="repo_load">Charger le modèle</string>
     <string name="repo_resume">Reprendre</string>
     <string name="repo_retry">Réessayer</string>

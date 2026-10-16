@@ -79,6 +79,7 @@ object HfCompatibility {
             contextLength = detail.contextLength,
             embeddingLength = embedding,
             blockCount = blocks,
+            names = listOf(detail.summary.id, quant.fileName),
         )
     }
 

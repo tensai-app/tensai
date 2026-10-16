@@ -1,5 +1,7 @@
 package io.github.hokanosekai.tensai.ui.screens.models
 
+import io.github.hokanosekai.tensai.compat.Compatibility
+import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.download.DownloadError
 import io.github.hokanosekai.tensai.download.DownloadItem
 import io.github.hokanosekai.tensai.download.DownloadStatus
@@ -41,6 +43,9 @@ internal sealed interface RepoAction {
 
     /** The file is in the library: "Load model". */
     data class Load(val modelId: String) : RepoAction
+
+    /** The file cannot run in this app ([Verdict.isBlocked], TEN-167): nothing to download. [architecture] names the unsupported one. */
+    data class Blocked(val verdict: Verdict, val architecture: String) : RepoAction
 
     /** A Hugging Face token is needed ([invalid] false) or the one set was refused ([invalid] true). */
     data class NeedsToken(val invalid: Boolean) : RepoAction
@@ -86,7 +91,7 @@ internal object RepoLogic {
     /**
      * The button for [quant]. In order: already in the library (Load); a token problem, whether the
      * download said so or the repo is [gated] and there is no token ([hasToken]); the state of the
-     * download in the queue; else a plain Download.
+     * download in the queue; else, unless the file is blocked (unsupported architecture, draft head), a plain Download.
      */
     fun action(
         quant: HfQuantFile?,
@@ -96,9 +101,11 @@ internal object RepoLogic {
         item: DownloadItem?,
         ahead: Int,
         bytesPerSecond: Long,
+        blocked: Compatibility? = null,
     ): RepoAction {
         if (quant == null) return RepoAction.None
-        if (onDeviceModelId != null) return RepoAction.Load(onDeviceModelId)
+        val blockedAction = blocked?.takeIf { it.verdict.isBlocked }?.let { RepoAction.Blocked(it.verdict, it.architecture) }
+        if (onDeviceModelId != null) return blockedAction ?: RepoAction.Load(onDeviceModelId)
         if (item != null && item.status == DownloadStatus.Failed) {
             when (item.error) {
                 // With a token now set, an old "needs a token" failure is just a failure to retry.
@@ -121,6 +128,7 @@ internal object RepoLogic {
                 DownloadStatus.Done -> Unit
             }
         }
+        if (blockedAction != null) return blockedAction
         if (gated && !hasToken) return RepoAction.NeedsToken(invalid = false)
         return RepoAction.Download(quant.sizeBytes)
     }

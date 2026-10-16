@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.compat.CompatibilityChecker
+import io.github.hokanosekai.tensai.compat.Verdict
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.KanjiGlyph
@@ -103,6 +104,7 @@ fun ModelPickerSheet(
                     loaded = model.id == loadedModelId,
                     needsBytes = compat.estimatedBytes,
                     phoneBytes = compat.deviceRamBytes,
+                    architecture = model.architecture,
                 )
             },
         )
@@ -261,6 +263,18 @@ private fun PickerModelRow(
                     modifier = Modifier.padding(top = 3.dp).alpha(dim),
                 )
             }
+        }
+        if (row.blocked && confirming && busy == null) {
+            Text(
+                text = stringResource(
+                    if (row.verdict == Verdict.DraftModel) R.string.model_draft_explanation else R.string.model_unsupported_explanation,
+                    row.architecture,
+                ),
+                fontSize = 12.5.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+            )
         }
         if (row.wontFit && confirming && busy == null) {
             val needs = formatGigabytes(row.needsBytes)

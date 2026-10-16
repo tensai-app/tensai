@@ -167,6 +167,7 @@ internal data class RepoState(
                 item = item,
                 ahead = item?.let { RepoLogic.queueAhead(it, queue) } ?: 0,
                 bytesPerSecond = bytesPerSecond,
+                blocked = selectedQuant?.compatibility,
             )
         }
 }

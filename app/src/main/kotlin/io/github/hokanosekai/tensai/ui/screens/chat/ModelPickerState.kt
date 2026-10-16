@@ -28,9 +28,14 @@ data class PickerRow(
     val loaded: Boolean,
     val needsBytes: Long = 0,
     val phoneBytes: Long = 0,
+    /** The architecture [verdict] was decided from, named by the explanation of a [blocked] row. */
+    val architecture: String = "",
 ) {
     /** A loaded model never reads as "won't fit": it is already running. */
     val wontFit: Boolean get() = verdict == Verdict.WontFit && !loaded
+
+    /** Unsupported architecture or draft head: it has no "Load anyway", a tap only explains why (TEN-167). */
+    val blocked: Boolean get() = verdict?.isBlocked == true && !loaded
 }
 
 /** Loaded model first, then runs well, tight fit, won't fit, then by name (stable). */
@@ -49,7 +54,7 @@ sealed interface PickerTap {
     /** The loaded model: nothing to load, the sheet just closes. */
     data object Close : PickerTap
 
-    /** A model that won't fit: open or fold its "Needs X, phone has Y" row, nothing is loaded yet. */
+    /** A model that won't fit, or that is blocked: open or fold its explanation row, nothing is loaded yet. */
     data object ToggleConfirm : PickerTap
 
     /** Close the sheet and open the load screen for the row. */
@@ -59,7 +64,7 @@ sealed interface PickerTap {
 fun pickerTap(row: PickerRow, busy: PickerBusy?): PickerTap = when {
     busy != null -> PickerTap.Ignore
     row.loaded -> PickerTap.Close
-    row.wontFit -> PickerTap.ToggleConfirm
+    row.wontFit || row.blocked -> PickerTap.ToggleConfirm
     else -> PickerTap.Pick
 }
 

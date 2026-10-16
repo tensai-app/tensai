@@ -190,7 +190,8 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         } catch (e: OutOfMemoryError) {
             throw OutOfMemoryException("Out of memory while loading model at ${config.path}", e)
         } catch (e: IllegalStateException) {
-            throw ModelLoadException("Failed to load model at ${config.path}: ${e.message}", e)
+            val reason = runCatching { LlamaEngine.lastLoadError() }.getOrNull()?.takeIf { it.isNotBlank() }
+            throw ModelLoadException("Failed to load model at ${config.path}: ${e.message}", e, reason)
         } catch (e: Exception) {
             throw ModelLoadException("Unexpected error while loading model at ${config.path}: ${e.message}", e)
         }

@@ -24,6 +24,8 @@ class TensaiApp : Application() {
     override fun onCreate() {
         super.onCreate()
         RuntimeGraph.init(this)
+        // Off the main thread: the first compatibility check would otherwise load the native lib there.
+        Thread { io.github.hokanosekai.tensai.compat.SupportedArchitectures.current() }.start()
         RuntimeGraph.applicationScope.launch {
             RuntimeGraph.inferenceQueue.state.collect { state ->
                 if (state !is QueueState.Idle) {
