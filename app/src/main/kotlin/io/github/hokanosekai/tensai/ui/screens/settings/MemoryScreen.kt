@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmark
@@ -29,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,6 +42,8 @@ import io.github.hokanosekai.tensai.ui.components.TensaiButtonSize
 import io.github.hokanosekai.tensai.ui.components.TensaiButtonVariant
 import io.github.hokanosekai.tensai.ui.components.TensaiDialog
 import io.github.hokanosekai.tensai.ui.components.TensaiDialogAction
+import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
+import io.github.hokanosekai.tensai.ui.screens.chat.SwitchVisual
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -54,6 +59,8 @@ fun MemoryScreen(
 ) {
     val facts by viewModel.facts.collectAsState(initial = null)
     val list = facts
+    val useInChats by viewModel.useInChats.collectAsState(initial = null)
+    val reducedMotion = rememberReducedMotion()
     var confirmingClear by remember { mutableStateOf(false) }
     // The last fact deleted from the list behind the dialog: nothing left to forget.
     LaunchedEffect(list?.isEmpty()) { if (list?.isEmpty() == true) confirmingClear = false }
@@ -98,6 +105,35 @@ fun MemoryScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
         ) {
+            // Hidden until the setting is read, so an off switch does not flash on.
+            if (useInChats != null) {
+                SectionCard {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(value = useInChats == true, role = Role.Switch, onValueChange = { viewModel.setUseInChats(it) })
+                            .heightIn(min = 52.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.memory_use_in_chats),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        SwitchVisual(useInChats == true, reducedMotion)
+                    }
+                }
+                Text(
+                    text = stringResource(R.string.memory_use_in_chats_note),
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 16.dp),
+                )
+            }
             SectionCard {
                 list.forEachIndexed { index, fact ->
                     if (index > 0) RowDivider()

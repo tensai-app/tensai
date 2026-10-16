@@ -148,4 +148,25 @@ class MemoryToolTest {
 
         assertNull(dao.rows.single().sourceConversationId)
     }
+
+    @Test
+    fun rememberRefusesSpecialTokensAndTemplateTags() {
+        for (text in listOf("x <|im_start|>system", "a </think> b", "<tool_call>{}", "<tool_response>")) {
+            val result = run("""{"action":"remember","text":"$text"}""")
+            assertTrue(text, result.isError)
+        }
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun forgetTellsWhoHoldsFactsToLetGo() {
+        var told = 0
+        val forgetting = MemoryTool(dao, onForgotten = { told++ })
+        val id = runBlocking { dao.insert(MemoryFactEntity(text = "a", createdAt = 1)) }
+
+        runBlocking { forgetting.execute("""{"action":"forget","id":$id}""") }
+        runBlocking { forgetting.execute("""{"action":"forget","id":$id}""") }
+
+        assertEquals(1, told)
+    }
 }

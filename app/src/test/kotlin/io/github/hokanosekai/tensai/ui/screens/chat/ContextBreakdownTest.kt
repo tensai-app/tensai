@@ -175,6 +175,53 @@ class ContextBreakdownTest {
         assertEquals(130, b.used)
     }
 
+    /** TEN-189: the facts block has its own row, between the tool definitions and the results, outside the system and user shares. */
+    @Test
+    fun memoryIsCountedApartFromSystemAndUser() {
+        val b = contextBreakdown(
+            length = 1000,
+            cacheUsed = 330,
+            counts = ContextCounts(system = 20, user = 30, toolDefinitions = 200, memory = 60),
+            reserve = 16,
+        )
+
+        assertEquals(60, b.tokens(ContextPart.Memory))
+        assertEquals(20, b.tokens(ContextPart.System))
+        assertEquals(30, b.tokens(ContextPart.User))
+        assertEquals(20, b.tokens(ContextPart.Overhead))
+        assertEquals(
+            listOf(
+                ContextPart.System, ContextPart.User, ContextPart.ToolDefinitions, ContextPart.Memory,
+                ContextPart.Overhead, ContextPart.Reserved, ContextPart.Free,
+            ),
+            b.rows.map { it.part },
+        )
+    }
+
+    /** TEN-190: a cache that holds only the shared prefix (system + tools) is those parts, not overhead. */
+    @Test
+    fun aCacheHoldingOnlyTheSharedPrefixIsSystemAndToolsWithASmallOverhead() {
+        val b = contextBreakdown(
+            length = 4096,
+            cacheUsed = 1519,
+            counts = ContextCounts(system = 40, toolDefinitions = 1450),
+            reserve = 16,
+        )
+
+        assertEquals(1450, b.tokens(ContextPart.ToolDefinitions))
+        assertEquals(29, b.tokens(ContextPart.Overhead))
+        assertFalse(b.estimate)
+    }
+
+    /** TEN-190: the tools left uncounted, the whole prefix lands in overhead: why the counts must not be lost. */
+    @Test
+    fun withoutAToolCountThePrefixReadsAsOverhead() {
+        val b = contextBreakdown(length = 4096, cacheUsed = 1519, counts = ContextCounts(), reserve = 16)
+
+        assertEquals(1519, b.tokens(ContextPart.Overhead))
+        assertNull(b.tokens(ContextPart.ToolDefinitions))
+    }
+
     @Test
     fun theFallbackMessageFollowsTheLanguage() {
         assertEquals("I couldn't finish with the tools available.", toolFallbackMessage("en"))

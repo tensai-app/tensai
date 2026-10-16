@@ -359,11 +359,13 @@
     <string name="context_part_user">Messages · you</string>
     <string name="context_part_assistant">Messages · assistant</string>
     <string name="context_part_tool_definitions">Tool definitions</string>
+    <string name="context_part_memory">Memory</string>
     <string name="context_part_tool_results">Tool results</string>
     <string name="context_part_thinking">Thinking</string>
     <string name="context_part_overhead">Template overhead</string>
     <string name="context_part_reserved">Reserved for reply</string>
     <string name="context_part_free">Free space</string>
+    <string name="context_overhead_note">Template overhead: role markers and wrapping the model\'s chat template adds around messages.</string>
     <string name="context_runtime_model">Model</string>
     <string name="context_runtime_backend">Backend</string>
     <string name="context_runtime_context">Context length</string>
@@ -710,6 +712,8 @@
     <string name="memory_empty_title">Nothing remembered yet.</string>
     <string name="memory_empty_hint">Ask tensai to remember something.</string>
     <string name="memory_note">Saved when you ask tensai to remember something. Stays on this phone.</string>
+    <string name="memory_use_in_chats">Use memory in chats</string>
+    <string name="memory_use_in_chats_note">Up to 20 recent facts are added to your conversations.</string>
     <string name="memory_forget_fact">Forget %1$s</string>
     <string name="memory_forget_all">Forget everything</string>
     <string name="memory_forget_all_title">Forget everything?</string>

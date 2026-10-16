@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.data.chat
 
 import io.github.hokanosekai.tensai.agent.ToolCallOutcome
+import io.github.hokanosekai.tensai.data.memory.MemoryContext
 import io.github.hokanosekai.tensai.engine.ChatMessage
 import io.github.hokanosekai.tensai.engine.DecodeStats
 import io.github.hokanosekai.tensai.engine.MessageRole
@@ -257,8 +258,11 @@ class ChatRepository(private val dao: ChatDao) {
      * Dropping it can leave two user turns side by side, which are merged: see
      *
      * A call only stays in the history next to its result: see [withAnsweredCallsOnly].
+     *
+     * [memory], the saved facts (TEN-189), goes in front of the first user message, never in the system
+     * message: see [io.github.hokanosekai.tensai.data.memory.MemoryContext].
      */
-    fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?): List<ChatMessage> {
+    fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?, memory: String? = null): List<ChatMessage> {
         val history = withAnsweredCallsOnly(messages)
             .filterNot { it.role == "assistant" && it.content.isEmpty() && it.toolCallsJson.isNullOrBlank() }
             .map {
@@ -270,6 +274,7 @@ class ChatRepository(private val dao: ChatDao) {
                 )
             }
             .mergeAdjacentUserTurns()
+            .let { MemoryContext.prepend(it, memory) }
         return if (!systemPrompt.isNullOrBlank()) {
             listOf(ChatMessage(role = MessageRole.System, content = systemPrompt, toolCalls = null)) + history
         } else {

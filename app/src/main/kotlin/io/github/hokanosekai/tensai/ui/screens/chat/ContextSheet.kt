@@ -262,6 +262,14 @@ private fun WindowCard(breakdown: ContextBreakdown, modelLoaded: Boolean, onOpen
                     )
                 }
                 breakdown.rows.forEach { row -> PartRow(row, breakdown.estimate) }
+                if (breakdown.rows.any { it.part == ContextPart.Overhead }) {
+                    Text(
+                        text = stringResource(R.string.context_overhead_note),
+                        fontSize = 12.5.sp,
+                        color = muted,
+                        modifier = Modifier.padding(horizontal = 16.dp).padding(top = 4.dp),
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -288,6 +296,7 @@ private fun partLabel(part: ContextPart): String = stringResource(
         ContextPart.User -> R.string.context_part_user
         ContextPart.Assistant -> R.string.context_part_assistant
         ContextPart.ToolDefinitions -> R.string.context_part_tool_definitions
+        ContextPart.Memory -> R.string.context_part_memory
         ContextPart.ToolResults -> R.string.context_part_tool_results
         ContextPart.Thinking -> R.string.context_part_thinking
         ContextPart.Overhead -> R.string.context_part_overhead
@@ -306,6 +315,7 @@ private fun partColor(part: ContextPart): Color {
         ContextPart.User -> primary
         ContextPart.Assistant -> lerp(primary, MaterialTheme.tensaiColors.success, 0.45f)
         ContextPart.ToolDefinitions -> lerp(MaterialTheme.tensaiColors.success, primary, 0.25f)
+        ContextPart.Memory -> lerp(MaterialTheme.tensaiColors.warning, MaterialTheme.tensaiColors.success, 0.8f)
         ContextPart.ToolResults -> lerp(MaterialTheme.tensaiColors.warning, MaterialTheme.tensaiColors.success, 0.55f)
         ContextPart.Thinking -> lerp(primary, MaterialTheme.colorScheme.error, 0.5f)
         ContextPart.Overhead -> muted.copy(alpha = 0.5f)

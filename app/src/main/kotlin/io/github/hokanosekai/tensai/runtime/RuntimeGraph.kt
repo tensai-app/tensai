@@ -31,6 +31,7 @@ import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
 import io.github.hokanosekai.tensai.data.ContextRepository
 import io.github.hokanosekai.tensai.data.LanguageRepository
+import io.github.hokanosekai.tensai.data.MemorySettings
 import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.SearchKeyStores
@@ -38,6 +39,7 @@ import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.ToolSettingsRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.memory.MemoryDao
+import io.github.hokanosekai.tensai.data.memory.MemoryPrompt
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.models.TensaiDb
 import io.github.hokanosekai.tensai.data.session.SessionRepository
@@ -338,6 +340,15 @@ object RuntimeGraph {
     /** What the `memory` tool remembers (TEN-176), also read by Settings > Memory. */
     val memoryDao: MemoryDao by lazy { database.memoryDao() }
 
+    /** "Use memory in chats" (TEN-189). */
+    val memorySettings: MemorySettings by lazy { MemorySettings(appContext) }
+
+    /** The saved facts as each conversation's prompt block (TEN-189), see [MemoryPrompt]. */
+    val memoryPrompt: MemoryPrompt by lazy { MemoryPrompt(memoryDao, enabled = memorySettings::useInChatsNow) }
+
+    /** Token counts of the context sheet's fixed parts, shared by every chat screen (TEN-190). */
+    val partTokenCache: PartTokenCache by lazy { PartTokenCache() }
+
     /** Chat history — Room-backed, see [ChatRepository]. */
     val chatRepository: ChatRepository by lazy { ChatRepository(database.chatDao()) }
 
@@ -370,7 +381,11 @@ object RuntimeGraph {
                 SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.first }),
                 ClipboardTool(AndroidClipboardAccess(appContext)),
                 TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
-                MemoryTool(memoryDao, conversationId = { ActiveSessionTracker.current.value?.first }),
+                MemoryTool(
+                    memoryDao,
+                    conversationId = { ActiveSessionTracker.current.value?.first },
+                    onForgotten = { memoryPrompt.invalidate() },
+                ),
                 AskUserTool(askUserGate),
             ) + phoneActionTools(),
         )

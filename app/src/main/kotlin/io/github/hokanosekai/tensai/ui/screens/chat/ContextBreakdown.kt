@@ -3,7 +3,7 @@ package io.github.hokanosekai.tensai.ui.screens.chat
 import kotlin.math.roundToInt
 
 /** One slice of the context window, in the order the sheet lists them. */
-enum class ContextPart { System, User, Assistant, Thinking, ToolDefinitions, ToolResults, Overhead, Reserved, Free }
+enum class ContextPart { System, User, Assistant, Thinking, ToolDefinitions, Memory, ToolResults, Overhead, Reserved, Free }
 
 /** A [ContextPart] with something in it: [percent] is of the whole window, 0 when under half a percent (shown "<1"). */
 data class ContextPartRow(val part: ContextPart, val tokens: Int, val percent: Int)
@@ -32,8 +32,9 @@ data class ContextBreakdown(
 /**
  * Token counts of what the conversation sends, per part.
  * [toolDefinitions]: the tools' name, description and schema as text, an approximation of what the
- * template renders (its own wrapping stays in overhead). [toolResults]: `tool` messages plus the
- * serialized calls of assistant messages (TEN-172).
+ * template renders (its own wrapping stays in overhead). [memory]: the saved facts block in front of the
+ * first user message (TEN-189), counted apart from [system] and [user]. [toolResults]: `tool` messages
+ * plus the serialized calls of assistant messages (TEN-172).
  */
 data class ContextCounts(
     val system: Int = 0,
@@ -41,9 +42,10 @@ data class ContextCounts(
     val assistant: Int = 0,
     val thinking: Int = 0,
     val toolDefinitions: Int = 0,
+    val memory: Int = 0,
     val toolResults: Int = 0,
 ) {
-    val sum: Int get() = system + user + assistant + thinking + toolDefinitions + toolResults
+    val sum: Int get() = system + user + assistant + thinking + toolDefinitions + memory + toolResults
 }
 
 /**
@@ -75,6 +77,7 @@ fun contextBreakdown(
         assistant = counts.assistant.coerceAtLeast(0),
         thinking = counts.thinking.coerceAtLeast(0),
         toolDefinitions = counts.toolDefinitions.coerceAtLeast(0),
+        memory = counts.memory.coerceAtLeast(0),
         toolResults = counts.toolResults.coerceAtLeast(0),
     )
     val sum = parts.sum
@@ -98,6 +101,7 @@ fun contextBreakdown(
         row(ContextPart.Assistant, parts.assistant),
         row(ContextPart.Thinking, parts.thinking),
         row(ContextPart.ToolDefinitions, parts.toolDefinitions),
+        row(ContextPart.Memory, parts.memory),
         row(ContextPart.ToolResults, parts.toolResults),
         row(ContextPart.Overhead, overhead),
         row(ContextPart.Reserved, reserved),

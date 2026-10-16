@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.agent
 
+import io.github.hokanosekai.tensai.data.memory.MemoryContext
 import io.github.hokanosekai.tensai.data.memory.MemoryDao
 import io.github.hokanosekai.tensai.data.memory.MemoryFactEntity
 import java.time.Instant
@@ -10,8 +11,8 @@ import org.json.JSONObject
 /**
  * Facts about the user that outlive a conversation (TEN-176): `remember`, `list`, `forget`.
  *
- * Facts are not put in every prompt: the model reads them through `list` when it needs them, which
- * keeps the context light. One tool with an `action` so the prompt carries one schema, not three.
+ * The newest facts are already in every conversation (TEN-189, [io.github.hokanosekai.tensai.data.memory.MemoryContext]),
+ * `list` is for the ones past that cap and for the ids `forget` needs. One tool with an `action` so the prompt carries one schema, not three.
  *
  * `forget` deletes user data, so it goes through the confirmation gate; `remember` and `list` do not
  * ([requiresConfirmation]). [sendsOrDeletes] stays true so the registry and Settings list the tool as one that can delete.
@@ -27,10 +28,12 @@ class MemoryTool(
     private val now: () -> Long = System::currentTimeMillis,
     private val conversationId: () -> String? = { null },
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
+    /** Called after a delete, so the blocks held by [io.github.hokanosekai.tensai.data.memory.MemoryPrompt] drop the fact. */
+    private val onForgotten: () -> Unit = {},
 ) : Tool {
     override val name = "memory"
     override val description =
-        "Long-term memory about the user. action remember (text), list, or forget (id). Remember only what the user asks or clearly wants kept."
+        "Long-term memory about the user. action remember (text), list, or forget (id). Recent facts are already in context, list is for older ones. Remember only what the user asks or clearly wants kept."
     override val parametersSchema =
         """{"type":"object","properties":{"action":{"type":"string","enum":["remember","list","forget"]},""" +
             """"text":{"type":"string"},"id":{"type":"integer"}},"required":["action"]}"""
@@ -62,6 +65,9 @@ class MemoryTool(
         if (text.isEmpty()) return ToolResult.error("remember needs text")
         if (text.length > MAX_FACT_CHARS) {
             return ToolResult.error("fact too long (${text.length} characters, max $MAX_FACT_CHARS), say it shorter")
+        }
+        if (MemoryContext.hasControl(text)) {
+            return ToolResult.error("fact contains special tokens or tags (<|...|>, <think>, <tool_call>), say it in plain text")
         }
         dao.findIdByText(text)?.let { return ToolResult.ok("already remembered (id $it)") }
         val id = dao.insert(MemoryFactEntity(text = text, createdAt = now(), sourceConversationId = conversationId()))
@@ -95,7 +101,12 @@ class MemoryTool(
     }
 
     private suspend fun forget(id: Long): ToolResult =
-        if (dao.delete(id) > 0) ToolResult.ok("forgotten (id $id)") else ToolResult.error("no fact with id $id, see list")
+        if (dao.delete(id) > 0) {
+            onForgotten()
+            ToolResult.ok("forgotten (id $id)")
+        } else {
+            ToolResult.error("no fact with id $id, see list")
+        }
 
     companion object {
         const val MAX_FACT_CHARS = 300

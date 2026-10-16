@@ -14,6 +14,7 @@ import io.github.hokanosekai.tensai.data.chat.ReplyStreamSplitter
 import io.github.hokanosekai.tensai.data.chat.SamplingJson
 import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
+import io.github.hokanosekai.tensai.data.memory.MemoryPrompt
 import io.github.hokanosekai.tensai.data.models.KvCacheSize
 import io.github.hokanosekai.tensai.data.models.ModelRepository
 import io.github.hokanosekai.tensai.data.session.SaveResult
@@ -32,6 +33,7 @@ import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.GenerationStopSignal
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
+import io.github.hokanosekai.tensai.runtime.PartTokenCache
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.runtime.residentModel
@@ -354,6 +356,8 @@ class ChatViewModel(
     private val agentRuntime: AgentRuntime = RuntimeGraph.agentRuntime,
     private val confirmationGate: UiConfirmationGate = RuntimeGraph.confirmationGate,
     private val askUserGate: AskUserGate = RuntimeGraph.askUserGate,
+    private val memoryPrompt: MemoryPrompt = RuntimeGraph.memoryPrompt,
+    private val partTokens: PartTokenCache = RuntimeGraph.partTokenCache,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -810,12 +814,11 @@ class ChatViewModel(
     /** What the context sheet shows (TEN-161), built by [openContextSheet]; `null` while closed or still counting. */
     val contextSheet: StateFlow<ContextSheetState?> = _contextSheet.asStateFlow()
 
-    // What an estimate falls back on once nothing is loaded to measure: the last window, template
-    // overhead and system prompt count seen with a model resident. In memory only, per instance.
+    // What an estimate falls back on once nothing is loaded to measure: the last window and template
+    // overhead seen with a model resident. In memory only, per instance. The counts of the system prompt,
+    // tool definitions and memory block are in [partTokens], shared by every instance.
     private var lastWindow = 0
     private var lastOverhead: Int? = null
-    private var lastSystemCount: Pair<String, Int>? = null
-    private var lastToolDefinitionsCount: Pair<String, Int>? = null
 
     /** Tokens of an assistant message's serialized tool calls, by message id: not stored, counted once per instance. */
     private val toolCallTokens = HashMap<String, Int>()
@@ -847,15 +850,10 @@ class ChatViewModel(
         var history = id?.let { chatRepository.observeMessages(it).first() }.orEmpty()
         val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
 
-        // Tools only weigh on the prompt when the agent path would run: their definitions are rendered
-        // into it, and the calls and results of earlier turns are replayed (TEN-172).
-        val toolsInPlay = conversation?.toolsEnabled != false && agentRuntime.hasTools() &&
-            (info?.modelId?.let { modelId -> modelRepository.models.first().any { it.id == modelId && it.toolsAvailable } } ?: false)
-        val definitionsText = if (toolsInPlay) {
-            agentRuntime.definitions().joinToString("\n") { "${it.name}: ${it.description} ${it.parametersJson}" }
-        } else {
-            null
-        }
+        val definitionsText = definitionsTextFor(conversation, info)
+        // The facts ride in the first user message, so they weigh on the prompt from the first send on.
+        val memoryBlock = if (history.any { it.role == "user" }) memoryPrompt.blockFor(id) else null
+        val partKey = info?.let { it.modelId ?: it.name } ?: conversation?.modelId
 
         if (info != null) {
             val countedWith = info.modelId ?: info.name
@@ -867,24 +865,26 @@ class ChatViewModel(
                 it.role == "assistant" && !it.toolCallsJson.isNullOrBlank() && it.id !in toolCallTokens
             }
             val texts = stale.map { it.content } + uncountedCalls.map { it.toolCallsJson!! } +
-                listOfNotNull(systemPrompt, definitionsText)
+                listOfNotNull(systemPrompt, definitionsText, memoryBlock)
             val counted = if (texts.isEmpty()) emptyList() else inferenceQueue.countTokens(texts)
             if (counted != null) {
                 stale.forEachIndexed { i, message -> chatRepository.setTokenCount(message.id, counted[i], countedWith) }
                 uncountedCalls.forEachIndexed { i, message -> toolCallTokens[message.id] = counted[stale.size + i] }
                 var next = stale.size + uncountedCalls.size
-                if (systemPrompt != null) lastSystemCount = systemPrompt to counted[next++]
-                if (definitionsText != null) lastToolDefinitionsCount = definitionsText to counted[next]
+                if (systemPrompt != null) partTokens.put(partKey, systemPrompt, counted[next++])
+                if (definitionsText != null) partTokens.put(partKey, definitionsText, counted[next++])
+                if (memoryBlock != null) partTokens.put(partKey, memoryBlock, counted[next])
                 if (stale.isNotEmpty() && id != null) history = chatRepository.observeMessages(id).first()
             }
         }
 
         val inPrompt = history.filter { it.content.isNotEmpty() }
         val counts = ContextCounts(
-            system = systemPrompt?.let { prompt -> lastSystemCount?.takeIf { it.first == prompt }?.second } ?: 0,
+            system = systemPrompt?.let { partTokens.get(partKey, it) } ?: 0,
             user = inPrompt.filter { it.role == "user" }.sumOf { it.tokenCount ?: 0 },
             assistant = inPrompt.filter { it.role == "assistant" }.sumOf { it.tokenCount ?: 0 },
-            toolDefinitions = definitionsText?.let { text -> lastToolDefinitionsCount?.takeIf { it.first == text }?.second } ?: 0,
+            toolDefinitions = definitionsText?.let { partTokens.get(partKey, it) } ?: 0,
+            memory = memoryBlock?.let { partTokens.get(partKey, it) } ?: 0,
             // An assistant message of calls only has no content, so it is counted here and not above.
             toolResults = inPrompt.filter { it.role == "tool" }.sumOf { it.tokenCount ?: 0 } +
                 history.filter { it.role == "assistant" }.sumOf { toolCallTokens[it.id] ?: 0 },
@@ -921,6 +921,36 @@ class ChatViewModel(
             )
         }
         return ContextSheetState(breakdown, runtime)
+    }
+
+    /**
+     * The tool definitions as the sheet counts them, `null` when tools do not weigh on the prompt: they
+     * only do when the agent path would run, their definitions are rendered into it, and the calls and
+     * results of earlier turns are replayed (TEN-172).
+     */
+    private suspend fun definitionsTextFor(conversation: ConversationEntity?, info: LoadedModelInfo?): String? {
+        val toolsInPlay = conversation?.toolsEnabled != false && agentRuntime.hasTools() &&
+            (info?.modelId?.let { modelId -> modelRepository.models.first().any { it.id == modelId && it.toolsAvailable } } ?: false)
+        if (!toolsInPlay) return null
+        return agentRuntime.definitions().joinToString("\n") { "${it.name}: ${it.description} ${it.parametersJson}" }
+    }
+
+    /**
+     * Counts the fixed parts of the prompt about to be sent, before the engine is busy with it: the
+     * sheet cannot count while a reply is generating, and without these the cache the reply fills (the
+     * system prompt and tools of the shared prefix, TEN-182) would read as template overhead (TEN-190).
+     */
+    private suspend fun countFixedParts(conversation: ConversationEntity?, info: LoadedModelInfo) {
+        val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
+        val key = info.modelId ?: info.name
+        val texts = listOfNotNull(
+            systemPrompt,
+            definitionsTextFor(conversation, info),
+            conversation?.let { memoryPrompt.blockFor(it.id) },
+        ).filter { partTokens.get(key, it) == null }
+        if (texts.isEmpty()) return
+        val counted = inferenceQueue.countTokens(texts) ?: return
+        texts.forEachIndexed { i, text -> partTokens.put(key, text, counted[i]) }
     }
 
     init {
@@ -984,6 +1014,7 @@ class ChatViewModel(
 
         val conversation = chatRepository.getConversation(conversationId)
         val history = chatRepository.observeMessages(conversationId).first()
+        if (model != null) countFixedParts(conversation, model)
         // Tools need a template that takes them, the conversation's switch on, and a tool the user granted.
         // Anything else is the plain path below, untouched by tool calling (TEN-172).
         if (conversation?.toolsEnabled != false && currentModelSupportsTools.first() && agentRuntime.hasTools()) {
@@ -1009,7 +1040,7 @@ class ChatViewModel(
             null
         }
         return DecodeRequest(
-            messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt),
+            messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt, conversation?.let { memoryPrompt.blockFor(it.id) }),
             sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
     }
@@ -1048,7 +1079,7 @@ class ChatViewModel(
             val history = chatRepository.observeMessages(conversationId).first()
             if (history.lastOrNull()?.role != "assistant") return@launch
             inferenceQueue.warmUp(
-                messages = chatRepository.toEngineMessages(history, conversation.systemPrompt),
+                messages = chatRepository.toEngineMessages(history, conversation.systemPrompt, memoryPrompt.blockFor(conversationId)),
                 enableThinking = conversation.enableThinking,
                 expectedModel = model,
             )

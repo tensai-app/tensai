@@ -17,6 +17,10 @@ import io.github.hokanosekai.tensai.data.chat.MessageEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
+import io.github.hokanosekai.tensai.data.memory.FakeMemoryDao
+import io.github.hokanosekai.tensai.data.memory.MemoryFactEntity
+import io.github.hokanosekai.tensai.data.memory.MemoryContext
+import io.github.hokanosekai.tensai.data.memory.MemoryPrompt
 import io.github.hokanosekai.tensai.data.models.ModelDao
 import io.github.hokanosekai.tensai.data.models.ModelEntity
 import io.github.hokanosekai.tensai.data.models.ModelRepository
@@ -40,6 +44,7 @@ import io.github.hokanosekai.tensai.engine.StopReason
 import io.github.hokanosekai.tensai.runtime.ActiveSessionTracker
 import io.github.hokanosekai.tensai.runtime.AppForegroundTracker
 import io.github.hokanosekai.tensai.runtime.InferenceQueue
+import io.github.hokanosekai.tensai.runtime.PartTokenCache
 import io.github.hokanosekai.tensai.runtime.QueueState
 import io.github.hokanosekai.tensai.runtime.residentModelId
 import io.github.hokanosekai.tensai.ui.tools.ToolCallState
@@ -94,6 +99,9 @@ class ChatViewModelTest {
     private var agentRuntime = AgentRuntime(ToolRegistry())
     private var confirmationGate = UiConfirmationGate()
     private var askUserGate = AskUserGate()
+    private lateinit var memoryDao: FakeMemoryDao
+    private var memoryEnabled = true
+    private lateinit var partTokens: PartTokenCache
 
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
@@ -110,6 +118,9 @@ class ChatViewModelTest {
         sessionDao = FakeSessionDao()
         engine = FakeLlamaKtEngine()
         inferenceQueue = InferenceQueue(engine)
+        memoryDao = FakeMemoryDao()
+        memoryEnabled = true
+        partTokens = PartTokenCache()
         chatRepository = ChatRepository(chatDao)
         modelRepository = ModelRepository(
             context = ContextWrapper(null),
@@ -160,6 +171,8 @@ class ChatViewModelTest {
         agentRuntime = agentRuntime,
         confirmationGate = confirmationGate,
         askUserGate = askUserGate,
+        memoryPrompt = MemoryPrompt(memoryDao, enabled = { memoryEnabled }),
+        partTokens = partTokens,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -2346,6 +2359,88 @@ class ChatViewModelTest {
         assertEquals(16, tokens[ContextPart.Reserved])
         assertEquals(NCTX, breakdown.rows.sumOf { it.tokens })
         assertNull("reasoning is not replayed into the prompt", tokens[ContextPart.Thinking])
+    }
+
+    /** TEN-189: the saved facts lead the first user message of every turn, and never reach what is stored. */
+    @Test
+    fun theSavedFactsLeadTheFirstUserMessageOfEveryTurn() = runBlocking {
+        memoryDao.insert(MemoryFactEntity(text = "copy every calculation result to the clipboard", createdAt = 1))
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversationId)
+        val block = "${MemoryContext.HEADER}\n- copy every calculation result to the clipboard\n[End of memory]"
+
+        viewModel.send("2+2")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+        assertEquals("$block\n\n2+2", engine.lastRequest!!.messages.first().content)
+
+        // A fact saved meanwhile does not rewrite the message the cache already holds.
+        memoryDao.insert(MemoryFactEntity(text = "likes tea", createdAt = 2))
+        viewModel.send("and 3+3")
+        awaitAssistantReply(conversationId, expectedCount = 4)
+        val sent = engine.lastRequest!!.messages
+        assertEquals("$block\n\n2+2", sent.first().content)
+        assertEquals("and 3+3", sent.last().content)
+        assertEquals(listOf("2+2", "hi", "and 3+3", "hi"), chatRepository.observeMessages(conversationId).first().map { it.content })
+    }
+
+    @Test
+    fun noFactsInThePromptWhenMemoryIsOffOrEmpty() = runBlocking {
+        loadFakeModel()
+        val empty = chatRepository.createConversation(modelId = null)
+        newViewModel(empty).send("hello")
+        awaitAssistantReply(empty, expectedCount = 2)
+        assertEquals("hello", engine.lastRequest!!.messages.first().content)
+
+        memoryDao.insert(MemoryFactEntity(text = "likes tea", createdAt = 1))
+        memoryEnabled = false
+        val off = chatRepository.createConversation(modelId = null)
+        newViewModel(off).send("hello")
+        awaitAssistantReply(off, expectedCount = 2)
+        assertEquals("hello", engine.lastRequest!!.messages.first().content)
+    }
+
+    @Test
+    fun theSheetCountsTheFactsAsTheirOwnPart() = runBlocking {
+        memoryDao.insert(MemoryFactEntity(text = "likes tea", createdAt = 1))
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversationId)
+        engine.tokenizer = { 1 }
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+
+        val tokens = viewModel.openSheet().breakdown.rows.associate { it.part to it.tokens }
+
+        assertEquals(1, tokens[ContextPart.Memory])
+        assertEquals(1, tokens[ContextPart.User])
+    }
+
+    /**
+     * TEN-190: a sheet opened while the reply is generating cannot count (the engine is busy), and used
+     * to read the tool definitions of the cache's shared prefix as template overhead. The counts made
+     * before the decode answer instead, from another screen too.
+     */
+    @Test
+    fun toolDefinitionsAreNotTemplateOverheadWhileTheFirstReplyGenerates() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.tokenizer = { 1 }
+        engine.scriptedEvents = listOf(DecodeEvent.Token("hi"))
+        engine.hangBeforeTerminal = true
+        val conversationId = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationId).send("what time is it?")
+        awaitGenerating()
+
+        val other = newViewModel(conversationId)
+        other.openContextSheet()
+        val breakdown = withTimeout(5_000) { other.contextSheet.first { it != null } }!!.breakdown
+
+        val tokens = breakdown.rows.associate { it.part to it.tokens }
+        assertEquals(1, tokens[ContextPart.ToolDefinitions])
+        assertEquals(TOKENS_PER_TURN - 1, tokens[ContextPart.Overhead])
+        other.stop()
+        awaitGeneration()
     }
 
     @Test

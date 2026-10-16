@@ -292,11 +292,13 @@
     <string name="context_part_user">Messages · toi</string>
     <string name="context_part_assistant">Messages · assistant</string>
     <string name="context_part_tool_definitions">Définitions d\'outils</string>
+    <string name="context_part_memory">Mémoire</string>
     <string name="context_part_tool_results">Résultats d\'outils</string>
     <string name="context_part_thinking">Réflexion</string>
     <string name="context_part_overhead">Surcoût du template</string>
     <string name="context_part_reserved">Réservé à la réponse</string>
     <string name="context_part_free">Espace libre</string>
+    <string name="context_overhead_note">Surcoût du template : balises de rôle et enrobage que le template de conversation du modèle ajoute autour des messages.</string>
     <string name="context_runtime_model">Modèle</string>
     <string name="context_runtime_backend">Backend</string>
     <string name="context_runtime_context">Longueur de contexte</string>
@@ -621,6 +623,8 @@
     <string name="memory_empty_title">Rien de retenu pour le moment.</string>
     <string name="memory_empty_hint">Demander à tensai de retenir quelque chose.</string>
     <string name="memory_note">Enregistré quand tensai est invité à retenir quelque chose. Reste sur ce téléphone.</string>
+    <string name="memory_use_in_chats">Utiliser la mémoire dans les conversations</string>
+    <string name="memory_use_in_chats_note">Jusqu\'à 20 faits récents sont ajoutés aux conversations.</string>
     <string name="memory_forget_fact">Oublier %1$s</string>
     <string name="memory_forget_all">Tout oublier</string>
     <string name="memory_forget_all_title">Tout oublier ?</string>
