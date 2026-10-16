@@ -187,7 +187,12 @@ object RuntimeGraph {
      * [LlamaKtEngineImpl.close] for the callers that do have to close one — the instrumented
      * tests, which build an engine per test.
      */
-    private val llamaEngine: LlamaKtEngineImpl by lazy { LlamaKtEngineImpl() }
+    private val llamaEngine: LlamaKtEngineImpl by lazy {
+        LlamaKtEngineImpl(
+            prefixCacheDir = File(appContext.cacheDir, "prefix-kv"),
+            log = { message -> Log.i("tensai.prefix", message) },
+        )
+    }
 
     val inferenceQueue: InferenceQueue by lazy { InferenceQueue(llamaEngine) }
 

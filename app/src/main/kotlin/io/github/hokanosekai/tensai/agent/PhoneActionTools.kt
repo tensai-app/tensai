@@ -209,9 +209,9 @@ class SetAlarmTool(phone: PhoneActions) : IntentTool(phone) {
 class CreateEventTool(phone: PhoneActions, private val zone: () -> ZoneId = { ZoneId.systemDefault() }) : IntentTool(phone) {
     override val name = "create_event"
     override val description =
-        "Opens the Calendar app with a new event ready. The user saves it. start/end: ISO time like 2026-10-17T14:00 (local unless it has an offset, end defaults to +1 h). all_day: start is a date."
+        "Opens Calendar with a new event, the user saves it. start/end: ISO like 2026-10-17T14:00 (local unless offset, end defaults to +1 h). all_day: start is a date, end its last day."
     override val parametersSchema =
-        """{"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string","description":"all_day: last day, inclusive"},"location":{"type":"string"},"description":{"type":"string"},"all_day":{"type":"boolean"}},"required":["title","start"]}"""
+        """{"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"location":{"type":"string"},"description":{"type":"string"},"all_day":{"type":"boolean"}},"required":["title","start"]}"""
 
     override fun build(args: JSONObject): IntentSpec {
         val title = args.requiredString("title")

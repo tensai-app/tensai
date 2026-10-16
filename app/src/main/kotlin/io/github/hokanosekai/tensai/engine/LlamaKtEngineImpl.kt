@@ -69,7 +69,13 @@ import com.tensai.llamakt.ToolDefinition as LlamaToolDefinition
  * `free()` after a `close()` throws rather than freeing and the weights stay
  * resident until the process dies.
  */
-class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
+class LlamaKtEngineImpl(
+    prefixCacheDir: File? = null,
+    private val log: (String) -> Unit = {},
+) : LlamaKtEngine, Closeable {
+
+    /** Tool-prefix KV files (TEN-182), `null` keeps every conversation paying its own prefill. */
+    private val prefixCache = prefixCacheDir?.let { PrefixCache(it) }
 
     private val llamaEngine = LlamaEngine()
 
@@ -222,7 +228,14 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
         )
 
         refreshKvUsedCells()
-        LoadedModelImpl(info)
+        // What a prefix state is only valid for, next to the prefix text (see [PrefixCache]): these
+        // shape the KV cells, so a state computed under other values must never be read back.
+        val file = File(config.path)
+        val identity = listOf(
+            config.modelId, config.path, file.length(), file.lastModified(),
+            config.nCtx, config.kvCacheType, backend, config.chatTemplate,
+        ).joinToString("|")
+        LoadedModelImpl(info, identity)
     }
 
     override fun kvCacheUsedCells(): Int = kvUsedCells.get()
@@ -364,7 +377,10 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
      * class KDoc for what a `free()` on a closed engine does instead (throws,
      * and leaves the weights resident).
      */
-    private inner class LoadedModelImpl(override val metadata: LoadedModelInfo) : LoadedModel {
+    private inner class LoadedModelImpl(
+        override val metadata: LoadedModelInfo,
+        private val prefixIdentity: String,
+    ) : LoadedModel {
 
         override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = callbackFlow {
             // The one dispatch this class makes by hand rather than through `onEngineThread`, so
@@ -396,14 +412,20 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
                     // what ran before TEN-172, and reads no chat result after the decode.
                     val withTools = request.tools.isNotEmpty()
                     var toolsIgnored = false
+                    if (!withTools) log("prefix cache: skipped, no tools in this request")
                     val prompt = if (withTools) {
+                        val libTools = request.tools.map { LlamaToolDefinition(it.name, it.description, it.parametersJson) }
+                        val libToolChoice = when (request.toolChoice) {
+                            ToolChoice.Auto -> LlamaToolChoice.Auto
+                            ToolChoice.None -> LlamaToolChoice.None
+                        }
+                        // Before the real format below, which has to be the last one: formatChat* records
+                        // the parser `completion` reads, and it only applies to the prompt it was made for.
+                        restoreOrBuildToolPrefix(request, libTools, libToolChoice) { coroutineContext.ensureActive() }
                         val formatted = llamaEngine.formatChatWithTools(
                             libMessages,
-                            request.tools.map { LlamaToolDefinition(it.name, it.description, it.parametersJson) },
-                            toolChoice = when (request.toolChoice) {
-                                ToolChoice.Auto -> LlamaToolChoice.Auto
-                                ToolChoice.None -> LlamaToolChoice.None
-                            },
+                            libTools,
+                            toolChoice = libToolChoice,
                             enableThinking = request.sampling.enableThinking,
                         )
                         toolsIgnored = formatted.toolsIgnored
@@ -596,6 +618,92 @@ class LlamaKtEngineImpl : LlamaKtEngine, Closeable {
 
             awaitClose { llamaEngine.interrupt() }
         }.buffer(Channel.UNLIMITED)
+
+        /**
+         * TEN-182. On an empty KV cache (the model was just loaded), puts the fixed start of a tool
+         * prompt in the cache before the decode, from a file when [prefixCache] has one, else by
+         * prefilling it and writing the file. The decode then only prefills what follows.
+         *
+         * Skipped on a warm cache: llama.cpp keeps the common prefix of the cached tokens and the new
+         * prompt by itself, so a second conversation already reuses the first one's prefix; this is
+         * for the first prefill after a load. A restored session (TEN-34) has filled the cache by
+         * then, so it never gets here either.
+         *
+         * The prefix is the system messages plus the tool block, cut where the user's words start
+         * ([WarmUpPrompt.build] with no history): the same text for every conversation of this model
+         * and tool set. It goes through [LlamaEngine.prefill] and [LlamaEngine.saveSession] on its
+         * own, before anything else is in the cache, so the file holds the prefix alone, in the
+         * sequence-only format (TEN-97), with the token count clamped to the cells (TEN-92). A
+         * reasoning model cannot diverge from it (TEN-88): no reply is in there.
+         *
+         * Best-effort: any failure leaves a cache the decode's own prefill takes over from (a failed
+         * restore resets it to empty on the native side, an interrupted prefill keeps a valid prefix).
+         */
+        private fun restoreOrBuildToolPrefix(
+            request: DecodeRequest,
+            tools: List<LlamaToolDefinition>,
+            toolChoice: LlamaToolChoice,
+            ensureActive: () -> Unit,
+        ) {
+            val cache = prefixCache ?: return log("prefix cache: off, no cache dir")
+            try {
+                val resident0 = llamaEngine.kvUsed()
+                if (resident0 > 0) return log("prefix cache: skipped, KV holds $resident0 tokens already")
+                val prefix = WarmUpPrompt.build(request.messages.takeWhile { it.role == MessageRole.System }) { rendered ->
+                    llamaEngine.formatChatWithTools(
+                        rendered.map { it.toLib() },
+                        tools,
+                        toolChoice = toolChoice,
+                        enableThinking = request.sampling.enableThinking,
+                    ).prompt
+                } ?: return log("prefix cache: skipped, no boundary between the system part and the user turn")
+                val file = cache.fileFor(cache.key(prefixIdentity, prefix))
+                val startMs = System.currentTimeMillis()
+                if (file.exists()) {
+                    val restored = llamaEngine.loadSession(file.path)
+                    if (restored >= 0) {
+                        cache.touch(file)
+                        log("prefix cache: restored $restored tokens in ${System.currentTimeMillis() - startMs} ms")
+                        return
+                    }
+                    // Written by another llama.cpp, or cut short. The native side left the cache empty.
+                    cache.discard(file)
+                    log("prefix cache: ${file.name} refused, rebuilding")
+                }
+                val promptTokens = llamaEngine.tokenize(prefix).size
+                // The decode needs these tokens in its prompt whatever happens here, so the only reason to
+                // stay out is the one it would refuse on itself: no room left to answer into.
+                if (!ContextBudget.hasRoom(ContextBudget.available(metadata.nCtxEffective, promptTokens))) {
+                    return log("prefix cache: skipped, $promptTokens prefix tokens leave no room in n_ctx=${metadata.nCtxEffective}")
+                }
+                log("prefix cache: building $promptTokens tokens (n_ctx=${metadata.nCtxEffective})")
+                // Stop landing during the formatting above is erased by nativePrefill (it clears the
+                // interrupt flag on entry), so look before committing to minutes of prefill and a save.
+                ensureActive()
+                val resident = llamaEngine.prefill(prefix)
+                // Short of the whole prefix: interrupted, declined or failed. Nothing worth saving.
+                if (resident < promptTokens) return log("prefix cache: prefill stopped at $resident of $promptTokens tokens, nothing saved")
+                val prefillMs = System.currentTimeMillis() - startMs
+                ensureActive()
+                val temp = cache.tempFor(file)
+                try {
+                    if (llamaEngine.saveSession(temp.path) >= 0 && cache.commit(temp, file)) {
+                        log("prefix cache: built $resident tokens in $prefillMs ms, wrote ${file.length() / 1_000_000} MB")
+                    } else {
+                        log("prefix cache: could not write ${file.name}")
+                    }
+                } finally {
+                    // Gone after a commit, still there after a failed save or a throw.
+                    temp.delete()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("prefix cache: skipped, ${e.message}")
+            } finally {
+                refreshKvUsedCells()
+            }
+        }
 
         /**
          * TEN-88. [WarmUpPrompt] decides *what* to prefill; this decides where it runs: formatting,

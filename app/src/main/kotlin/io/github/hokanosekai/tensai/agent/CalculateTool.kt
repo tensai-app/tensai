@@ -14,7 +14,7 @@ class CalculateTool(private val clock: Clock = Clock.systemDefaultZone()) : Tool
     override val name = "calculate"
     override val description =
         "Exact math. expression: + - * / ^ % ( ), sqrt abs round floor ceil min max log ln sin cos tan, pi e. " +
-            "Or value+from+to to convert units. Or time+from+to to convert a time between IANA zones."
+            "Or value+from+to to convert units. Or time+from+to to convert a time between zones."
     override val parametersSchema =
         """{"type":"object","properties":{"expression":{"type":"string"},"value":{"type":"number"},""" +
             """"from":{"type":"string","description":"unit or time zone"},"to":{"type":"string"},""" +
