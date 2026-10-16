@@ -125,6 +125,9 @@ fun InputPill(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    // Capped, so a long draft scrolls inside the field instead of growing the pill
+                    // past the screen and pushing the chip and the send button out of it.
+                    maxLines = MaxInputLines,
                     decorationBox = { innerField ->
                         if (value.isEmpty()) {
                             Text(
@@ -189,6 +192,9 @@ private fun ModelChipSurface(label: String, onClick: () -> Unit, modifier: Modif
 
 /** Pill ground opacity when [InputPill]'s `translucent`: text beneath stays a faint shadow, never readable. */
 private const val TranslucentAlpha = 0.95f
+
+/** The field's height cap, in lines: past it the draft scrolls inside the field. */
+private const val MaxInputLines = 10
 
 /** Shared by the model chip and the send button so the pill's bottom row lines up (TEN-129). */
 private val ControlHeight = 32.dp
