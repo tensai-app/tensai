@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Sms
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WbCloudy
@@ -66,6 +67,10 @@ object ToolUiCatalog {
             ToolActions(R.string.tool_done_datetime, R.string.tool_run_datetime)),
         ToolUiMeta("calculate", Icons.Rounded.Calculate, R.string.tool_name_calculate, R.string.tool_desc_calculate,
             ToolActions(R.string.tool_done_calculate, R.string.tool_run_calculate)),
+        ToolUiMeta("convert", Icons.Rounded.SwapHoriz, R.string.tool_name_convert, R.string.tool_desc_convert,
+            ToolActions(R.string.tool_done_convert, R.string.tool_run_convert)),
+        ToolUiMeta("convert_time", Icons.Rounded.Schedule, R.string.tool_name_convert_time, R.string.tool_desc_convert_time,
+            ToolActions(R.string.tool_done_convert_time, R.string.tool_run_convert_time)),
         ToolUiMeta("device_info", Icons.Rounded.Smartphone, R.string.tool_name_device_info, R.string.tool_desc_device_info,
             ToolActions(R.string.tool_done_device_info, R.string.tool_run_device_info)),
         ToolUiMeta("search_chats", Icons.Rounded.ManageSearch, R.string.tool_name_search_chats, R.string.tool_desc_search_chats,

@@ -55,7 +55,7 @@ class ToolRegistryTest {
 
     @Test
     fun theDefaultRegistryHoldsTheToolsThatNeedNoPlatform() {
-        assertEquals(listOf("datetime", "calculate"), ToolRegistry.default().active().map { it.name })
+        assertEquals(listOf("datetime", "calculate", "convert", "convert_time"), ToolRegistry.default().active().map { it.name })
     }
 
     @Test
@@ -89,7 +89,7 @@ class ToolRegistryTest {
         val active = ToolRegistry.default(platformTools = platform).active()
 
         assertEquals(
-            listOf("datetime", "calculate", "device_info", "search_chats", "clipboard", "torch", "memory"),
+            listOf("datetime", "calculate", "convert", "convert_time", "device_info", "search_chats", "clipboard", "torch", "memory"),
             active.map { it.name },
         )
         assertTrue(active.all { it.tier == ToolTier.Local })

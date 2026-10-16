@@ -2,6 +2,8 @@ package io.github.hokanosekai.tensai.ui.tools
 
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.agent.CalculateTool
+import io.github.hokanosekai.tensai.agent.ConvertTimeTool
+import io.github.hokanosekai.tensai.agent.ConvertTool
 import io.github.hokanosekai.tensai.agent.DateTimeTool
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +28,7 @@ class ToolUiTest {
     /** Every tool the app registers (RuntimeGraph.toolRegistry) has an entry, and so do the ones the next tickets add. */
     @Test
     fun everyRegisteredToolHasMetadata() {
-        val registered = listOf("datetime", "calculate", "device_info", "search_chats", "memory", "ask_user", "clipboard", "torch")
+        val registered = listOf("datetime", "calculate", "convert", "convert_time", "device_info", "search_chats", "memory", "ask_user", "clipboard", "torch")
         val planned = listOf(
             "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "open_app", "open_url",
             "media_control", "web_search", "web_fetch", "weather", "wikipedia",
@@ -34,8 +36,10 @@ class ToolUiTest {
 
         assertEquals(emptyList<String>(), (registered + planned).filter { ToolUiCatalog.meta(it) == null })
         assertEquals((registered + planned).sorted(), ToolUiCatalog.ids.sorted())
-        // The two tools the registry builds without a platform are checked against the real objects.
+        // The tools the registry builds without a platform are checked against the real objects.
         assertNotNull(ToolUiCatalog.meta(DateTimeTool().name))
+        assertNotNull(ToolUiCatalog.meta(ConvertTool().name))
+        assertNotNull(ToolUiCatalog.meta(ConvertTimeTool().name))
         assertNotNull(ToolUiCatalog.meta(CalculateTool().name))
     }
 

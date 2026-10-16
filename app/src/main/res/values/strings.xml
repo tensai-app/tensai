@@ -766,6 +766,8 @@
     <!-- Tools in the chat and in Settings (TEN-173, TEN-174) -->
     <string name="tool_name_datetime">Date and time</string>
     <string name="tool_name_calculate">Calculator</string>
+    <string name="tool_name_convert">Unit converter</string>
+    <string name="tool_name_convert_time">Time zones</string>
     <string name="tool_name_device_info">Device info</string>
     <string name="tool_name_search_chats">Search chats</string>
     <string name="tool_name_memory">Memory</string>
@@ -786,7 +788,9 @@
     <string name="tool_name_wikipedia">Wikipedia</string>
 
     <string name="tool_desc_datetime">Current date, time and time zone</string>
-    <string name="tool_desc_calculate">Exact arithmetic and unit conversions</string>
+    <string name="tool_desc_calculate">Exact arithmetic</string>
+    <string name="tool_desc_convert">Converts between units</string>
+    <string name="tool_desc_convert_time">Converts a time between zones</string>
     <string name="tool_desc_device_info">Battery, storage, RAM and Android version</string>
     <string name="tool_desc_search_chats">Finds past conversations on this phone</string>
     <string name="tool_desc_memory">Remembers and forgets facts you share</string>
@@ -810,6 +814,10 @@
     <string name="tool_run_datetime">Checking the time…</string>
     <string name="tool_done_calculate">Did a calculation</string>
     <string name="tool_run_calculate">Calculating…</string>
+    <string name="tool_done_convert">Converted units</string>
+    <string name="tool_run_convert">Converting…</string>
+    <string name="tool_done_convert_time">Converted a time</string>
+    <string name="tool_run_convert_time">Converting the time…</string>
     <string name="tool_done_device_info">Checked the phone</string>
     <string name="tool_run_device_info">Checking the phone…</string>
     <string name="tool_done_search_chats">Searched your chats</string>

@@ -11,7 +11,7 @@ import java.time.format.DateTimeParseException
 import java.time.format.ResolverStyle
 
 /**
- * Unit conversions for `calculate` (TEN-175). Every unit is a factor to its family's base unit, except
+ * Unit conversions for `convert` (TEN-175). Every unit is a factor to its family's base unit, except
  * temperature, which has an offset and is handled apart.
  */
 object UnitConversion {
@@ -104,7 +104,7 @@ object UnitConversion {
     }
 }
 
-/** A time in one IANA zone shown in another, for `calculate` (TEN-175). */
+/** A time in one IANA zone shown in another, for `convert_time` (TEN-175). */
 object TimeZoneConversion {
 
     private val shown = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")

@@ -679,6 +679,8 @@
     <!-- Outils dans le chat et dans les réglages (TEN-173, TEN-174) -->
     <string name="tool_name_datetime">Date et heure</string>
     <string name="tool_name_calculate">Calculatrice</string>
+    <string name="tool_name_convert">Convertisseur</string>
+    <string name="tool_name_convert_time">Fuseaux horaires</string>
     <string name="tool_name_device_info">Infos de l\'appareil</string>
     <string name="tool_name_search_chats">Recherche dans les chats</string>
     <string name="tool_name_memory">Mémoire</string>
@@ -699,7 +701,9 @@
     <string name="tool_name_wikipedia">Wikipédia</string>
 
     <string name="tool_desc_datetime">Date, heure et fuseau horaire actuels</string>
-    <string name="tool_desc_calculate">Calculs exacts et conversions d\'unités</string>
+    <string name="tool_desc_calculate">Calculs exacts</string>
+    <string name="tool_desc_convert">Conversions d\'unités</string>
+    <string name="tool_desc_convert_time">Conversion d\'heure entre fuseaux</string>
     <string name="tool_desc_device_info">Batterie, stockage, RAM et version d\'Android</string>
     <string name="tool_desc_search_chats">Retrouve des conversations passées sur ce téléphone</string>
     <string name="tool_desc_memory">Retient et oublie des faits partagés</string>
@@ -723,6 +727,10 @@
     <string name="tool_run_datetime">Consultation de l\'heure…</string>
     <string name="tool_done_calculate">Calcul effectué</string>
     <string name="tool_run_calculate">Calcul en cours…</string>
+    <string name="tool_done_convert">Conversion effectuée</string>
+    <string name="tool_run_convert">Conversion en cours…</string>
+    <string name="tool_done_convert_time">Heure convertie</string>
+    <string name="tool_run_convert_time">Conversion de l\'heure…</string>
     <string name="tool_done_device_info">Téléphone vérifié</string>
     <string name="tool_run_device_info">Vérification du téléphone…</string>
     <string name="tool_done_search_chats">Conversations parcourues</string>
