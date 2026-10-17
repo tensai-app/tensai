@@ -16,7 +16,7 @@ class LicenseGroupingTest {
         assertEquals(listOf(LicenseGroup.Inference, LicenseGroup.Fonts, LicenseGroup.App), groups.map { it.first })
         assertEquals("llama.kt", groups.first().second.first().name)
         assertEquals(listOf("Figtree", "JetBrains Mono"), groups[1].second.map { it.name })
-        assertEquals(listOf("commonmark-java"), groups[2].second.map { it.name })
+        assertEquals(listOf("commonmark-java", "jsoup"), groups[2].second.map { it.name })
     }
 
     @Test
@@ -31,8 +31,8 @@ class LicenseGroupingTest {
             ),
         ).toMap()
         assertEquals(listOf("Activity", "Room-Runtime"), groups.getValue(LicenseGroup.AndroidX).map { it.name })
-        // commonmark stays first (hand list), generated ones follow by name, case-insensitive.
-        assertEquals(listOf("commonmark-java", "kotlinx", "Okio"), groups.getValue(LicenseGroup.App).map { it.name })
+        // hand-listed entries (commonmark, jsoup) stay first (hand list), generated ones follow by name, case-insensitive.
+        assertEquals(listOf("commonmark-java", "jsoup", "kotlinx", "Okio"), groups.getValue(LicenseGroup.App).map { it.name })
     }
 
     @Test

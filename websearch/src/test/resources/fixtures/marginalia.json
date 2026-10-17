@@ -1,0 +1,20 @@
+{
+  "license": "CC-BY-NC-SA 4.0",
+  "query": "kotlin coroutines",
+  "results": [
+    {
+      "url": "https://blog.example.org/coroutines-from-scratch/",
+      "title": "Coroutines from scratch",
+      "description": "A small-web walkthrough of building coroutines by hand.",
+      "quality": 4.2,
+      "format": "html5"
+    },
+    {
+      "url": "https://notes.example.net/kotlin/",
+      "title": "Kotlin notes",
+      "description": "Personal notes.",
+      "quality": 3.1,
+      "format": "html5"
+    }
+  ]
+}

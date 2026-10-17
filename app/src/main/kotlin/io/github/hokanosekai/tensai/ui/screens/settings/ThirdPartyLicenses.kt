@@ -157,6 +157,15 @@ val ThirdPartyLicenses = listOf(
         group = LicenseGroup.App,
     ),
     ThirdPartyLicense(
+        name = "jsoup",
+        license = "MIT",
+        author = "Jonathan Hedley",
+        url = "jsoup.org",
+        textRes = R.raw.license_mit_jsoup,
+        covers = setOf("maven:org.jsoup"),
+        group = LicenseGroup.App,
+    ),
+    ThirdPartyLicense(
         name = "Figtree",
         license = "SIL OFL 1.1",
         author = "The Figtree Project Authors",

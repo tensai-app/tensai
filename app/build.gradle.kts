@@ -122,6 +122,7 @@ ksp {
 
 dependencies {
     implementation(project(":llama-kt"))
+    implementation(project(":websearch"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)

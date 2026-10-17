@@ -1,0 +1,24 @@
+{
+  "type": "search",
+  "query": {
+    "original": "kotlin coroutines",
+    "show_strict_warning": false
+  },
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "Coroutines guide | Kotlin Documentation",
+        "url": "https://kotlinlang.org/docs/coroutines-guide.html",
+        "description": "Kotlin provides only minimal low-level APIs to enable <strong>coroutines</strong> &amp; more.",
+        "language": "en"
+      },
+      {
+        "title": "Kotlin/kotlinx.coroutines",
+        "url": "https://github.com/Kotlin/kotlinx.coroutines",
+        "description": "Library support for Kotlin <strong>coroutines</strong>.",
+        "language": "en"
+      }
+    ]
+  }
+}

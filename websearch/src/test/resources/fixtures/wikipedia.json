@@ -1,0 +1,28 @@
+{
+  "pages": [
+    {
+      "id": 1234,
+      "key": "Kotlin_(programming_language)",
+      "title": "Kotlin (programming language)",
+      "matched_title": null,
+      "excerpt": "<span class=\"searchmatch\">Kotlin</span> is a cross-platform, statically typed, general-purpose high-level programming language",
+      "description": "Programming language",
+      "thumbnail": {
+        "mimetype": "image/jpeg",
+        "width": 60,
+        "height": 60,
+        "duration": null,
+        "url": "//upload.wikimedia.org/x.jpg"
+      }
+    },
+    {
+      "id": 5678,
+      "key": "Kotlin_Island",
+      "title": "Kotlin Island",
+      "matched_title": null,
+      "excerpt": "",
+      "description": "Island in the Gulf of Finland",
+      "thumbnail": null
+    }
+  ]
+}
