@@ -932,6 +932,7 @@
     <string name="tool_detail_no_inputs">No inputs</string>
     <string name="tool_detail_no_output">No output</string>
     <string name="tool_detail_sent_to">Sent to %1$s</string>
+    <string name="tool_detail_sent_to_what">Sent to %1$s · %2$s</string>
     <string name="tool_detail_show_json">Show JSON</string>
     <string name="tool_detail_show_readable">Show readable</string>
     <string name="tool_detail_waiting">Waiting for the result…</string>
@@ -984,7 +985,7 @@
         <item quantity="other">Off · %1$d tools</item>
     </plurals>
     <string name="tools_tier_internet_on">On · %1$s</string>
-    <string name="tools_internet_warning">Requests leave your phone and go to the search provider</string>
+    <string name="tools_internet_warning">Requests leave your phone and go to the search provider, Wikipedia, Open-Meteo or the site being read</string>
     <string name="tools_footer">Tools are offered only to models whose template supports them. Sending and deleting always ask first.</string>
     <string name="tools_use_local">Use on-phone tools</string>
     <string name="tools_use_phone">Use phone actions</string>
@@ -997,8 +998,8 @@
     <string name="tools_provider_brave" translatable="false">Brave</string>
     <string name="tools_provider_tavily" translatable="false">Tavily</string>
     <string name="tools_provider_ddg_sub">No key needed</string>
-    <string name="tools_provider_brave_sub">API key · free tier 2,000 queries a month</string>
-    <string name="tools_provider_tavily_sub">API key · built for agents</string>
+    <string name="tools_provider_brave_sub">API key · monthly free credit, card required</string>
+    <string name="tools_provider_tavily_sub">API key · 1,000 free searches a month, no card</string>
     <string name="tools_key_label">%1$s API key</string>
     <string name="tools_key_placeholder_brave" translatable="false">BSA…</string>
     <string name="tools_key_placeholder_tavily" translatable="false">tvly-…</string>
@@ -1008,6 +1009,14 @@
     <string name="tools_key_show">Show key</string>
     <string name="tools_key_hide">Hide key</string>
     <string name="tools_test">Test</string>
+    <string name="tools_test_running">Testing…</string>
+    <string name="tools_test_ok">%1$s answered · %2$d ms</string>
+    <string name="tools_test_no_key">Add an API key first</string>
+    <string name="tools_test_blocked">%1$s blocked the request</string>
+    <string name="tools_test_limited">%1$s is limiting requests, try again later</string>
+    <string name="tools_test_quota">%1$s quota is used up</string>
+    <string name="tools_test_key_rejected">%1$s rejected the key</string>
+    <string name="tools_test_format">%1$s answered in an unexpected format</string>
+    <string name="tools_test_network">Could not reach %1$s</string>
     <string name="tools_key_invalid">This doesn\'t look like an API key</string>
-    <string name="tools_test_unavailable">Testing arrives with web search</string>
 </resources>

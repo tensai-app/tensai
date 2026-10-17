@@ -3,6 +3,7 @@ package io.github.hokanosekai.tensai.runtime
 import android.content.Context
 import android.net.ConnectivityManager
 import android.util.Log
+import io.github.hokanosekai.tensai.BuildConfig
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.AndroidClipboardAccess
 import io.github.hokanosekai.tensai.agent.AndroidContactsSource
@@ -27,6 +28,14 @@ import io.github.hokanosekai.tensai.agent.DeviceInfoTool
 import io.github.hokanosekai.tensai.agent.MemoryTool
 import io.github.hokanosekai.tensai.agent.SearchChatsTool
 import io.github.hokanosekai.tensai.agent.TorchTool
+import io.github.hokanosekai.tensai.agent.OkHttpFetcher
+import io.github.hokanosekai.tensai.agent.SearchProviders
+import io.github.hokanosekai.tensai.agent.SearchSelection
+import io.github.hokanosekai.tensai.agent.SearchTester
+import io.github.hokanosekai.tensai.agent.WeatherTool
+import io.github.hokanosekai.tensai.agent.WebFetchTool
+import io.github.hokanosekai.tensai.agent.WebSearchTool
+import io.github.hokanosekai.tensai.agent.WikipediaTool
 import io.github.hokanosekai.tensai.agent.UiConfirmationGate
 import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
@@ -39,6 +48,7 @@ import io.github.hokanosekai.tensai.data.MemorySettings
 import io.github.hokanosekai.tensai.data.NotificationPermissionRepository
 import io.github.hokanosekai.tensai.data.OnboardingRepository
 import io.github.hokanosekai.tensai.data.SearchKeyStores
+import io.github.hokanosekai.tensai.data.SearchProviderChoice
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.ToolSettingsRepository
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
@@ -67,6 +77,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import io.github.hokanosekai.websearch.HttpFetcher
+import io.github.hokanosekai.websearch.PageReader
+import java.util.Locale
 
 /**
  * Pragmatic, framework-free composition root for V1.
@@ -384,6 +397,32 @@ object RuntimeGraph {
         )
     }
 
+    /** `tensai/<version> (+<repo>)`: what Wikimedia and Open-Meteo ask a client to say about itself. */
+    private val descriptiveUserAgent: String
+        get() = "tensai/${BuildConfig.VERSION_NAME} (+https://github.com/hokanosekai/tensai)"
+
+    /** The HTTP client of the Internet tools: no redirects, DNS pinned against private addresses, no proxy (see [OkHttpFetcher]). */
+    val httpFetcher: HttpFetcher by lazy { OkHttpFetcher(userAgent = descriptiveUserAgent) }
+
+    private val searchLanguage: () -> String = { Locale.getDefault().language.takeIf { it.length in 2..3 } ?: "en" }
+
+    private val searchProviders: SearchProviders by lazy { SearchProviders(httpFetcher, descriptiveUserAgent, searchLanguage) }
+
+    private suspend fun searchSelection(choice: SearchProviderChoice) = SearchSelection(choice, searchKeys.of(choice)?.get())
+
+    /** Runs one query through the provider chosen in Settings, for the Test button. */
+    val searchTester: SearchTester by lazy { SearchTester(searchProviders, ::searchSelection) }
+
+    private fun webTools(): List<Tool> = listOf(
+        WebSearchTool {
+            val choice = toolSettings.searchProvider.first()
+            WebSearchTool.Setup(searchProviders.chain(searchSelection(choice)), SearchProviders.displayName(choice))
+        },
+        WebFetchTool(PageReader(httpFetcher, httpsOnly = true)),
+        WeatherTool(httpFetcher),
+        WikipediaTool(httpFetcher, descriptiveUserAgent, searchLanguage),
+    )
+
     /** The built-in tools, filtered by the tiers granted in Settings. Settings lists them per tier. */
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry.default(
@@ -399,7 +438,7 @@ object RuntimeGraph {
                     onForgotten = { memoryPrompt.invalidate() },
                 ),
                 AskUserTool(askUserGate),
-            ) + phoneActionTools(),
+            ) + phoneActionTools() + webTools(),
         )
     }
 

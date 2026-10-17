@@ -224,9 +224,9 @@ private fun InternetWarning() {
 /**
  * One tier of Settings > Tools: its switch, its tools and, for Internet, the search provider.
  *
- * The Internet tools do not exist yet (v0.3.1): the list shows the tools that are registered, and says so
- * when there is none. The provider and its key are stored now so the choice is there when `web_search` is;
- * the Test button waits for `:websearch` (TEN-180).
+ * The Internet card lists the registered tools (`web_search`, `web_fetch`, `weather`, `wikipedia`) and carries the
+ * search provider choice, its key (stored encrypted) and the Test button, which sends one real query through the
+ * chosen provider alone (TEN-181).
  */
 @Composable
 fun ToolGroupScreen(
@@ -476,32 +476,39 @@ private fun KeyField(viewModel: ToolsViewModel, provider: SearchProviderChoice, 
     }
 }
 
-/** The line under the field: where the key lives (or the saved mask) and the Test button, which waits for `:websearch`. */
+/** The line under the field: where the key lives (or the saved mask), the last test result, and the Test button. */
 @Composable
 private fun KeyStatusRow(viewModel: ToolsViewModel, provider: SearchProviderChoice, enabled: Boolean) {
     val mask by remember(provider) { viewModel.keyMask(provider) }.collectAsState(initial = null)
+    val test by viewModel.testState.collectAsState()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth().padding(top = if (provider.needsKey) 8.dp else 0.dp),
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = when {
-                    mask != null -> stringResource(R.string.tools_key_saved, mask.orEmpty())
-                    provider.needsKey -> stringResource(R.string.tools_key_stored)
-                    else -> stringResource(R.string.tools_test_unavailable)
-                },
-                fontSize = 12.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
             if (provider.needsKey) {
                 Text(
-                    text = stringResource(R.string.tools_test_unavailable),
+                    text = if (mask != null) stringResource(R.string.tools_key_saved, mask.orEmpty()) else stringResource(R.string.tools_key_stored),
                     fontSize = 12.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val result = when (val state = test) {
+                SearchTestState.Idle -> null
+                is SearchTestState.Running -> stringResource(R.string.tools_test_running) to false
+                is SearchTestState.Answered -> stringResource(R.string.tools_test_ok, state.provider, state.millis) to false
+                is SearchTestState.Failed -> state.message.resolve() to true
+            }
+            if (result != null) {
+                Text(
+                    text = result.first,
+                    fontSize = 12.5.sp,
+                    color = if (result.second) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -515,13 +522,12 @@ private fun KeyStatusRow(viewModel: ToolsViewModel, provider: SearchProviderChoi
                 contentColor = MaterialTheme.colorScheme.error,
             )
         }
-        // Sends one query through the provider: there is no provider code until `:websearch` (TEN-180).
         TensaiButton(
             text = stringResource(R.string.tools_test),
-            onClick = {},
+            onClick = { viewModel.testSearch(provider) },
             variant = TensaiButtonVariant.Text,
             size = TensaiButtonSize.Sm,
-            enabled = false,
+            enabled = enabled && test !is SearchTestState.Running,
         )
     }
 }

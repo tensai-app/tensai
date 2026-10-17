@@ -845,6 +845,7 @@
     <string name="tool_detail_no_inputs">Aucune entrée</string>
     <string name="tool_detail_no_output">Aucune sortie</string>
     <string name="tool_detail_sent_to">Envoyé à %1$s</string>
+    <string name="tool_detail_sent_to_what">Envoyé à %1$s · %2$s</string>
     <string name="tool_detail_show_json">Afficher le JSON</string>
     <string name="tool_detail_show_readable">Afficher en clair</string>
     <string name="tool_detail_waiting">En attente du résultat…</string>
@@ -901,7 +902,7 @@
         <item quantity="other">Désactivé · %1$d outils</item>
     </plurals>
     <string name="tools_tier_internet_on">Activé · %1$s</string>
-    <string name="tools_internet_warning">Les requêtes quittent le téléphone et vont chez le fournisseur de recherche</string>
+    <string name="tools_internet_warning">Les requêtes quittent le téléphone et vont chez le fournisseur de recherche, Wikipédia, Open-Meteo ou le site lu</string>
     <string name="tools_footer">Les outils ne sont proposés qu\'aux modèles dont le template les gère. Envoyer et supprimer demandent toujours confirmation.</string>
     <string name="tools_use_local">Utiliser les outils du téléphone</string>
     <string name="tools_use_phone">Utiliser les actions du téléphone</string>
@@ -911,8 +912,8 @@
     <string name="tools_empty_internet">Aucun outil internet pour le moment</string>
     <string name="tools_provider_eyebrow">Fournisseur de recherche</string>
     <string name="tools_provider_ddg_sub">Aucune clé nécessaire</string>
-    <string name="tools_provider_brave_sub">Clé d\'API · offre gratuite de 2 000 requêtes par mois</string>
-    <string name="tools_provider_tavily_sub">Clé d\'API · conçu pour les agents</string>
+    <string name="tools_provider_brave_sub">Clé d\'API · crédit gratuit mensuel, carte bancaire requise</string>
+    <string name="tools_provider_tavily_sub">Clé d\'API · 1 000 recherches gratuites par mois, sans carte</string>
     <string name="tools_key_label">Clé d\'API %1$s</string>
     <string name="tools_key_stored">Stockée sur ce téléphone uniquement</string>
     <string name="tools_key_saved">Enregistrée : %1$s</string>
@@ -920,6 +921,14 @@
     <string name="tools_key_show">Afficher la clé</string>
     <string name="tools_key_hide">Masquer la clé</string>
     <string name="tools_test">Tester</string>
+    <string name="tools_test_running">Test en cours…</string>
+    <string name="tools_test_ok">%1$s a répondu · %2$d ms</string>
+    <string name="tools_test_no_key">Une clé d\'API est d\'abord nécessaire</string>
+    <string name="tools_test_blocked">%1$s a bloqué la requête</string>
+    <string name="tools_test_limited">%1$s limite les requêtes, réessayer plus tard</string>
+    <string name="tools_test_quota">Le quota de %1$s est épuisé</string>
+    <string name="tools_test_key_rejected">%1$s a refusé la clé</string>
+    <string name="tools_test_format">%1$s a répondu dans un format inattendu</string>
+    <string name="tools_test_network">%1$s est injoignable</string>
     <string name="tools_key_invalid">Cela ne ressemble pas à une clé d\'API</string>
-    <string name="tools_test_unavailable">Le test arrive avec la recherche web</string>
 </resources>

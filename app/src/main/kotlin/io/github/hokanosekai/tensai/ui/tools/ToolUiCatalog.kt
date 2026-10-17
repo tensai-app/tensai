@@ -189,6 +189,18 @@ object ToolUiCatalog {
         return if (tool == "ask_user") inputs.map { it.copy(mono = it.key == "multiple") } else inputs
     }
 
+    /**
+     * What a network call sent out, in one flat line for "Sent to <host> · <this>" in the detail sheet: the query
+     * of a search or Wikipedia lookup, the place of a forecast, the URL of a page. Makes it obvious at a glance when
+     * the model puts something unexpected in a request. `null` for a tool that sends nothing of the kind.
+     */
+    fun sentDetail(tool: String, argsJson: String): String? {
+        val key = SENT_ARGS[tool] ?: return null
+        return ToolArgsView.values(argsJson)[key]?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private val SENT_ARGS = mapOf("web_search" to "query", "wikipedia" to "query", "weather" to "place", "web_fetch" to "url")
+
     /** The "tensai wants to ..." line of the confirmation card. */
     fun confirmLabel(tool: String, argsJson: String): UiText =
         byId[tool]?.confirmLabel?.invoke(ToolArgsView.values(argsJson)) ?: UiText.of(R.string.tool_confirm_generic, name(tool))

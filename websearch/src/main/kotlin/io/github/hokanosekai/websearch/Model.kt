@@ -47,6 +47,10 @@ sealed class SearchError(message: String, cause: Throwable? = null) : Exception(
     /** Content that is not readable text (binary, PDF, ...). */
     class Unsupported(val detail: String) : SearchError("Unsupported content: $detail")
 
-    /** URL refused by [UrlGuard] (scheme, private or loopback target). */
-    class UnsafeUrl(val reason: String) : SearchError("Unsafe URL: $reason")
+    /**
+     * URL refused by [UrlGuard] (scheme, private or loopback target) or by [PageReader] (plain http when it is
+     * https-only). [requested] is true when an earlier hop of the same read was already sent, so something did
+     * leave the device and the caller should still show where it went.
+     */
+    class UnsafeUrl(val reason: String, val requested: Boolean = false) : SearchError("Unsafe URL: $reason")
 }

@@ -194,4 +194,36 @@ class PageReaderTest {
             read(reader(HttpResponse(200, "<html><body><script>x()</script></body></html>", html)))
         }
     }
+
+    @Test fun unsafeFirstUrlIsNotMarkedRequestedButARefusedHopIs() {
+        val first = assertFails<SearchError.UnsafeUrl> { read(reader(), url = "http://127.0.0.1/") }
+        assertFalse(first.requested)
+
+        val hop = assertFails<SearchError.UnsafeUrl> { read(reader(redirect("http://192.168.1.1/"))) }
+        assertTrue(hop.requested)
+    }
+
+    @Test fun httpsOnlyRefusesPlainHttpStartWithoutRequesting() {
+        val fetcher = FakeFetcher()
+        val reader = PageReader(fetcher, publicGuard, httpsOnly = true)
+        val error = assertFails<SearchError.UnsafeUrl> { read(reader, url = "http://example.com/a") }
+
+        assertFalse(error.requested)
+        assertTrue(error.reason.contains("plain http"))
+        assertTrue(fetcher.requests.isEmpty())
+    }
+
+    @Test fun httpsOnlyRefusesARedirectToPlainHttpAfterTheFirstRequest() {
+        val fetcher = FakeFetcher(redirect("http://example.com/b"), HttpResponse(200, fixture("article.html"), html))
+        val error = assertFails<SearchError.UnsafeUrl> { read(PageReader(fetcher, publicGuard, httpsOnly = true)) }
+
+        assertTrue(error.requested)
+        assertTrue(error.reason.contains("redirects to plain http"))
+        assertEquals(1, fetcher.requests.size)
+    }
+
+    @Test fun httpsOnlyStillFollowsHttpsRedirects() {
+        val fetcher = FakeFetcher(redirect("https://other.example/b"), HttpResponse(200, fixture("article.html"), html))
+        assertEquals("https://other.example/b", read(PageReader(fetcher, publicGuard, httpsOnly = true)).url)
+    }
 }

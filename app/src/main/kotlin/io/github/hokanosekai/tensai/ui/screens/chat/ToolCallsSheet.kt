@@ -334,7 +334,15 @@ private fun Detail(call: ToolCallUi) {
                 modifier = Modifier.padding(start = 4.dp, top = 8.dp),
             ) {
                 Icon(Icons.Rounded.Language, contentDescription = null, tint = muted, modifier = Modifier.size(16.dp))
-                Text(text = stringResource(R.string.tool_detail_sent_to, destination), fontSize = 13.sp, color = muted)
+                val sent = ToolUiCatalog.sentDetail(call.tool, call.argsJson)
+                Text(
+                    text = if (sent == null) stringResource(R.string.tool_detail_sent_to, destination) else stringResource(R.string.tool_detail_sent_to_what, destination, sent),
+                    fontSize = 13.sp,
+                    color = muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
         }
 

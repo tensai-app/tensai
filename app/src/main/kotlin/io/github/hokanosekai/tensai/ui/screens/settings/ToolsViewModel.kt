@@ -1,5 +1,8 @@
 package io.github.hokanosekai.tensai.ui.screens.settings
 
+import io.github.hokanosekai.tensai.R
+import io.github.hokanosekai.tensai.agent.SearchProviders
+import io.github.hokanosekai.tensai.agent.SearchTester
 import io.github.hokanosekai.tensai.agent.Tool
 import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.agent.ToolTier
@@ -8,8 +11,15 @@ import io.github.hokanosekai.tensai.data.SearchProviderChoice
 import io.github.hokanosekai.tensai.data.ToolSettingsRepository
 import io.github.hokanosekai.tensai.hf.TokenStore
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import io.github.hokanosekai.tensai.ui.tools.UiText
+import io.github.hokanosekai.websearch.SearchError
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
@@ -48,9 +58,18 @@ class ToolsViewModel(
     private val settings: ToolSettingsRepository = RuntimeGraph.toolSettings,
     private val registry: ToolRegistry = RuntimeGraph.toolRegistry,
     private val keys: SearchKeyStores? = null,
+    private val tester: SearchTester? = null,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
 ) {
     private val keyStores: SearchKeyStores get() = keys ?: RuntimeGraph.searchKeys
+    private val searchTester: SearchTester get() = tester ?: RuntimeGraph.searchTester
+
+    private val testRun = AtomicInteger()
+
+    private val _testState = MutableStateFlow<SearchTestState>(SearchTestState.Idle)
+
+    /** Where the Test button of the selected provider stands. */
+    val testState: StateFlow<SearchTestState> = _testState.asStateFlow()
 
     val grants: Flow<Set<ToolTier>> = settings.grants
 
@@ -67,6 +86,8 @@ class ToolsViewModel(
     }
 
     fun setSearchProvider(provider: SearchProviderChoice) {
+        testRun.incrementAndGet()
+        _testState.value = SearchTestState.Idle
         scope.launch { settings.setSearchProvider(provider) }
     }
 
@@ -86,5 +107,57 @@ class ToolsViewModel(
 
     fun removeKey(provider: SearchProviderChoice) {
         scope.launch { keyStores.of(provider)?.clear() }
+    }
+
+    /** Sends one real query through [provider] alone (no fallback) and reports in [testState]. */
+    fun testSearch(provider: SearchProviderChoice) {
+        if (_testState.value is SearchTestState.Running) return
+        val run = testRun.incrementAndGet()
+        _testState.value = SearchTestState.Running(provider)
+        scope.launch {
+            val state = try {
+                SearchTestState.from(provider, searchTester.run(provider))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Keystore, DataStore, anything that is not a SearchError: the test ends, it does not hang on Running.
+                SearchTestState.Failed(UiText.of(R.string.tools_test_network, SearchProviders.displayName(provider)))
+            }
+            // A provider switched meanwhile made this result stale: it is not shown under the new one.
+            if (testRun.get() == run) _testState.value = state
+        }
+    }
+}
+
+/** One run of the Test button (TEN-181). */
+sealed interface SearchTestState {
+    data object Idle : SearchTestState
+
+    data class Running(val provider: SearchProviderChoice) : SearchTestState
+
+    /** "<Provider> answered · <ms> ms". */
+    data class Answered(val provider: String, val millis: Long) : SearchTestState
+
+    data class Failed(val message: UiText) : SearchTestState
+
+    companion object {
+        /** What the user reads for [outcome] of a run against [provider]. */
+        fun from(provider: SearchProviderChoice, outcome: SearchTester.Outcome): SearchTestState {
+            val name = SearchProviders.displayName(provider)
+            return when (outcome) {
+                is SearchTester.Outcome.Answered -> Answered(name, outcome.millis)
+                SearchTester.Outcome.NoKey -> Failed(UiText.of(R.string.tools_test_no_key))
+                is SearchTester.Outcome.Failed -> Failed(
+                    when (outcome.error) {
+                        is SearchError.Blocked -> UiText.of(R.string.tools_test_blocked, name)
+                        is SearchError.RateLimited -> UiText.of(R.string.tools_test_limited, name)
+                        is SearchError.QuotaExceeded -> UiText.of(R.string.tools_test_quota, name)
+                        is SearchError.Unauthorized -> UiText.of(R.string.tools_test_key_rejected, name)
+                        is SearchError.FormatChanged -> UiText.of(R.string.tools_test_format, name)
+                        else -> UiText.of(R.string.tools_test_network, name)
+                    },
+                )
+            }
+        }
     }
 }

@@ -86,4 +86,23 @@ class FallbackSearchTest {
         val thrown = assertFails<SearchError.Unauthorized> { runBlocking { search.search("q", 5) } }
         assertTrue(thrown.suppressed.single() is SearchError.Blocked)
     }
+
+    @Test fun onTryReportsEveryProviderAskedInOrderIncludingFailures() {
+        val tried = mutableListOf<String>()
+        val search = FallbackSearch(
+            StubProvider("a", error = SearchError.Blocked("x")),
+            listOf(StubProvider("b"), StubProvider("c", hit("c")), StubProvider("d", hit("d"))),
+        )
+        val results = runBlocking { search.search("q", 5) { tried += it } }
+
+        assertEquals("c", results.single().source)
+        assertEquals(listOf("a", "b", "c"), tried)
+    }
+
+    @Test fun onTryIsCalledEvenWhenEverythingFails() {
+        val tried = mutableListOf<String>()
+        val search = FallbackSearch(StubProvider("a", error = SearchError.Network("x")), listOf(StubProvider("b", error = SearchError.Network("y"))))
+        assertFails<SearchError.Network> { runBlocking { search.search("q", 5) { tried += it } } }
+        assertEquals(listOf("a", "b"), tried)
+    }
 }

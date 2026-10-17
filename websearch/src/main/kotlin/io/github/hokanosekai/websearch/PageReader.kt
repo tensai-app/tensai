@@ -16,12 +16,16 @@ import org.jsoup.select.NodeVisitor
  * Redirects are followed here, not by the [HttpFetcher]: every hop goes through [UrlGuard]
  * before it is requested, up to [MAX_REDIRECTS]. Anti-bot walls raise [SearchError.Blocked],
  * there is no attempt to get around them.
+ *
+ * @param httpsOnly refuse any plain `http://` hop (the start URL or a redirect), for a host whose network
+ *   stack blocks cleartext traffic: the refusal is then a clear [SearchError.UnsafeUrl], not a transport error.
  */
 class PageReader(
     private val http: HttpFetcher,
     private val guard: UrlGuard = UrlGuard(),
     private val userAgent: String = MOBILE_USER_AGENT,
     private val maxBytes: Int = HttpFetcher.DEFAULT_MAX_BYTES,
+    private val httpsOnly: Boolean = false,
 ) {
 
     suspend fun read(url: String, maxChars: Int): PageContent {
@@ -66,9 +70,12 @@ class PageReader(
         return truncate(finalUrl, title, body, maxChars, response.truncated)
     }
 
-    /** GET with manual redirects, each hop checked by the guard before the request. */
+    /**
+     * GET with manual redirects, each hop checked by the guard before the request. A hop refused after the
+     * first request is reported with [SearchError.UnsafeUrl.requested] set: the first hop did go out.
+     */
     private suspend fun fetch(startUrl: String): Pair<HttpResponse, String> {
-        var current = guard.verify(startUrl)
+        var current = checked(startUrl, afterRequest = false)
         for (hop in 0..MAX_REDIRECTS) {
             val response = network {
                 http.get(
@@ -84,11 +91,26 @@ class PageReader(
             val next = try {
                 URI(current).resolve(location).toString()
             } catch (e: Exception) {
-                throw SearchError.UnsafeUrl("malformed redirect target")
+                throw SearchError.UnsafeUrl("malformed redirect target", requested = true)
             }
-            current = guard.verify(next)
+            current = checked(next, afterRequest = true)
         }
         error("unreachable")
+    }
+
+    private suspend fun checked(url: String, afterRequest: Boolean): String {
+        val verified = try {
+            guard.verify(url)
+        } catch (e: SearchError.UnsafeUrl) {
+            throw if (afterRequest) SearchError.UnsafeUrl(e.reason, requested = true) else e
+        }
+        if (httpsOnly && !verified.startsWith("https://", ignoreCase = true)) {
+            throw SearchError.UnsafeUrl(
+                if (afterRequest) "the page redirects to plain http, which is not supported" else "plain http is not supported",
+                requested = afterRequest,
+            )
+        }
+        return verified
     }
 
     private fun truncate(url: String, title: String, body: String, maxChars: Int, cut: Boolean): PageContent {

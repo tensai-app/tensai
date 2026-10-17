@@ -18,11 +18,18 @@ class FallbackSearch(
 ) : SearchProvider {
     override val name: String get() = primary.name
 
-    override suspend fun search(query: String, limit: Int): List<SearchResult> {
+    override suspend fun search(query: String, limit: Int): List<SearchResult> = search(query, limit) {}
+
+    /**
+     * [search] that calls [onTry] with the [SearchProvider.name] of each provider just before it is asked, so the
+     * caller knows every provider the query was sent to, including those that failed.
+     */
+    suspend fun search(query: String, limit: Int, onTry: (String) -> Unit): List<SearchResult> {
         val errors = mutableListOf<SearchError>()
         var answeredEmpty = false
         for (provider in listOf(primary) + fallbacks) {
             try {
+                onTry(provider.name)
                 val results = provider.search(query, limit)
                 if (results.isNotEmpty()) return results
                 answeredEmpty = true

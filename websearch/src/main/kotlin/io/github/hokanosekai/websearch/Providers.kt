@@ -146,7 +146,7 @@ class Wikipedia(
 
     init {
         // The language becomes part of the host name.
-        require(Regex("[a-z-]{2,12}").matches(language)) { "invalid Wikipedia language: $language" }
+        require(Regex("[a-z]{2,3}(-[a-z0-9]{1,8})*").matches(language)) { "invalid Wikipedia language: $language" }
     }
 
     override suspend fun search(query: String, limit: Int): List<SearchResult> {
