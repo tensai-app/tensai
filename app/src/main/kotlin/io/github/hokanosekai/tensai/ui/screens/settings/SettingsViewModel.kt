@@ -11,6 +11,7 @@ import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.models.ModelEntity
+import io.github.hokanosekai.tensai.data.models.StorageUsage
 import io.github.hokanosekai.tensai.data.session.PurgeReport
 import io.github.hokanosekai.tensai.data.session.SessionEntity
 import io.github.hokanosekai.tensai.data.session.SessionRepository
@@ -77,7 +78,7 @@ class SettingsViewModel(
     models: Flow<List<ModelEntity>> = RuntimeGraph.modelRepository.models,
     sessions: Flow<List<SessionEntity>> = RuntimeGraph.sessionRepository.observeSessions(),
     memoryCount: Flow<Int> = RuntimeGraph.memoryDao.observeCount(),
-    volumeTotalBytes: Flow<Long> = RuntimeGraph.modelRepository.storageUsage().map { it.totalBytes },
+    volume: Flow<StorageUsage> = RuntimeGraph.modelRepository.storageUsage(),
     queueState: Flow<QueueState> = RuntimeGraph.inferenceQueue.state,
     private val deviceProfile: () -> DeviceProfile? = {
         runCatching { RuntimeGraph.deviceProfiler.profile() }.getOrNull()
@@ -121,11 +122,12 @@ class SettingsViewModel(
 
     /** Models and sessions as they are *on disk* — see [SettingsStorage.figures]. */
     val storage: Flow<StorageFigures> =
-        combine(models, sessions, volumeTotalBytes) { modelList, sessionList, total ->
+        combine(models, sessions, volume) { modelList, sessionList, usage ->
             SettingsStorage.figures(
                 models = modelList,
                 sessions = sessionList,
-                volumeTotalBytes = total,
+                volumeTotalBytes = usage.totalBytes,
+                freeBytes = usage.freeBytes,
                 fileSize = fileSize,
             )
         }

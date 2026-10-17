@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -70,7 +71,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -92,6 +96,7 @@ import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.TensaiShapes
 import io.github.hokanosekai.tensai.ui.theme.ThemeMode
+import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import kotlinx.coroutines.launch
 
@@ -651,22 +656,44 @@ private fun StorageSection(
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    // The kit's ProgressBar: 6dp pill track in surface-variant, primary fill.
-                    Box(
+                    // Stacked over the whole volume: models (primary), the rest of the phone's data
+                    // (outline-strong), free (the empty track, warning-tinted when low).
+                    val shares = figures?.shares
+                    val barDescription = if (figures == null) {
+                        stringResource(R.string.settings_storage_models)
+                    } else {
+                        stringResource(
+                            R.string.settings_storage_bar_description,
+                            formatFileSize(figures.modelBytes),
+                            formatFileSize(figures.freeBytes),
+                            formatFileSize(figures.volumeTotalBytes),
+                        )
+                    }
+                    val freeColor = if (shares?.lowFree == true) {
+                        MaterialTheme.tensaiColors.warning
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Row(
                         modifier = Modifier
                             .padding(top = 8.dp)
                             .fillMaxWidth()
                             .height(6.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
+                            .clip(CircleShape)
+                            .background(if (shares?.lowFree == true) MaterialTheme.tensaiTints.warning12 else MaterialTheme.colorScheme.surfaceVariant)
+                            .semantics(mergeDescendants = true) {
+                                role = Role.Image
+                                contentDescription = barDescription
+                            },
                     ) {
-                        val fraction = (figures?.modelFraction ?: 0f).coerceIn(0f, 1f)
-                        if (fraction > 0f) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(fraction)
-                                    .height(6.dp)
-                                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-                            )
+                        if (shares != null) {
+                            if (shares.models > 0f) {
+                                Box(Modifier.weight(shares.models).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+                            }
+                            if (shares.other > 0f) {
+                                Box(Modifier.weight(shares.other).fillMaxHeight().background(MaterialTheme.tensaiTints.outlineStrong))
+                            }
+                            if (shares.free > 0f) Spacer(Modifier.weight(shares.free))
                         }
                     }
                     Text(
@@ -676,14 +703,23 @@ private fun StorageSection(
                             stringResource(
                                 R.string.settings_storage_models_usage,
                                 formatFileSize(figures.modelBytes),
-                                formatFileSize(figures.volumeTotalBytes),
+                                formatFileSize(figures.freeBytes),
                             )
                         },
                         fontFamily = TensaiMono,
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
+                        color = freeColor,
+                        modifier = Modifier.padding(top = 6.dp).then(if (figures == null) Modifier else Modifier.clearAndSetSemantics {}),
                     )
+                    if (figures != null && figures.volumeTotalBytes > 0) {
+                        Text(
+                            text = stringResource(R.string.settings_storage_volume_total, formatFileSize(figures.volumeTotalBytes)),
+                            fontFamily = TensaiMono,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clearAndSetSemantics {},
+                        )
+                    }
                 }
             }
             // Tonal button (kit: primary-16 fill, primary text, pill, 36dp), aligned with the text

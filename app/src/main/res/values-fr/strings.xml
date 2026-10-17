@@ -114,7 +114,9 @@
     <string name="settings_auto_share_70">Plus de contexte, moins de place</string>
 
     <string name="settings_storage_models">Modèles</string>
-    <string name="settings_storage_models_usage">%1$s sur %2$s</string>
+    <string name="settings_storage_models_usage">Modèles %1$s · Libre %2$s</string>
+    <string name="settings_storage_volume_total">sur %1$s</string>
+    <string name="settings_storage_bar_description">Modèles %1$s, libre %2$s sur %3$s</string>
     <string name="settings_storage_manage_models">Gérer les modèles</string>
     <string name="settings_storage_sessions">Sessions enregistrées</string>
     <!-- French "one" covers 0 and 1. -->

@@ -12,6 +12,7 @@ import io.github.hokanosekai.tensai.data.ContextSetting
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.ThemeRepository
 import io.github.hokanosekai.tensai.data.models.ModelEntity
+import io.github.hokanosekai.tensai.data.models.StorageUsage
 import io.github.hokanosekai.tensai.data.session.PurgeReport
 import io.github.hokanosekai.tensai.data.session.SessionDao
 import io.github.hokanosekai.tensai.data.session.SessionEntity
@@ -296,7 +297,7 @@ class SettingsViewModelTest {
 
         val figures = newViewModel(
             models = flowOf(listOf(model("a"), model("gone"))),
-            volumeTotalBytes = flowOf(1_000L),
+            volume = flowOf(StorageUsage(modelsBytes = 0L, freeBytes = 900L, totalBytes = 1_000L)),
             fileSize = { path -> if (path.contains("gone")) null else 100L },
         ).storage.first()
 
@@ -304,7 +305,20 @@ class SettingsViewModelTest {
         assertEquals(1, figures.modelCount)
         assertEquals(100L, figures.sessionBytes)
         assertEquals(1, figures.sessionCount)
-        assertEquals(0.1f, figures.modelFraction, 0.0001f)
+        assertEquals(900L, figures.freeBytes)
+        assertEquals(false, figures.lowSpace)
+    }
+
+    @Test
+    fun freeSpaceBelowTheAverageModelIsLow() = runBlocking {
+        val figures = newViewModel(
+            models = flowOf(listOf(model("a"))),
+            volume = flowOf(StorageUsage(modelsBytes = 0L, freeBytes = 40L, totalBytes = 1_000L)),
+            fileSize = { 100L },
+        ).storage.first()
+
+        assertEquals(40L, figures.freeBytes)
+        assertEquals(true, figures.lowSpace)
     }
 
     @Test
@@ -377,7 +391,7 @@ class SettingsViewModelTest {
 
     private fun newViewModel(
         models: Flow<List<ModelEntity>> = flowOf(emptyList()),
-        volumeTotalBytes: Flow<Long> = flowOf(1_000L),
+        volume: Flow<StorageUsage> = flowOf(StorageUsage(modelsBytes = 0L, freeBytes = 900L, totalBytes = 1_000L)),
         queueState: Flow<QueueState> = flowOf(QueueState.Idle),
         fileSize: (String) -> Long? = { 100L },
         changelogSeen: Flow<String?> = flowOf(null),
@@ -395,7 +409,7 @@ class SettingsViewModelTest {
         models = models,
         sessions = sessionDao.observeAll(),
         memoryCount = flowOf(0),
-        volumeTotalBytes = volumeTotalBytes,
+        volume = volume,
         queueState = queueState,
         deviceProfile = { profile },
         fileSize = fileSize,

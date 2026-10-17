@@ -24,6 +24,7 @@ class SettingsStorageTest {
             models = emptyList(),
             sessions = emptyList(),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { error("nothing to size") },
         )
 
@@ -31,7 +32,6 @@ class SettingsStorageTest {
         assertEquals(0, figures.modelCount)
         assertEquals(0L, figures.sessionBytes)
         assertEquals(0, figures.sessionCount)
-        assertEquals(0f, figures.modelFraction, 0f)
     }
 
     @Test
@@ -40,6 +40,7 @@ class SettingsStorageTest {
             models = listOf(model("a"), model("b")),
             sessions = emptyList(),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { path -> if (path == "/models/a.gguf") 1_000L else 2_500L },
         )
 
@@ -53,6 +54,7 @@ class SettingsStorageTest {
             models = listOf(model("a")),
             sessions = listOf(session("c1"), session("c2")),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { path -> if (path.endsWith(".gguf")) 10L else 200L },
         )
 
@@ -68,6 +70,7 @@ class SettingsStorageTest {
             models = emptyList(),
             sessions = listOf(session("c1")),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { 4_096L },
         )
 
@@ -82,6 +85,7 @@ class SettingsStorageTest {
             models = listOf(model("here"), model("gone")),
             sessions = listOf(session("here"), session("gone")),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             // Storage wiped from the system settings, or an app-data restore that brought rows
             // back without files — the table still says these exist.
             fileSize = { path -> if (path.contains("gone")) null else 100L },
@@ -103,6 +107,7 @@ class SettingsStorageTest {
             models = listOf(model("a"), model("b")),
             sessions = listOf(session("c1")),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { null },
         )
 
@@ -118,6 +123,7 @@ class SettingsStorageTest {
             models = listOf(model("empty")),
             sessions = listOf(session("empty")),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             // Distinct from the missing-file case above on purpose: an interrupted import leaves a
             // real, empty file the user can still see listed, and dropping it from the count would
             // make Settings disagree with the Models screen.
@@ -137,6 +143,7 @@ class SettingsStorageTest {
             models = listOf(model("a", sizeBytes = 4_000_000_000L)),
             sessions = emptyList(),
             volumeTotalBytes = volume,
+            freeBytes = volume,
             fileSize = { 12L },
         )
 
@@ -144,41 +151,70 @@ class SettingsStorageTest {
     }
 
     @Test
-    fun theBarFillsToTheShareOfTheVolumeTheModelsTakeUp() {
-        val figures = SettingsStorage.figures(
+    fun theVolumeSplitsIntoModelsOtherAndFree() {
+        val shares = SettingsStorage.shares(modelBytes = 100L, freeBytes = 300L, totalBytes = 1_000L, lowFree = false)
+
+        assertEquals(0.1f, shares.models, 0.0001f)
+        assertEquals(0.6f, shares.other, 0.0001f)
+        assertEquals(0.3f, shares.free, 0.0001f)
+        assertEquals(false, shares.lowFree)
+    }
+
+    @Test
+    fun anUnknownVolumeGivesAnEmptyBar() {
+        val shares = SettingsStorage.shares(modelBytes = 100L, freeBytes = 300L, totalBytes = 0L, lowFree = true)
+
+        assertEquals(StorageShares(0f, 0f, 0f, lowFree = false), shares)
+    }
+
+    @Test
+    fun negativeAndOversizedInputsNeverOverflowTheTrack() {
+        val negative = SettingsStorage.shares(modelBytes = -5L, freeBytes = -1L, totalBytes = 100L, lowFree = false)
+        assertEquals(0f, negative.models, 0f)
+        assertEquals(1f, negative.other, 0f)
+        assertEquals(0f, negative.free, 0f)
+
+        val over = SettingsStorage.shares(modelBytes = 80L, freeBytes = 80L, totalBytes = 100L, lowFree = false)
+        assertEquals(0.8f, over.models, 0.0001f)
+        assertEquals(0f, over.other, 0f)
+        assertEquals(0.2f, over.free, 0.0001f)
+    }
+
+    @Test
+    fun freeSpaceUnderTheModelsBannerThresholdIsLow() {
+        // One 400-byte model: the Models banner warns below 400 free bytes.
+        fun low(free: Long) = SettingsStorage.figures(
             models = listOf(model("a")),
             sessions = emptyList(),
             volumeTotalBytes = 1_000L,
-            fileSize = { 250L },
+            freeBytes = free,
+            fileSize = { 400L },
         )
 
-        assertEquals(0.25f, figures.modelFraction, 0.0001f)
+        assertEquals(true, low(399L).lowSpace)
+        assertEquals(true, low(399L).shares.lowFree)
+        assertEquals(false, low(400L).lowSpace)
     }
 
     @Test
-    fun anUnreadableVolumeSizeDrawsAnEmptyBarRatherThanAFullOne() {
-        val figures = SettingsStorage.figures(
+    fun anEmptyLibraryOrUnknownVolumeNeverWarns() {
+        val empty = SettingsStorage.figures(
+            models = emptyList(),
+            sessions = emptyList(),
+            volumeTotalBytes = 1_000L,
+            freeBytes = 0L,
+            fileSize = { error("nothing to size") },
+        )
+        val unknown = SettingsStorage.figures(
             models = listOf(model("a")),
             sessions = emptyList(),
             volumeTotalBytes = 0L,
-            fileSize = { 250L },
+            freeBytes = 0L,
+            fileSize = { 400L },
         )
 
-        assertEquals(0f, figures.modelFraction, 0f)
-    }
-
-    @Test
-    fun modelsBiggerThanTheVolumeStillFillTheBarExactlyOnce() {
-        // Not reachable from a healthy StatFs, but the bar is a progress indicator and a value
-        // above 1f draws as garbage rather than as "full".
-        val figures = SettingsStorage.figures(
-            models = listOf(model("a")),
-            sessions = emptyList(),
-            volumeTotalBytes = 100L,
-            fileSize = { 500L },
-        )
-
-        assertEquals(1f, figures.modelFraction, 0f)
+        assertEquals(false, empty.lowSpace)
+        assertEquals(false, unknown.lowSpace)
     }
 
     private fun model(name: String, sizeBytes: Long = 1_000_000) = ModelEntity(
