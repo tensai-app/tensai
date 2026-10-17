@@ -225,6 +225,12 @@ lance `gh release create <tag> <apk> --generate-notes --verify-tag`, avec
 `--prerelease` si la version contient un `-`. Si la release existe déjà (rerun), il
 le dit et ne fait rien.
 
+**Notes de version dans l'app (TEN-193)** : avant de tagguer, ajouter la version à
+`app/src/main/assets/changelog.json` (version, titre court, date ISO, intro, groupes),
+avec le même texte que la release GitHub, en anglais. L'écran Réglages > Version lit ce
+fichier hors ligne. `ChangelogTest` échoue si l'entrée la plus récente n'est pas le
+`versionName` de `build.gradle.kts`, donc un bump sans notes casse `testDebugUnitTest`.
+
 Côté Gradle, `app/build.gradle.kts` crée la config de signature `release` quand les
 quatre variables `TENSAI_KEYSTORE_PATH`, `TENSAI_KEYSTORE_PASSWORD`,
 `TENSAI_KEY_ALIAS`, `TENSAI_KEY_PASSWORD` sont définies. Aucune : APK non signée,

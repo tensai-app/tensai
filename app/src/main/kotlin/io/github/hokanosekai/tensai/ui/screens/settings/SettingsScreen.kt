@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -69,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
@@ -112,6 +115,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onNavigateToModels: () -> Unit,
     onNavigateToLicenses: () -> Unit,
+    onNavigateToChangelog: () -> Unit,
     onNavigateToDevice: () -> Unit,
     onNavigateToMemory: () -> Unit,
     onNavigateToTools: () -> Unit,
@@ -133,6 +137,7 @@ fun SettingsScreen(
     val tokenMask by viewModel.tokenMask.collectAsState(initial = null)
     val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
     val memoryCount by viewModel.memoryCount.collectAsState(initial = 0)
+    val changelogDot by viewModel.changelogDot.collectAsState(initial = false)
     val toolGroupsOn by toolsViewModel.groupsOn.collectAsState(initial = ToolGroup.countOn(DefaultTierGrants.granted()))
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -153,6 +158,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val nothingToClear = stringResource(R.string.settings_storage_cleared_nothing)
     val unknown = stringResource(R.string.settings_inference_unknown)
+    val newLabel = stringResource(R.string.changelog_new)
 
     // Read from the system rather than the permission: it also covers API < 33 (always on unless
     // switched off) and the channel-less "turned off in system settings" case. The user changes it
@@ -334,7 +340,20 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Info,
                     title = stringResource(R.string.settings_version),
-                    trailing = { MonoText(viewModel.appVersion.ifBlank { unknown }) },
+                    onClick = onNavigateToChangelog,
+                    trailing = {
+                        if (changelogDot) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                    .semantics { contentDescription = newLabel },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        MonoText(viewModel.appVersion.ifBlank { unknown })
+                        Chevron()
+                    },
                 )
                 RowDivider()
                 SettingsRow(

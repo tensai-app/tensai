@@ -167,6 +167,15 @@
     <!-- About. -->
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Open-source licenses</string>
+
+    <!-- What's new (TEN-193) -->
+    <string name="changelog_title">What\'s new</string>
+    <string name="changelog_new">New</string>
+    <string name="changelog_installed">Installed</string>
+    <string name="changelog_show">Show notes</string>
+    <string name="changelog_hide">Hide notes</string>
+    <string name="changelog_footer">Full history on GitHub</string>
+    <string name="changelog_empty">No release notes in this build.</string>
     <!-- Footer tagline under the 天 glyph. -->
     <string name="settings_footer">made to run free</string>
     <string name="licenses_intro">tensai is built on open-source work. Thank you to everyone behind these projects.</string>

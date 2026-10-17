@@ -1,0 +1,108 @@
+{
+  "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
+  "releases": [
+    {
+      "version": "0.3.0",
+      "title": "Tooling",
+      "date": "2026-10-17",
+      "intro": "The model can now use tools: it checks things on the phone, acts through your apps, remembers what you tell it, and asks when your request is ambiguous. Everything still runs on the phone.",
+      "groups": [
+        {
+          "label": "Tools",
+          "items": [
+            "On this phone: date and time, calculator, unit and time zone conversion, device info (battery, storage, RAM), search past chats, memory, clipboard, torch",
+            "Phone actions through your apps: timer, alarm, calendar event, SMS and email drafts (to a number or a contact name), open an app or a link, media control. Nothing is sent by tensai: the target app opens and you confirm there",
+            "Contacts: drafts accept a name (\"Jade\"); with several matches the model asks you which one. Android's contacts permission is asked at first use",
+            "Questions: the model can ask a single or multiple choice question; the card replaces the input bar",
+            "Memory: facts you ask it to remember are added to every conversation; manage or turn them off in Settings > Memory"
+          ]
+        },
+        {
+          "label": "In the chat",
+          "items": [
+            "Tool calls show as a discreet line between the reasoning and the answer; tap it for the timeline and each call's inputs and output",
+            "Calls that delete something or open a link ask first (Allow / Deny)",
+            "Settings > Tools: turn each tier on or off",
+            "Context sheet: tool definitions, tool results and memory in the breakdown, and an Agent activity section (calls, tokens, time per tool)",
+            "Copy a message: long press, or the copy button under replies"
+          ]
+        },
+        {
+          "label": "Faster",
+          "items": [
+            "The fixed part of the prompt (system and tool definitions) is cached on disk: the first tool turn after loading a model went from ~4 min to ~10 s",
+            "CPU models no longer send the prefill to the GPU: prompt processing ~4x faster, generation ~1.7x faster on a Dimensity 900",
+            "The UI no longer stutters while a prompt is processed",
+            "The reasoning of the current turn is kept between a tool call and its result, so the model continues instead of starting over"
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "title": "Models",
+      "date": "2026-10-16",
+      "intro": "Models from Hugging Face, a context view, and a simpler navigation.",
+      "groups": [
+        {
+          "label": "Models",
+          "items": [
+            "Discover: search Hugging Face, filters (fits my phone, tools), models recommended for your device",
+            "Repo page with every quant, its size and whether it fits; download with pause/resume, sha256 check, progress notification, mobile data and free space checks",
+            "Gated models with a Hugging Face token",
+            "Model picker from the chip in the input bar",
+            "Chat template fallback for GGUFs that ship without one",
+            "Files this build can't run (unknown architecture, draft heads) are flagged and can't be loaded",
+            "Per-architecture backend choice extended (lfm2 on CPU, nemotron_h on Vulkan)"
+          ]
+        },
+        {
+          "label": "Chat",
+          "items": [
+            "Context ring in the top bar and a Context sheet: token breakdown, runtime details",
+            "The app opens on a new chat; the old Home screen is its empty state",
+            "Chats page: search, grouped by date, multi-select delete",
+            "Input bar capped at 10 lines, scrolling past it"
+          ]
+        },
+        {
+          "label": "Navigation",
+          "items": [
+            "One conversation at the root; Models, Settings and Chats open on top and back returns to it",
+            "Drawer scrolls as one list, recents capped at 20 with \"All chats\""
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-10-07",
+      "intro": "First release: run a GGUF model fully on your phone and chat with it. Nothing leaves the device.",
+      "groups": [
+        {
+          "label": "Models",
+          "items": [
+            "Import a GGUF file from this phone",
+            "llama.cpp engine on CPU and Vulkan, backend picked per architecture",
+            "Session cache: a conversation you reopen resumes without re-reading its history"
+          ]
+        },
+        {
+          "label": "Chat",
+          "items": [
+            "Markdown replies with code blocks, and the model's reasoning in a collapsible block",
+            "Per-conversation settings: instructions, thinking on or off, sampling presets, max response length",
+            "Onboarding on first launch, Home screen, empty and error states"
+          ]
+        },
+        {
+          "label": "App",
+          "items": [
+            "Settings: theme, language (English and French), backend, context length, KV cache type",
+            "Signed release APK built by CI"
+          ]
+        }
+      ]
+    }
+  ]
+}

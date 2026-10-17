@@ -16,6 +16,7 @@ sealed class TensaiDestination(val route: String) {
     data object ToolsPhoneActions : TensaiDestination("settings/tools/actions")
     data object ToolsInternet : TensaiDestination("settings/tools/internet")
     data object Licenses : TensaiDestination("settings/licenses")
+    data object Changelog : TensaiDestination("settings/changelog")
     data object Server : TensaiDestination("server")
 
     data object Chat : TensaiDestination("chat/{conversationId}") {

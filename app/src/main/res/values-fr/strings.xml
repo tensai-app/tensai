@@ -135,6 +135,15 @@
 
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Licences open source</string>
+
+    <!-- Nouveautés (TEN-193) -->
+    <string name="changelog_title">Nouveautés</string>
+    <string name="changelog_new">Nouveau</string>
+    <string name="changelog_installed">Installée</string>
+    <string name="changelog_show">Afficher les notes</string>
+    <string name="changelog_hide">Masquer les notes</string>
+    <string name="changelog_footer">Historique complet sur GitHub</string>
+    <string name="changelog_empty">Aucune note de version dans cette build.</string>
     <string name="settings_footer">fait pour tourner libre</string>
     <string name="licenses_intro">tensai repose sur du travail open source. Merci à toutes celles et ceux derrière ces projets.</string>
     <string name="licenses_group_inference">Inférence</string>

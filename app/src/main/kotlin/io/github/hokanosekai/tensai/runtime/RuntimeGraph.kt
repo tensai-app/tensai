@@ -32,6 +32,7 @@ import io.github.hokanosekai.tensai.agent.ToolRegistry
 import io.github.hokanosekai.tensai.compat.DeviceProfiler
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.ChangelogRepository
 import io.github.hokanosekai.tensai.data.ContextRepository
 import io.github.hokanosekai.tensai.data.LanguageRepository
 import io.github.hokanosekai.tensai.data.MemorySettings
@@ -244,6 +245,9 @@ object RuntimeGraph {
 
     /** First-run bookkeeping — see [OnboardingRepository] and `OnboardingGate`. */
     val onboardingRepository: OnboardingRepository by lazy { OnboardingRepository(appContext) }
+
+    /** The last version whose release notes were opened, see [ChangelogRepository]. */
+    val changelogRepository: ChangelogRepository by lazy { ChangelogRepository(appContext) }
 
     /**
      * Whether the `POST_NOTIFICATIONS` dialog has already been spent (TEN-75) — see

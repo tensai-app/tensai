@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -117,6 +118,13 @@ class SettingsViewModelTest {
         ThemeRepository(themeStore).setThemeMode(ThemeMode.Light)
 
         assertEquals(ThemeMode.Light, newViewModel().themeMode.first())
+    }
+
+    @Test
+    fun theVersionRowShowsADotUntilTheInstalledNotesWereOpened() = runBlocking {
+        assertTrue(newViewModel(changelogSeen = flowOf<String?>(null)).changelogDot.first())
+        assertTrue(newViewModel(changelogSeen = flowOf<String?>("1.2.0")).changelogDot.first())
+        assertFalse(newViewModel(changelogSeen = flowOf<String?>("1.2.3")).changelogDot.first())
     }
 
     @Test
@@ -372,6 +380,7 @@ class SettingsViewModelTest {
         volumeTotalBytes: Flow<Long> = flowOf(1_000L),
         queueState: Flow<QueueState> = flowOf(QueueState.Idle),
         fileSize: (String) -> Long? = { 100L },
+        changelogSeen: Flow<String?> = flowOf(null),
         checkToken: suspend (String) -> HfTokenCheck = { HfTokenCheck.Accepted },
     ) = SettingsViewModel(
         scope = viewModelScope,
@@ -391,6 +400,7 @@ class SettingsViewModelTest {
         deviceProfile = { profile },
         fileSize = fileSize,
         appVersion = "1.2.3",
+        changelogSeen = changelogSeen,
     )
 
     private val profile = DeviceProfile(

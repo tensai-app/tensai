@@ -26,6 +26,7 @@ import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingScreen
 import io.github.hokanosekai.tensai.ui.screens.onboarding.OnboardingStep
 import io.github.hokanosekai.tensai.ui.screens.settings.DeviceScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.MemoryScreen
+import io.github.hokanosekai.tensai.ui.screens.settings.ChangelogScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.LicensesScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.SettingsScreen
 import io.github.hokanosekai.tensai.ui.screens.settings.ToolGroup
@@ -276,6 +277,7 @@ fun TensaiNavGraph(
                 // from.
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToLicenses = { navController.navigate(TensaiDestination.Licenses.route) },
+                onNavigateToChangelog = { navController.navigate(TensaiDestination.Changelog.route) },
                 onNavigateToDevice = { navController.navigate(TensaiDestination.Device.route) },
                 onNavigateToMemory = { navController.navigate(TensaiDestination.Memory.route) },
                 onNavigateToTools = { navController.navigate(TensaiDestination.Tools.route) },
@@ -309,6 +311,10 @@ fun TensaiNavGraph(
         composable(TensaiDestination.ToolsOnPhone.route) { ToolGroupScreen(ToolGroup.OnPhone) }
         composable(TensaiDestination.ToolsPhoneActions.route) { ToolGroupScreen(ToolGroup.PhoneActions) }
         composable(TensaiDestination.ToolsInternet.route) { ToolGroupScreen(ToolGroup.Internet) }
+
+        composable(TensaiDestination.Changelog.route) {
+            ChangelogScreen()
+        }
 
         composable(TensaiDestination.Licenses.route) {
             LicensesScreen()

@@ -4,6 +4,7 @@ import io.github.hokanosekai.tensai.compat.DeviceProfile
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.BackendPreference
 import io.github.hokanosekai.tensai.data.BackendRepository
+import io.github.hokanosekai.tensai.data.ChangelogRepository
 import io.github.hokanosekai.tensai.data.ContextRepository
 import io.github.hokanosekai.tensai.data.AutoMemoryShare
 import io.github.hokanosekai.tensai.data.ContextSetting
@@ -61,6 +62,7 @@ import kotlinx.coroutines.launch
  * @param checkToken one authenticated call to Hugging Face, see [io.github.hokanosekai.tensai.hf.HfClient.checkToken].
  * @param appVersion the installed package's own `versionName`, read from the platform rather than
  *   written here — see [RuntimeGraph.appVersionName].
+ * @param changelogSeen the last version whose release notes were opened, see [ChangelogRepository].
  */
 class SettingsViewModel(
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
@@ -82,6 +84,7 @@ class SettingsViewModel(
     },
     fileSize: (String) -> Long? = { File(it).takeIf(File::isFile)?.length() },
     val appVersion: String = RuntimeGraph.appVersionName,
+    changelogSeen: Flow<String?> = RuntimeGraph.changelogRepository.seenVersion,
 ) {
 
     /** What `MainActivity` is themed with right now — see [ThemeRepository]. */
@@ -101,6 +104,9 @@ class SettingsViewModel(
 
     /** How many facts the `memory` tool holds (TEN-176), for the Memory row. */
     val memoryCount: Flow<Int> = memoryCount
+
+    /** Whether the notes of the installed version were not opened yet (TEN-193), the dot on the Version row. */
+    val changelogDot: Flow<Boolean> = changelogSeen.map { ChangelogRepository.isUnseen(appVersion, it) }
 
     /** Whether a download may start on mobile data without asking, see [DownloadPreferences]. */
     val allowMobileData: Flow<Boolean> = downloadPreferences.allowMobileData
