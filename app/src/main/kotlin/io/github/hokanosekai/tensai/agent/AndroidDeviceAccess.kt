@@ -1,5 +1,6 @@
 package io.github.hokanosekai.tensai.agent
 
+import android.Manifest
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
@@ -18,6 +19,9 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.StatFs
+import android.provider.ContactsContract
+import android.provider.ContactsContract.CommonDataKinds.Email
+import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.view.KeyEvent
 import io.github.hokanosekai.tensai.R
 import kotlinx.coroutines.CoroutineScope
@@ -227,5 +231,62 @@ class AndroidPhoneActions(
         val audio = app.getSystemService(AudioManager::class.java)
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
         audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+    }
+}
+
+/**
+ * The contacts on a real device (TEN-186): READ_CONTACTS asked through [gate] at first use, then two queries (numbers,
+ * addresses) grouped by contact. Nothing is cached or logged.
+ */
+class AndroidContactsSource(context: Context, private val gate: PermissionGate) : ContactsSource {
+    private val app = context.applicationContext
+
+    override fun isGranted(): Boolean = app.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+
+    override suspend fun access(): PermissionResult {
+        if (isGranted()) return PermissionResult.Granted
+        return gate.request(Manifest.permission.READ_CONTACTS)
+    }
+
+    override fun load(): List<Contact> {
+        val names = LinkedHashMap<Long, String>()
+        val phones = HashMap<Long, MutableList<ContactPhone>>()
+        val emails = HashMap<Long, MutableList<String>>()
+        app.contentResolver.query(
+            Phone.CONTENT_URI,
+            arrayOf(Phone.CONTACT_ID, Phone.DISPLAY_NAME, Phone.NUMBER, Phone.TYPE, Phone.NORMALIZED_NUMBER),
+            // Visible contacts only: the hidden and auto-collected ones are not in the user's address book.
+            "${ContactsContract.Contacts.IN_VISIBLE_GROUP} = 1", null, "${Phone.IS_SUPER_PRIMARY} DESC",
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val number = c.getString(2)?.trim().orEmpty()
+                val name = c.getString(1)?.trim().orEmpty()
+                if (name.isEmpty() || number.isEmpty()) continue
+                names.putIfAbsent(id, name)
+                val type = when (c.getInt(3)) {
+                    Phone.TYPE_MOBILE -> PhoneType.Mobile
+                    Phone.TYPE_HOME -> PhoneType.Home
+                    Phone.TYPE_WORK -> PhoneType.Work
+                    else -> PhoneType.Other
+                }
+                phones.getOrPut(id) { mutableListOf() } += ContactPhone(number, type, c.getString(4)?.takeIf { it.isNotBlank() })
+            }
+        }
+        app.contentResolver.query(
+            Email.CONTENT_URI,
+            arrayOf(Email.CONTACT_ID, Email.DISPLAY_NAME, Email.ADDRESS),
+            "${ContactsContract.Contacts.IN_VISIBLE_GROUP} = 1", null, "${Email.IS_SUPER_PRIMARY} DESC, ${Email.IS_PRIMARY} DESC",
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val address = c.getString(2)?.trim().orEmpty()
+                val name = c.getString(1)?.trim().orEmpty()
+                if (name.isEmpty() || address.isEmpty()) continue
+                names.putIfAbsent(id, name)
+                emails.getOrPut(id) { mutableListOf() } += address
+            }
+        }
+        return names.map { (id, name) -> Contact(id, name, phones[id].orEmpty(), emails[id].orEmpty()) }
     }
 }

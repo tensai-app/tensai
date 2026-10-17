@@ -42,6 +42,15 @@ class PhoneActionToolsTest {
         }
     }
 
+    /** For the tests that give a number or an address: the contacts are never asked. */
+    private object NoContacts : ContactsSource {
+        override fun isGranted(): Boolean = error("contacts not expected")
+
+        override suspend fun access(): PermissionResult = error("contacts not expected")
+
+        override fun load(): List<Contact> = error("contacts not expected")
+    }
+
     private fun spec(tool: IntentTool, args: String): IntentSpec = tool.spec(args).getOrThrow()
 
     private fun failure(tool: IntentTool, args: String): String = tool.spec(args).exceptionOrNull()!!.message!!
@@ -164,7 +173,7 @@ class PhoneActionToolsTest {
 
     @Test
     fun smsKeepsTheDialableCharacters() {
-        val tool = DraftSmsTool(FakePhone())
+        val tool = DraftSmsTool(FakePhone(), NoContacts)
         val s = spec(tool, """{"body":"on my way","number":"+33 6 12-34-56-78"}""")
 
         assertEquals("android.intent.action.SENDTO", s.action)
@@ -179,7 +188,7 @@ class PhoneActionToolsTest {
 
     @Test
     fun emailBuildsMailtoWithTheExtras() {
-        val tool = DraftEmailTool(FakePhone())
+        val tool = DraftEmailTool(FakePhone(), NoContacts)
         val s = spec(tool, """{"to":"a@b.fr, c@d.com","subject":"Hello","body":"Hi"}""")
 
         assertEquals("mailto:", s.data)
@@ -266,8 +275,8 @@ class PhoneActionToolsTest {
     fun onlyOpenUrlAsksTheGate() {
         val phone = FakePhone()
         val others = listOf(
-            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone),
-            DraftEmailTool(phone), OpenAppTool(phone), MediaControlTool(phone),
+            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone, NoContacts),
+            DraftEmailTool(phone, NoContacts), OpenAppTool(phone), MediaControlTool(phone),
         )
 
         assertTrue(OpenUrlTool(phone).requiresConfirmation("""{"url":"https://example.com"}"""))
@@ -314,7 +323,7 @@ class PhoneActionToolsTest {
     @Test
     fun anOpenedIntentAnswersTheAppCardShape() = runBlocking {
         val phone = FakePhone(handler = "Clock")
-        val result = DraftEmailTool(phone).execute("""{"subject":"x"}""")
+        val result = DraftEmailTool(phone, NoContacts).execute("""{"subject":"x"}""")
 
         assertFalse(result.isError)
         val json = JSONObject(result.text)
@@ -327,7 +336,7 @@ class PhoneActionToolsTest {
     fun aTimerAndAnAlarmAreReportedAsSet() = runBlocking {
         val timer = SetTimerTool(FakePhone()).execute("""{"seconds":60}""")
         val alarm = SetAlarmTool(FakePhone()).execute("""{"hour":7,"minutes":0}""")
-        val sms = DraftSmsTool(FakePhone(handler = "Messages")).execute("""{"body":"hi"}""")
+        val sms = DraftSmsTool(FakePhone(handler = "Messages"), NoContacts).execute("""{"body":"hi"}""")
 
         assertEquals("set, shown in Clock", JSONObject(timer.text).getString("status"))
         assertEquals("set, shown in Clock", JSONObject(alarm.text).getString("status"))
@@ -347,7 +356,7 @@ class PhoneActionToolsTest {
 
     @Test
     fun anActivityNotFoundAtStartIsRefusedToo() = runBlocking {
-        val result = DraftEmailTool(FakePhone(startFails = true)).execute("""{"subject":"x"}""")
+        val result = DraftEmailTool(FakePhone(startFails = true), NoContacts).execute("""{"subject":"x"}""")
 
         assertTrue(result.refused)
         assertTrue(result.text.contains("email"))
@@ -382,8 +391,8 @@ class PhoneActionToolsTest {
     fun everyToolIsAPhoneAction() {
         val phone = FakePhone()
         val tools = listOf(
-            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone),
-            DraftEmailTool(phone), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
+            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone, NoContacts),
+            DraftEmailTool(phone, NoContacts), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
         )
 
         assertEquals(8, tools.map { it.name }.toSet().size)

@@ -779,6 +779,7 @@
     <string name="tool_name_create_event">Create event</string>
     <string name="tool_name_draft_sms">Draft SMS</string>
     <string name="tool_name_draft_email">Draft email</string>
+    <string name="tool_name_find_contact">Find contact</string>
     <string name="tool_name_open_app">Open app</string>
     <string name="tool_name_open_url">Open link</string>
     <string name="tool_name_media_control">Media control</string>
@@ -802,6 +803,7 @@
     <string name="tool_desc_create_event">Opens Calendar with a new event</string>
     <string name="tool_desc_draft_sms">Opens Messages with a draft</string>
     <string name="tool_desc_draft_email">Opens your mail app with a draft</string>
+    <string name="tool_desc_find_contact">Looks up numbers and emails in your contacts. Asks Android\'s contacts permission at first use</string>
     <string name="tool_desc_open_app">Launches an installed app</string>
     <string name="tool_desc_open_url">Opens a link in your browser</string>
     <string name="tool_desc_media_control">Play, pause and skip in the current player</string>
@@ -855,6 +857,8 @@
     <string name="tool_run_draft_sms">Drafting a text…</string>
     <string name="tool_done_draft_email">Drafted an email</string>
     <string name="tool_run_draft_email">Drafting an email…</string>
+    <string name="tool_done_find_contact">Looked up a contact</string>
+    <string name="tool_run_find_contact">Looking up a contact…</string>
     <string name="tool_done_open_app">Opened an app</string>
     <string name="tool_run_open_app">Opening an app…</string>
     <string name="tool_done_open_url">Opened a link</string>
@@ -882,6 +886,7 @@
     <string name="tool_refused_event">Event refused</string>
     <string name="tool_refused_sms">Text refused</string>
     <string name="tool_refused_email">Email refused</string>
+    <string name="tool_refused_contacts">Contacts refused</string>
     <string name="tool_refused_url">Link refused</string>
     <string name="tool_line_stopped">Stopped</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>
@@ -908,6 +913,7 @@
     <string name="tool_detail_show_readable">Show readable</string>
     <string name="tool_detail_waiting">Waiting for the result…</string>
     <string name="tool_detail_waiting_answer">Waiting for your answer…</string>
+    <string name="tool_detail_open_settings">Open app settings</string>
     <string name="tool_detail_dismissed">Dismissed. No answer given.</string>
     <string name="tool_detail_opened">Opened in %1$s</string>
     <string name="tool_detail_opened_set">Set in %1$s</string>

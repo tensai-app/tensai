@@ -75,12 +75,13 @@ interface PhoneActions {
     fun sendMediaKey(key: MediaKey)
 }
 
-private const val BACKGROUND_ERROR =
+internal const val BACKGROUND_ERROR =
     "tensai is not on screen and Android blocks opening apps from the background. Tell the user to come back to tensai and ask again."
 
 /** What an opened app answers: the app card reads `opened`, the model reads `status`. */
-private fun opened(app: String, set: Boolean) = ToolResult.ok(
-    JSONObject().put("opened", app).put("status", if (set) "set, shown in $app" else "waiting for the user").toString(),
+private fun opened(app: String, set: Boolean, chose: List<String> = emptyList()) = ToolResult.ok(
+    JSONObject().put("opened", app).put("status", if (set) "set, shown in $app" else "waiting for the user")
+        .apply { if (chose.isNotEmpty()) put("to", chose.joinToString("; ")) }.toString(),
 )
 
 private fun refusedNoApp(what: String) =
@@ -125,6 +126,13 @@ abstract class IntentTool internal constructor(private val phone: PhoneActions) 
     /** @throws ArgException with a message for the model. */
     internal abstract fun build(args: JSONObject): IntentSpec
 
+    /**
+     * Turns what the model wrote into what [build] reads, before it: a draft tool swaps a contact name for the
+     * number. [chose] collects what was picked for the model ("Jade Martin, mobile").
+     * @throws ContactFailure when the lookup ends the call.
+     */
+    protected open suspend fun resolve(args: JSONObject, chose: MutableList<String>): JSONObject = args
+
     /** The spec [argsJson] builds, or the message for the model; the part of [execute] that needs no phone. */
     internal fun spec(argsJson: String): Result<IntentSpec> = try {
         Result.success(build(parseArgs(argsJson)))
@@ -133,12 +141,21 @@ abstract class IntentTool internal constructor(private val phone: PhoneActions) 
     }
 
     override suspend fun execute(argsJson: String): ToolResult {
-        val spec = spec(argsJson).getOrElse { return ToolResult.error(it.message ?: "invalid arguments") }
-        if (!phone.inForeground) return ToolResult.error(BACKGROUND_ERROR)
+        val chose = mutableListOf<String>()
+        val spec = try {
+            val args = parseArgs(argsJson)
+            // Before resolve: a contacts lookup may wait on a permission dialog nobody sees from the background.
+            if (!phone.inForeground) return ToolResult.error(BACKGROUND_ERROR)
+            build(resolve(args, chose))
+        } catch (e: ArgException) {
+            return ToolResult.error(e.message ?: "invalid arguments")
+        } catch (e: ContactFailure) {
+            return e.result
+        }
         val label = phone.handlerLabel(spec) ?: return refusedNoApp(spec.subject)
         return try {
             phone.start(spec)
-            opened(label, setsDirectly)
+            opened(label, setsDirectly, chose)
         } catch (e: NoHandlerException) {
             refusedNoApp(spec.subject)
         }
@@ -264,16 +281,29 @@ class CreateEventTool(phone: PhoneActions, private val zone: () -> ZoneId = { Zo
     }
 }
 
-/** Opens the messaging app with a text ready, the user presses send. */
-class DraftSmsTool(phone: PhoneActions) : IntentTool(phone) {
+/**
+ * Opens the messaging app with a text ready, the user presses send. The recipient is a number or a contact name
+ * (TEN-186): a name is looked up in the contacts here, in the same call. The result says who was picked (`to`).
+ */
+class DraftSmsTool(phone: PhoneActions, private val contacts: ContactsSource) : IntentTool(phone) {
     override val name = "draft_sms"
-    override val description = "Opens the messaging app with a text drafted. The user sends it. number: optional."
+    override val description =
+        "Opens the messaging app with a text drafted. The user sends it. to: a contact name or a phone number, optional."
     override val parametersSchema =
-        """{"type":"object","properties":{"body":{"type":"string"},"number":{"type":"string"}},"required":["body"]}"""
+        """{"type":"object","properties":{"body":{"type":"string"},"to":{"type":"string"}},"required":["body"]}"""
+    override val waitsForUser = true
+
+    override suspend fun resolve(args: JSONObject, chose: MutableList<String>): JSONObject {
+        val recipient = args.optionalString("to") ?: args.optionalString("number") ?: return args
+        if (looksLikePhoneNumber(recipient)) return args
+        val resolved = resolvePhone(recipient, contacts.loadContacts())
+        chose += resolved.chose
+        return JSONObject(args.toString()).put("to", resolved.value)
+    }
 
     override fun build(args: JSONObject): IntentSpec {
         val body = args.requiredString("body")
-        val number = args.optionalString("number")?.let { raw ->
+        val number = (args.optionalString("to") ?: args.optionalString("number"))?.let { raw ->
             raw.filter { it.isDigit() || it in "+,;" }.takeIf { kept -> kept.any { it.isDigit() } }
                 ?: throw ArgException("number '$raw' is not a phone number")
         }
@@ -287,15 +317,42 @@ class DraftSmsTool(phone: PhoneActions) : IntentTool(phone) {
     }
 }
 
-/** Opens the mail app with an email ready, the user presses send. */
-class DraftEmailTool(phone: PhoneActions) : IntentTool(phone) {
+/**
+ * Opens the mail app with an email ready, the user presses send. Each recipient is an address or a contact name
+ * (TEN-186), looked up like [DraftSmsTool] does.
+ */
+class DraftEmailTool(phone: PhoneActions, private val contacts: ContactsSource) : IntentTool(phone) {
     override val name = "draft_email"
-    override val description = "Opens the mail app with an email drafted. The user sends it. to: an address or a comma-separated list."
+    override val description =
+        "Opens the mail app with an email drafted. The user sends it. to: a contact name, an address or a comma-separated list."
     override val parametersSchema =
         """{"type":"object","properties":{"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}}"""
+    override val waitsForUser = true
+
+    /** An address, not a name with a tag ("Jade Martin @corp.example"). */
+    private fun isAddress(entry: String) = '@' in entry && ' ' !in entry
+
+    private fun recipients(args: JSONObject) =
+        args.optionalString("to")?.split(',', ';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+
+    override suspend fun resolve(args: JSONObject, chose: MutableList<String>): JSONObject {
+        val to = recipients(args)
+        if (to.all(::isAddress)) return args
+        // One load for all the names.
+        var all: List<Contact>? = null
+        val addresses = to.map { entry ->
+            if (isAddress(entry)) {
+                entry
+            } else {
+                val book = all ?: contacts.loadContacts().also { all = it }
+                resolveEmail(entry, book).also { chose += it.chose }.value
+            }
+        }
+        return JSONObject(args.toString()).put("to", addresses.joinToString(","))
+    }
 
     override fun build(args: JSONObject): IntentSpec {
-        val to = args.optionalString("to")?.split(',', ';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        val to = recipients(args)
         to.firstOrNull { '@' !in it || ' ' in it }?.let { throw ArgException("'$it' is not an email address") }
         val subject = args.optionalString("subject")
         val body = args.optionalString("body")

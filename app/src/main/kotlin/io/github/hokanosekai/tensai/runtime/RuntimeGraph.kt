@@ -5,10 +5,13 @@ import android.net.ConnectivityManager
 import android.util.Log
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.AndroidClipboardAccess
+import io.github.hokanosekai.tensai.agent.AndroidContactsSource
 import io.github.hokanosekai.tensai.agent.AndroidPhoneActions
 import io.github.hokanosekai.tensai.agent.CreateEventTool
 import io.github.hokanosekai.tensai.agent.DraftEmailTool
 import io.github.hokanosekai.tensai.agent.DraftSmsTool
+import io.github.hokanosekai.tensai.agent.FindContactTool
+import io.github.hokanosekai.tensai.agent.PermissionGate
 import io.github.hokanosekai.tensai.agent.MediaControlTool
 import io.github.hokanosekai.tensai.agent.OpenAppTool
 import io.github.hokanosekai.tensai.agent.OpenUrlTool
@@ -364,11 +367,16 @@ object RuntimeGraph {
     /** Where `ask_user` waits for the user (TEN-187): the chat swaps its input bar for the question, see [AskUserGate]. */
     val askUserGate: AskUserGate by lazy { AskUserGate() }
 
+    /** Where a tool waits for an Android permission dialog (TEN-186), served by [io.github.hokanosekai.tensai.MainActivity]. */
+    val permissionGate: PermissionGate by lazy { PermissionGate() }
+
     private fun phoneActionTools(): List<Tool> {
         val phone = AndroidPhoneActions(appContext) { AppForegroundTracker.isForeground.value }
+        val contacts = AndroidContactsSource(appContext, permissionGate)
         return listOf(
-            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone),
-            DraftEmailTool(phone), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
+            SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone, contacts),
+            DraftEmailTool(phone, contacts), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
+            FindContactTool(contacts) { phone.inForeground },
         )
     }
 

@@ -30,7 +30,7 @@ class ToolUiTest {
     fun everyRegisteredToolHasMetadata() {
         val registered = listOf("datetime", "calculate", "convert", "convert_time", "device_info", "search_chats", "memory", "ask_user", "clipboard", "torch")
         val planned = listOf(
-            "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "open_app", "open_url",
+            "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "find_contact", "open_app", "open_url",
             "media_control", "web_search", "web_fetch", "weather", "wikipedia",
         )
 

@@ -33,6 +33,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import io.github.hokanosekai.tensai.R
 import io.github.hokanosekai.tensai.agent.AskUserResult
 import io.github.hokanosekai.tensai.agent.AskUserTool
+import io.github.hokanosekai.tensai.agent.blockedPermission
 import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
@@ -376,6 +382,23 @@ private fun Detail(call: ToolCallUi) {
             call.tool == AskUserTool.NAME && call.state == ToolCallState.Ok && AskUserResult.answers(output).isNotEmpty() ->
                 ReadableBlock(ReadableOutput.Text(AskUserResult.answers(output).joinToString(", ")), call.tool)
             else -> ReadableBlock(readableOutput(output, call.state), call.tool)
+        }
+        // A permission refused for good: only the app settings can grant it (TEN-186).
+        if (call.state == ToolCallState.Refused && blockedPermission(output) != null) {
+            val context = LocalContext.current
+            TextButton(
+                onClick = {
+                    val settings = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    try {
+                        context.startActivity(settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: ActivityNotFoundException) {
+                        // No settings app to open: the button does nothing, the message already says where to go.
+                    }
+                },
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                Text(text = stringResource(R.string.tool_detail_open_settings), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

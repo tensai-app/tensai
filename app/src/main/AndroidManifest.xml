@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- TEN-186: find_contact and the name lookup of draft_sms / draft_email. Asked at first use, never at launch;
+         the contacts are read on the phone and only handed to the local model and the draft intent. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
          listings and files from huggingface.co and nothing else: no telemetry, no other host.
          "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->

@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -15,7 +16,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import io.github.hokanosekai.tensai.agent.LaunchedPermission
+import io.github.hokanosekai.tensai.agent.PermissionLaunchState
+import io.github.hokanosekai.tensai.agent.PermissionRequest
+import io.github.hokanosekai.tensai.agent.PermissionResult
 import io.github.hokanosekai.tensai.data.AppLanguage
 import io.github.hokanosekai.tensai.data.withAppLanguage
 import io.github.hokanosekai.tensai.download.LoadRequests
@@ -40,10 +47,56 @@ class MainActivity : ComponentActivity() {
     /** Null until the first-run check below resolves — the splash screen stays up until then. */
     private val onboardingEntryState = mutableStateOf<OnboardingEntry?>(null)
 
+    private val permissionLaunch = PermissionLaunchState()
+
+    private val permissionPrefs by lazy { getSharedPreferences("permission_asks", MODE_PRIVATE) }
+
+    /**
+     * The Android permission dialog of the tools (TEN-186): the permission a tool waits on in
+     * [RuntimeGraph.permissionGate] is asked here, the one place with an Activity, and the outcome goes back to that request.
+     */
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val launched = permissionLaunch.finish() ?: return@registerForActivityResult
+        val gate = RuntimeGraph.permissionGate
+        val asked = permissionPrefs.getBoolean(launched.permission, false)
+        permissionPrefs.edit().putBoolean(launched.permission, true).apply()
+        val rationale = shouldShowRequestPermissionRationale(launched.permission)
+        gate.complete(launched.id, PermissionResult.of(granted, launched.rationaleBefore, rationale, asked))
+        // A request that queued behind this one.
+        gate.pending.value?.let(::launchPermission)
+    }
+
+    /** Exactly once per request, see [PermissionLaunchState]. */
+    private fun launchPermission(request: PermissionRequest) {
+        if (permissionLaunch.begin(request, shouldShowRequestPermissionRationale(request.permission))) {
+            permissionLauncher.launch(request.permission)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        permissionLaunch.launched?.let {
+            outState.putLong(STATE_PERMISSION_ID, it.id)
+            outState.putString(STATE_PERMISSION, it.permission)
+            outState.putBoolean(STATE_PERMISSION_RATIONALE, it.rationaleBefore)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        savedInstanceState?.getString(STATE_PERMISSION)?.let {
+            permissionLaunch.restore(LaunchedPermission(savedInstanceState.getLong(STATE_PERMISSION_ID), it, savedInstanceState.getBoolean(STATE_PERMISSION_RATIONALE)))
+        }
+        // Started only: a dialog over a stopped activity would be lost, the request waits for the user to come back.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                RuntimeGraph.permissionGate.pending.collect { request ->
+                    request?.let(::launchPermission)
+                }
+            }
+        }
         // Only a fresh launch: after process death the saved intent would replay an old tap.
         if (savedInstanceState == null) LoadRequests.offer(intent)
 
@@ -139,6 +192,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val STATE_PERMISSION_ID = "permission_id"
+private const val STATE_PERMISSION = "permission"
+private const val STATE_PERMISSION_RATIONALE = "permission_rationale"
 
 /** `androidx.activity`'s `DefaultLightScrim` / `DefaultDarkScrim`, which it keeps private. */
 private val LIGHT_NAV_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)

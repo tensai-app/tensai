@@ -9,6 +9,7 @@ import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Calculate
 import androidx.compose.material.icons.rounded.ContactSupport
+import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.FlashlightOn
@@ -119,6 +120,9 @@ object ToolUiCatalog {
         ToolUiMeta("draft_email", Icons.Rounded.Mail, R.string.tool_name_draft_email, R.string.tool_desc_draft_email,
             ToolActions(R.string.tool_done_draft_email, R.string.tool_run_draft_email),
             refused = R.string.tool_refused_email),
+        ToolUiMeta("find_contact", Icons.Rounded.Contacts, R.string.tool_name_find_contact, R.string.tool_desc_find_contact,
+            ToolActions(R.string.tool_done_find_contact, R.string.tool_run_find_contact),
+            refused = R.string.tool_refused_contacts),
         ToolUiMeta("open_app", Icons.Rounded.Apps, R.string.tool_name_open_app, R.string.tool_desc_open_app,
             ToolActions(R.string.tool_done_open_app, R.string.tool_run_open_app)),
         ToolUiMeta("open_url", Icons.Rounded.OpenInNew, R.string.tool_name_open_url, R.string.tool_desc_open_url,

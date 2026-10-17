@@ -65,7 +65,7 @@ data class ResultItem(val title: String, val url: String?)
  * - anything else, including JSON that is none of those: [ReadableOutput.Text].
  */
 fun readableOutput(output: String, state: ToolCallState): ReadableOutput {
-    if (state != ToolCallState.Ok) return ReadableOutput.Error(output.removePrefix("Error: ").trim())
+    if (state != ToolCallState.Ok) return ReadableOutput.Error(errorMessage(output.removePrefix("Error: ").trim()))
     val json = parseJson(output) ?: return ReadableOutput.Text(output)
     when (json) {
         is JSONObject -> {
@@ -80,6 +80,10 @@ fun readableOutput(output: String, state: ToolCallState): ReadableOutput {
     }
     return ReadableOutput.Text(output)
 }
+
+/** A refusal that carries a marker (`{"error": "...", "blocked_permission": ...}`) reads as its message. */
+private fun errorMessage(text: String): String =
+    (parseJson(text) as? JSONObject)?.takeIf { it.has("blocked_permission") }?.optString("error")?.takeIf { it.isNotEmpty() } ?: text
 
 private fun resultsOf(array: JSONArray?): ReadableOutput.Results? {
     if (array == null || array.length() == 0) return null
