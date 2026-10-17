@@ -42,3 +42,18 @@ data class ToolCallEntity(
     val status: String,
     val destination: String?,
 )
+
+/**
+ * What [ChatDao.toolActivity] returns: a tool's totals over a conversation, whatever the status of
+ * its calls ([ToolCallEntity.status]).
+ *
+ * @param calls number of calls.
+ * @param resultTokens tokens of the results shown to the model, summed.
+ * @param durationMs time the tool ran, summed.
+ */
+data class ToolActivityRow(
+    val tool: String,
+    val calls: Int,
+    val resultTokens: Int,
+    val durationMs: Long,
+)

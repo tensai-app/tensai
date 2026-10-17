@@ -924,7 +924,8 @@ class ChatViewModel(
                 lastReply = history.lastOrNull { it.role == "assistant" && it.tokPerSec != null }?.toUi()?.stats,
             )
         }
-        return ContextSheetState(breakdown, runtime)
+        val activity = id?.let { chatRepository.toolActivity(it) }.orEmpty()
+        return ContextSheetState(breakdown, runtime, activity)
     }
 
     /**

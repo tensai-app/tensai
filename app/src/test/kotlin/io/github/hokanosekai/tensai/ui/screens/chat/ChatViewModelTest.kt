@@ -2,6 +2,8 @@ package io.github.hokanosekai.tensai.ui.screens.chat
 
 import android.content.ContextWrapper
 import io.github.hokanosekai.tensai.agent.AgentRuntime
+import io.github.hokanosekai.tensai.agent.ToolCallOutcome
+import io.github.hokanosekai.tensai.agent.ToolCallStatus
 import io.github.hokanosekai.tensai.agent.Tool
 import io.github.hokanosekai.tensai.agent.ToolResult
 import io.github.hokanosekai.tensai.agent.ToolTier
@@ -14,6 +16,7 @@ import io.github.hokanosekai.tensai.data.chat.ChatDao
 import io.github.hokanosekai.tensai.data.chat.ChatRepository
 import io.github.hokanosekai.tensai.data.chat.ConversationEntity
 import io.github.hokanosekai.tensai.data.chat.MessageEntity
+import io.github.hokanosekai.tensai.data.chat.ToolActivityRow
 import io.github.hokanosekai.tensai.data.chat.ToolCallEntity
 import io.github.hokanosekai.tensai.data.chat.ToolCallsJson
 import io.github.hokanosekai.tensai.data.chat.ThinkingStreamParser
@@ -2122,6 +2125,13 @@ class ChatViewModelTest {
             rows.filter { it.messageId in ids }
         }
 
+        override suspend fun toolActivity(conversationId: String): List<ToolActivityRow> {
+            val ids = messages[conversationId].orEmpty().map { it.id }.toSet()
+            return toolCalls.filter { it.messageId in ids }.groupBy { it.tool }.map { (tool, rows) ->
+                ToolActivityRow(tool, rows.size, rows.sumOf { it.resultTokens }, rows.sumOf { it.durationMs })
+            }.sortedWith(compareByDescending<ToolActivityRow> { it.calls }.thenBy { it.tool })
+        }
+
         override suspend fun updateToolCalls(id: String, toolCallsJson: String?) {
             for (list in messages.values) {
                 val index = list.indexOfFirst { it.id == id }
@@ -2304,6 +2314,41 @@ class ChatViewModelTest {
         openContextSheet()
         awaitGeneration()
         return checkNotNull(contextSheet.value) { "the sheet was not built" }
+    }
+
+    @Test
+    fun theContextSheetHasNoActivityWhenNoToolRan() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null, systemPrompt = null)
+        val viewModel = newViewModel(conversationId)
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+
+        assertTrue(viewModel.openSheet().activity.isEmpty())
+    }
+
+    @Test
+    fun theContextSheetSumsEachToolsCallsOverEveryStatus() = runBlocking {
+        loadFakeModel()
+        val conversationId = chatRepository.createConversation(modelId = null, systemPrompt = null)
+        val viewModel = newViewModel(conversationId)
+        viewModel.send("hello")
+        awaitAssistantReply(conversationId, expectedCount = 2)
+        val assistantId = chatRepository.observeMessages(conversationId).first().last().id
+        fun outcome(id: String, tool: String, status: ToolCallStatus, durationMs: Long, tokens: Int) = ToolCallOutcome(
+            call = ToolCall(id, tool, "{}"), tier = null, status = status, startedAt = 0, durationMs = durationMs,
+            output = "x", resultTokens = tokens, destination = null,
+        )
+        chatRepository.recordToolCall(conversationId, assistantId, outcome("1", "datetime", ToolCallStatus.Ok, 40, 12))
+        chatRepository.recordToolCall(conversationId, assistantId, outcome("2", "datetime", ToolCallStatus.Error, 60, 8))
+        chatRepository.recordToolCall(conversationId, assistantId, outcome("3", "ask_user", ToolCallStatus.Refused, 0, 3))
+
+        val activity = viewModel.openSheet().activity
+
+        assertEquals(
+            listOf(ToolActivityRow("datetime", 2, 20, 100), ToolActivityRow("ask_user", 1, 3, 0)),
+            activity,
+        )
     }
 
     @Test

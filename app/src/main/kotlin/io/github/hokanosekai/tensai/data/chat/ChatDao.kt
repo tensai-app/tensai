@@ -23,6 +23,14 @@ interface ChatDao {
     )
     fun observeToolCalls(conversationId: String): Flow<List<ToolCallEntity>>
 
+    /** One row per tool of a conversation, every status counted: the "Agent activity" section (TEN-162). */
+    @Query(
+        "SELECT tool, COUNT(*) AS calls, SUM(resultTokens) AS resultTokens, SUM(durationMs) AS durationMs " +
+            "FROM tool_calls WHERE messageId IN (SELECT id FROM messages WHERE conversationId = :conversationId) " +
+            "GROUP BY tool ORDER BY calls DESC, tool ASC",
+    )
+    suspend fun toolActivity(conversationId: String): List<ToolActivityRow>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getConversation(id: String): ConversationEntity?
 

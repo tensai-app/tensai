@@ -60,6 +60,8 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.invisibleToUser
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,12 +73,16 @@ import io.github.hokanosekai.tensai.ui.components.rememberReducedMotion
 import io.github.hokanosekai.tensai.ui.theme.TensaiMotion
 import io.github.hokanosekai.tensai.data.AutoMemoryShare
 import io.github.hokanosekai.tensai.data.ContextSetting
+import io.github.hokanosekai.tensai.data.chat.ToolActivityRow
 import io.github.hokanosekai.tensai.runtime.EffectiveBackend
 import io.github.hokanosekai.tensai.runtime.RuntimeGraph
 import io.github.hokanosekai.tensai.ui.components.TensaiBottomSheet
 import io.github.hokanosekai.tensai.ui.screens.models.backendHardware
 import io.github.hokanosekai.tensai.ui.screens.models.formatFileSize
 import io.github.hokanosekai.tensai.ui.theme.TensaiMono
+import io.github.hokanosekai.tensai.ui.tools.ToolUiCatalog
+import io.github.hokanosekai.tensai.ui.tools.formatToolDuration
+import io.github.hokanosekai.tensai.ui.tools.resolve
 import io.github.hokanosekai.tensai.ui.theme.tensaiColors
 import io.github.hokanosekai.tensai.ui.theme.tensaiTints
 import java.util.Locale
@@ -140,6 +146,11 @@ fun ContextSheet(
             }
             Section(stringResource(R.string.context_sheet_section_runtime)) {
                 SheetCard { RuntimeCard(state.runtime, onLoad) }
+            }
+            if (state.activity.isNotEmpty()) {
+                Section(stringResource(R.string.context_sheet_section_activity)) {
+                    AgentActivity(state.activity)
+                }
             }
         }
     }
@@ -517,4 +528,163 @@ internal fun effectiveBackendOf(label: String): EffectiveBackend? = when {
     label.contains("opencl", ignoreCase = true) -> EffectiveBackend.OpenCl
     label.contains("cpu", ignoreCase = true) -> EffectiveBackend.Cpu
     else -> null
+}
+
+/**
+ * "Agent activity" (TEN-162): what the tools did in this conversation, not what the model sees. One
+ * card, a row of totals that unfolds into a per-tool table, and a note under it.
+ */
+@Composable
+private fun AgentActivity(rows: List<ToolActivityRow>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val reducedMotion = rememberReducedMotion()
+    val rotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        tween(if (reducedMotion) 0 else TensaiMotion.DurBase),
+        label = "chevron",
+    )
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val title = stringResource(R.string.context_activity_tools_called)
+    val totalCalls = rows.sumOf { it.calls }
+    val totalTokens = formatTokens(rows.sumOf { it.resultTokens })
+    val toggleLabel = stringResource(R.string.context_activity_a11y_header, title, totalCalls, totalTokens)
+    val toggleState = stringResource(if (expanded) R.string.chat_settings_sampling_expanded else R.string.chat_settings_sampling_collapsed)
+    val visible = rows.visibleActivity(showAll)
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SheetCard {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(role = Role.Button) { expanded = !expanded }
+                        .semantics {
+                            contentDescription = toggleLabel
+                            stateDescription = toggleState
+                        }
+                        .heightIn(min = 52.dp)
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Text(
+                        text = title,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = totalCalls.toString(),
+                        fontFamily = TensaiMono,
+                        fontSize = 12.sp,
+                        color = muted,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                    Text(
+                        text = totalTokens + " " + stringResource(R.string.context_sheet_col_tokens),
+                        fontFamily = TensaiMono,
+                        fontSize = 13.sp,
+                        color = muted,
+                        maxLines = 1,
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ExpandMore,
+                        contentDescription = null,
+                        tint = muted,
+                        modifier = Modifier.size(22.dp).rotate(rotation),
+                    )
+                }
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = if (reducedMotion) EnterTransition.None else expandVertically(tween(TensaiMotion.DurBase)) + fadeIn(tween(TensaiMotion.DurBase)),
+                    exit = if (reducedMotion) ExitTransition.None else shrinkVertically(tween(TensaiMotion.DurBase)) + fadeOut(tween(TensaiMotion.DurBase)),
+                ) {
+                    Column {
+                        HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
+                        ActivityRow(
+                            tool = stringResource(R.string.context_activity_col_tool),
+                            calls = stringResource(R.string.context_activity_col_calls),
+                            tokens = stringResource(R.string.context_sheet_col_tokens),
+                            time = stringResource(R.string.context_activity_col_time),
+                            header = true,
+                            description = null,
+                        )
+                        visible.forEach { row ->
+                            ActivityRow(
+                                tool = ToolUiCatalog.name(row.tool).resolve(),
+                                calls = row.calls.toString(),
+                                tokens = formatTokens(row.resultTokens),
+                                time = formatToolDuration(row.durationMs),
+                                header = false,
+                                description = stringResource(
+                                    R.string.context_activity_a11y_row,
+                                    ToolUiCatalog.name(row.tool).resolve(), row.calls, formatTokens(row.resultTokens), formatToolDuration(row.durationMs),
+                                ),
+                            )
+                        }
+                        if (rows.size > ActivityRowCap) {
+                            TextButton(onClick = { showAll = !showAll }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text(
+                                    stringResource(
+                                        if (showAll) R.string.context_activity_show_less else R.string.context_activity_show_more,
+                                        rows.size - ActivityRowCap,
+                                    ),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+        Text(
+            text = stringResource(R.string.context_activity_note),
+            fontSize = 12.5.sp,
+            color = muted,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+    }
+}
+
+/** A line of the table: tool | calls | tokens | time, in mono. */
+@Composable
+private fun ActivityRow(tool: String, calls: String, tokens: String, time: String, header: Boolean, description: String?) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val size = if (header) 11.5.sp else 13.sp
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                if (header) invisibleToUser() else contentDescription = description.orEmpty()
+            }
+            .then(if (header) Modifier.padding(top = 10.dp, bottom = 4.dp) else Modifier.heightIn(min = 36.dp))
+            .padding(horizontal = 16.dp),
+    ) {
+        Text(
+            text = tool,
+            fontFamily = TensaiMono,
+            fontSize = size,
+            color = if (header) muted else MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        listOf(calls to 48.dp, tokens to 56.dp, time to 64.dp).forEach { (text, width) ->
+            Text(
+                text = text,
+                fontFamily = TensaiMono,
+                fontSize = size,
+                color = muted,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                modifier = Modifier.width(width),
+            )
+        }
+    }
 }

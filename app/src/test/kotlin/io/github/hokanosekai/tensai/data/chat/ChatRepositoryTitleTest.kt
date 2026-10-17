@@ -57,6 +57,8 @@ class ChatRepositoryTitleTest {
 
         override fun observeToolCalls(conversationId: String): Flow<List<ToolCallEntity>> = MutableStateFlow(emptyList())
 
+        override suspend fun toolActivity(conversationId: String): List<ToolActivityRow> = emptyList()
+
         override fun observeMessages(conversationId: String): Flow<List<MessageEntity>> =
             MutableStateFlow(messages[conversationId].orEmpty().toList())
 

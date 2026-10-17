@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.ui.screens.chat
 
 import io.github.hokanosekai.tensai.data.ContextSetting
+import io.github.hokanosekai.tensai.data.chat.ToolActivityRow
 import io.github.hokanosekai.tensai.engine.KvCacheType
 
 /** The sheet's Runtime card. */
@@ -27,5 +28,21 @@ sealed interface ContextRuntime {
     ) : ContextRuntime
 }
 
-/** Everything the context sheet shows, built once when it opens, see [ChatViewModel.openContextSheet]. */
-data class ContextSheetState(val breakdown: ContextBreakdown, val runtime: ContextRuntime)
+/** Rows the "Agent activity" table shows before "Show N more". */
+internal const val ActivityRowCap = 10
+
+/** The table's rows, the first [ActivityRowCap] unless [showAll]. */
+internal fun List<ToolActivityRow>.visibleActivity(showAll: Boolean): List<ToolActivityRow> =
+    if (showAll) this else take(ActivityRowCap)
+
+/**
+ * Everything the context sheet shows, built once when it opens, see [ChatViewModel.openContextSheet].
+ *
+ * @param activity per-tool totals of the conversation, most called first, every status counted. Empty
+ *   when no tool ran: the "Agent activity" section is then absent (TEN-162).
+ */
+data class ContextSheetState(
+    val breakdown: ContextBreakdown,
+    val runtime: ContextRuntime,
+    val activity: List<ToolActivityRow> = emptyList(),
+)
