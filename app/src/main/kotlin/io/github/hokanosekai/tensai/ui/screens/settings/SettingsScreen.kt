@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -696,21 +698,38 @@ private fun StorageSection(
                             if (shares.free > 0f) Spacer(Modifier.weight(shares.free))
                         }
                     }
-                    Text(
-                        text = if (figures == null) {
-                            stringResource(R.string.settings_inference_unknown)
-                        } else {
-                            stringResource(
-                                R.string.settings_storage_models_usage,
-                                formatFileSize(figures.modelBytes),
-                                formatFileSize(figures.freeBytes),
+                    if (figures == null) {
+                        Text(
+                            text = stringResource(R.string.settings_inference_unknown),
+                            fontFamily = TensaiMono,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    } else {
+                        // A legend like the Context sheet's breakdown: one dot per segment of the bar.
+                        val otherBytes = (figures.volumeTotalBytes - figures.modelBytes - figures.freeBytes).coerceAtLeast(0)
+                        Column(modifier = Modifier.padding(top = 8.dp).clearAndSetSemantics {}) {
+                            StorageLegendRow(
+                                dot = { StorageDot(MaterialTheme.colorScheme.primary) },
+                                label = stringResource(R.string.settings_storage_models),
+                                value = formatFileSize(figures.modelBytes),
                             )
-                        },
-                        fontFamily = TensaiMono,
-                        fontSize = 11.sp,
-                        color = freeColor,
-                        modifier = Modifier.padding(top = 6.dp).then(if (figures == null) Modifier else Modifier.clearAndSetSemantics {}),
-                    )
+                            if (figures.volumeTotalBytes > 0) {
+                                StorageLegendRow(
+                                    dot = { StorageDot(MaterialTheme.tensaiTints.outlineStrong) },
+                                    label = stringResource(R.string.settings_storage_legend_other),
+                                    value = formatFileSize(otherBytes),
+                                )
+                            }
+                            StorageLegendRow(
+                                dot = { StorageDot(null, ring = freeColor) },
+                                label = stringResource(R.string.settings_storage_legend_free),
+                                value = formatFileSize(figures.freeBytes),
+                                color = if (shares?.lowFree == true) freeColor else null,
+                            )
+                        }
+                    }
                     if (figures != null && figures.volumeTotalBytes > 0) {
                         Text(
                             text = stringResource(R.string.settings_storage_volume_total, formatFileSize(figures.volumeTotalBytes)),
@@ -841,6 +860,34 @@ private fun RowIcon(icon: ImageVector) {
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.size(22.dp),
     )
+}
+
+/** One line of the storage legend: dot, label, size in mono on the right, like the Context sheet's parts. */
+@Composable
+private fun StorageLegendRow(dot: @Composable () -> Unit, label: String, value: String, color: Color? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 24.dp)) {
+        dot()
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            color = color ?: MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f).padding(start = 10.dp),
+        )
+        Text(
+            text = value,
+            fontFamily = TensaiMono,
+            fontSize = 12.sp,
+            color = color ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+/** 8dp: filled with [fill], or an open ring in [ring] for the free space (the bar's empty track). */
+@Composable
+private fun StorageDot(fill: Color?, ring: Color = MaterialTheme.tensaiTints.outlineStrong) {
+    val modifier = Modifier.size(8.dp).clip(CircleShape)
+    if (fill != null) Box(modifier.background(fill)) else Box(modifier.border(1.5.dp, ring, CircleShape))
 }
 
 /**

@@ -141,7 +141,8 @@
     <!-- Storage. -->
     <string name="settings_storage_models">Models</string>
     <!-- %1$s is the size the models take, %2$s the free space left on the volume they sit on. -->
-    <string name="settings_storage_models_usage">Models %1$s · Free %2$s</string>
+    <string name="settings_storage_legend_other">Other data</string>
+    <string name="settings_storage_legend_free">Free</string>
     <!-- %1$s is the size of the volume the models sit on. -->
     <string name="settings_storage_volume_total">of %1$s</string>
     <string name="settings_storage_bar_description">Models %1$s, free %2$s of %3$s</string>
