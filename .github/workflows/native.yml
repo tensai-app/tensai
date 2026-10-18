@@ -62,6 +62,11 @@ jobs:
       # tout est dans l'action composite, partagée avec release.yml.
       - uses: ./.github/actions/native-prereqs
 
+      # Planificateur de réutilisation du KV (TEN-196) : en-tête sans llama, compilé
+      # et exécuté sur l'hôte, quelques millisecondes.
+      - name: KV reuse planner test
+        run: third_party/llama.kt/scripts/test-kv-reuse.sh
+
       # Ce que le job JVM ne peut pas garantir : que le CMake de llama.kt, les
       # sources cpp/ vendorées, les shaders générés et libOpenCL.so tiennent
       # ensemble, et qu'il en sort un APK.
