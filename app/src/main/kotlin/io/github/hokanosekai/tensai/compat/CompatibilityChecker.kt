@@ -294,7 +294,11 @@ object CompatibilityChecker {
             // architecture's CPU path is the slow one (see Gemma 4 E2B in the measured table).
             prefersGpu -> BackendHint.Cpu
             DENSE_ARCH_MARKERS.any { arch.contains(it) } -> BackendHint.Cpu
-            else -> BackendHint.Auto
+            // An architecture measured nowhere: CPU, not Auto. Auto offloads to any Vulkan device,
+            // and on Mali that lost everywhere it was measured (TEN-197, TwIL-LM3 Q4_K_M: prefill
+            // 3.9 tok/s on Vulkan against 14 on CPU, decode 2.7 against 2.9, and the UI dropping
+            // frames while the GPU computes). Only the architectures above earn the GPU.
+            else -> BackendHint.Cpu
         }
     }
 }

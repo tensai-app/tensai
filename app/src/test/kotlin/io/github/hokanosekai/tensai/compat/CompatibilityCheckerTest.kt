@@ -140,7 +140,7 @@ class CompatibilityCheckerTest {
     }
 
     @Test
-    fun unknownArchitectureDefaultsToAuto() {
+    fun unknownArchitectureDefaultsToCpu() {
         val model = model(
             architecture = "mamba2",
             paramCount = 1_000_000_000,
@@ -152,7 +152,7 @@ class CompatibilityCheckerTest {
 
         val result = CompatibilityChecker.check(model, dimensity900_8gb)
 
-        assertEquals(BackendHint.Auto, result.recommendedBackend)
+        assertEquals(BackendHint.Cpu, result.recommendedBackend)
     }
 
     @Test
