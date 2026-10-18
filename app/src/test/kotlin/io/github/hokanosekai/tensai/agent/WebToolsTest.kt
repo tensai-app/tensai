@@ -208,8 +208,11 @@ class WebToolsTest {
 
     @Test fun everyToolDeclaresItsRequiredArguments() {
         val tools = listOf(search(FakeProvider()), fetchTool(), WeatherTool(FakeHttp()), WikipediaTool(FakeHttp(), "ua"))
-        val required = tools.associate { it.name to org.json.JSONObject(it.parametersSchema).getJSONArray("required").getString(0) }
-        assertEquals(mapOf("web_search" to "query", "web_fetch" to "url", "weather" to "place", "wikipedia" to "query"), required)
+        val schemas = tools.associate { it.name to org.json.JSONObject(it.parametersSchema) }
+        val required = schemas.filterValues { it.has("required") }.mapValues { it.value.getJSONArray("required").getString(0) }
+        assertEquals(mapOf("web_search" to "query", "web_fetch" to "url", "wikipedia" to "query"), required)
+        // weather: no place means the user's own location
+        assertFalse(schemas.getValue("weather").has("required"))
     }
 
     // web_fetch over https only

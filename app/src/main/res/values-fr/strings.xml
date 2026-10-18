@@ -715,6 +715,8 @@
     <string name="tool_name_draft_sms">Brouillon de SMS</string>
     <string name="tool_name_draft_email">Brouillon d\'e-mail</string>
     <string name="tool_name_find_contact">Recherche de contact</string>
+    <string name="tool_name_read_calendar">Agenda</string>
+    <string name="tool_name_location">Position</string>
     <string name="tool_name_open_app">Ouvrir une app</string>
     <string name="tool_name_open_url">Ouvrir un lien</string>
     <string name="tool_name_media_control">Contrôle des médias</string>
@@ -739,6 +741,8 @@
     <string name="tool_desc_draft_sms">Ouvre Messages avec un brouillon</string>
     <string name="tool_desc_draft_email">Ouvre l\'app de mail avec un brouillon</string>
     <string name="tool_desc_find_contact">Cherche numéros et e-mails dans les contacts. Demande la permission Contacts d\'Android au premier usage</string>
+    <string name="tool_desc_read_calendar">Lit les événements d\'un jour ou d\'une période (titre, heure, lieu). Demande la permission Agenda d\'Android au premier usage</string>
+    <string name="tool_desc_location">Donne la position approximative du téléphone (environ 1 km), pour la météo par exemple. Demande la permission Position d\'Android au premier usage</string>
     <string name="tool_desc_open_app">Lance une app installée</string>
     <string name="tool_desc_open_url">Ouvre un lien dans le navigateur</string>
     <string name="tool_desc_media_control">Lecture, pause et piste suivante dans le lecteur en cours</string>
@@ -794,6 +798,10 @@
     <string name="tool_run_draft_email">Rédaction de l\'e-mail…</string>
     <string name="tool_done_find_contact">Contact recherché</string>
     <string name="tool_run_find_contact">Recherche du contact…</string>
+    <string name="tool_done_read_calendar">Agenda lu</string>
+    <string name="tool_run_read_calendar">Lecture de l\'agenda…</string>
+    <string name="tool_done_location">Position obtenue</string>
+    <string name="tool_run_location">Recherche de la position…</string>
     <string name="tool_done_open_app">App ouverte</string>
     <string name="tool_run_open_app">Ouverture de l\'app…</string>
     <string name="tool_done_open_url">Lien ouvert</string>
@@ -822,6 +830,8 @@
     <string name="tool_refused_sms">SMS refusé</string>
     <string name="tool_refused_email">E-mail refusé</string>
     <string name="tool_refused_contacts">Contacts refusés</string>
+    <string name="tool_refused_calendar">Agenda refusé</string>
+    <string name="tool_refused_location">Position refusée</string>
     <string name="tool_refused_url">Lien refusé</string>
     <string name="tool_line_stopped">Arrêté</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>

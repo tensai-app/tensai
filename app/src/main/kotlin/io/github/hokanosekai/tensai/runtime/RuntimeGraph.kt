@@ -6,12 +6,16 @@ import android.util.Log
 import io.github.hokanosekai.tensai.BuildConfig
 import io.github.hokanosekai.tensai.agent.AgentRuntime
 import io.github.hokanosekai.tensai.agent.AndroidClipboardAccess
+import io.github.hokanosekai.tensai.agent.AndroidCalendarSource
 import io.github.hokanosekai.tensai.agent.AndroidContactsSource
+import io.github.hokanosekai.tensai.agent.AndroidLocationSource
 import io.github.hokanosekai.tensai.agent.AndroidPhoneActions
 import io.github.hokanosekai.tensai.agent.CreateEventTool
 import io.github.hokanosekai.tensai.agent.DraftEmailTool
 import io.github.hokanosekai.tensai.agent.DraftSmsTool
 import io.github.hokanosekai.tensai.agent.FindContactTool
+import io.github.hokanosekai.tensai.agent.LocationTool
+import io.github.hokanosekai.tensai.agent.ReadCalendarTool
 import io.github.hokanosekai.tensai.agent.PermissionGate
 import io.github.hokanosekai.tensai.agent.MediaControlTool
 import io.github.hokanosekai.tensai.agent.OpenAppTool
@@ -394,6 +398,8 @@ object RuntimeGraph {
             SetTimerTool(phone), SetAlarmTool(phone), CreateEventTool(phone), DraftSmsTool(phone, contacts),
             DraftEmailTool(phone, contacts), OpenAppTool(phone), OpenUrlTool(phone), MediaControlTool(phone),
             FindContactTool(contacts) { phone.inForeground },
+            ReadCalendarTool(AndroidCalendarSource(appContext, permissionGate), inForeground = { phone.inForeground }),
+            LocationTool(AndroidLocationSource(appContext, permissionGate), inForeground = { phone.inForeground }),
         )
     }
 
@@ -419,7 +425,11 @@ object RuntimeGraph {
             WebSearchTool.Setup(searchProviders.chain(searchSelection(choice)), SearchProviders.displayName(choice))
         },
         WebFetchTool(PageReader(httpFetcher, httpsOnly = true)),
-        WeatherTool(httpFetcher),
+        WeatherTool(
+            httpFetcher,
+            location = AndroidLocationSource(appContext, permissionGate),
+            inForeground = { AppForegroundTracker.isForeground.value },
+        ),
         WikipediaTool(httpFetcher, descriptiveUserAgent, searchLanguage),
     )
 

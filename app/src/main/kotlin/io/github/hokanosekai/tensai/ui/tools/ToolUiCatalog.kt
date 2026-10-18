@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Calculate
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.ContactSupport
 import androidx.compose.material.icons.rounded.Contacts
 import androidx.compose.material.icons.rounded.ContentPaste
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.rounded.FlashlightOn
 import androidx.compose.material.icons.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.Mail
 import androidx.compose.material.icons.rounded.MenuBook
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
@@ -123,6 +125,12 @@ object ToolUiCatalog {
         ToolUiMeta("find_contact", Icons.Rounded.Contacts, R.string.tool_name_find_contact, R.string.tool_desc_find_contact,
             ToolActions(R.string.tool_done_find_contact, R.string.tool_run_find_contact),
             refused = R.string.tool_refused_contacts),
+        ToolUiMeta("read_calendar", Icons.Rounded.CalendarMonth, R.string.tool_name_read_calendar, R.string.tool_desc_read_calendar,
+            ToolActions(R.string.tool_done_read_calendar, R.string.tool_run_read_calendar),
+            refused = R.string.tool_refused_calendar),
+        ToolUiMeta("location", Icons.Rounded.MyLocation, R.string.tool_name_location, R.string.tool_desc_location,
+            ToolActions(R.string.tool_done_location, R.string.tool_run_location),
+            refused = R.string.tool_refused_location),
         ToolUiMeta("open_app", Icons.Rounded.Apps, R.string.tool_name_open_app, R.string.tool_desc_open_app,
             ToolActions(R.string.tool_done_open_app, R.string.tool_run_open_app)),
         ToolUiMeta("open_url", Icons.Rounded.OpenInNew, R.string.tool_name_open_url, R.string.tool_desc_open_url,

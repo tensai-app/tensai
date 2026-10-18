@@ -4,21 +4,34 @@ import io.github.hokanosekai.websearch.HttpFetcher
 import io.github.hokanosekai.websearch.SearchError
 import java.io.IOException
 import java.net.URLEncoder
+import java.time.Clock
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.time.format.TextStyle
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
+import kotlinx.coroutines.delay
 import org.json.JSONException
 import org.json.JSONObject
 
-/** GET [url] and parse the body as a JSON object, every failure as a [SearchError]. */
+/**
+ * GET [url] and parse the body as a JSON object, every failure as a [SearchError]. A 503 is retried once after a short
+ * pause: Open-Meteo sheds load with brief 503s.
+ */
 internal suspend fun HttpFetcher.getJson(url: String, timeoutMs: Long = HttpFetcher.DEFAULT_TIMEOUT_MS): JSONObject {
-    val response = try {
+    suspend fun fetch() = try {
         get(url, mapOf("Accept" to "application/json"), timeoutMs)
     } catch (e: IOException) {
         throw SearchError.Network(e.message ?: e.javaClass.simpleName, e)
+    }
+    val response = fetch().let { first ->
+        if (first.status == 503) {
+            delay(UNAVAILABLE_RETRY_MS)
+            fetch()
+        } else {
+            first
+        }
     }
     when {
         response.status == 429 -> throw SearchError.RateLimited(response.retryAfterSeconds)
@@ -31,11 +44,16 @@ internal suspend fun HttpFetcher.getJson(url: String, timeoutMs: Long = HttpFetc
     }
 }
 
+private const val UNAVAILABLE_RETRY_MS = 500L
+
 internal fun urlEncode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
 /**
  * `weather`: the forecast of one day (default today) from Open-Meteo (no key, CC BY 4.0, free for non-commercial
  * use, which an open-source free app is). The place is geocoded first, then the forecast is read for it.
+ *
+ * With no place (or a "here" word) it forecasts for the phone's approximate position instead, got like the `location`
+ * tool (permission asked at first use, no geocoding): small models cannot chain the two calls.
  *
  * The day is a name the model can get right ("today", "tomorrow", a weekday, a date) rather than a count from
  * today, which small models misuse. It is resolved against the place's own local date, and the answer says which
@@ -45,13 +63,18 @@ class WeatherTool(
     private val http: HttpFetcher,
     private val geocodingBase: String = "https://geocoding-api.open-meteo.com",
     private val forecastBase: String = "https://api.open-meteo.com",
+    private val location: LocationSource? = null,
+    private val inForeground: () -> Boolean = { true },
+    private val clock: Clock = Clock.systemDefaultZone(),
 ) : Tool {
     override val name = "weather"
     override val description =
-        "Gives the weather forecast for a place on one day. place is a city name, or latitude,longitude."
+        "Gives the real weather forecast for a place on one day. Always call it for any weather question, never guess the weather. place: a city name, or \"here\" when the user means where they are or names no city."
     override val parametersSchema =
-        """{"type":"object","properties":{"place":{"type":"string"},"day":{"type":"string","description":"today, tomorrow, a weekday like friday, or YYYY-MM-DD. Default today"}},"required":["place"]}"""
+        """{"type":"object","properties":{"place":{"type":"string","description":"a city name, or \"here\" for the user's current location (also when no city is named)"},"day":{"type":"string","description":"today, tomorrow, a weekday like friday, or YYYY-MM-DD. Default today"}}}"""
     override val tier = ToolTier.Network
+    // May show the permission dialog (no place: the user's location): no runtime timeout then, the HTTP calls keep theirs.
+    override val waitsForUser = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
@@ -60,12 +83,24 @@ class WeatherTool(
             return ToolResult.error("arguments are not a JSON object")
         }
         val place = args.stringArg("place").orEmpty().trim()
-        if (place.isEmpty()) return ToolResult.error("place is empty")
+        val here = location != null && (place.isEmpty() || place.lowercase() in HERE_WORDS)
+        if (place.isEmpty() && !here) return ToolResult.error("place is empty")
         val dayText = args.stringArg("day")?.trim().orEmpty().ifEmpty { "today" }
         val day = Day.parse(dayText)
             ?: return ToolResult.error("day must be today, tomorrow, a weekday like friday, or a date YYYY-MM-DD, got '$dayText'")
         return try {
-            val spot = locate(place) ?: return ToolResult.error("no place found for '$place'", destination = DESTINATION)
+            val spot = if (here) {
+                when (val got = obtainFix(location!!, inForeground, clock)) {
+                    is FixResult.Failed -> return got.result
+                    is FixResult.Got -> {
+                        val lat = roundCoordinate(got.fix.latitude)
+                        val lon = roundCoordinate(got.fix.longitude)
+                        Spot("your location (approx. $lat,$lon)", lat, lon)
+                    }
+                }
+            } else {
+                locate(place)
+            } ?: return ToolResult.error("no place found for '$place'", destination = DESTINATION)
             val forecast = http.getJson(
                 "$forecastBase/v1/forecast?latitude=${spot.latitude}&longitude=${spot.longitude}" +
                     "&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m" +
@@ -207,6 +242,9 @@ class WeatherTool(
 
     companion object {
         private const val DESTINATION = "Open-Meteo"
+
+        /** What a model writes for "where I am" when it does not omit the place. */
+        private val HERE_WORDS = setOf("here", "current location", "my location", "near me")
         /** Open-Meteo gives up to 16 days, enough for any date a user asks about. */
         private const val FORECAST_DAYS = 16
 

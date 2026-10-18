@@ -11,6 +11,12 @@
          the contacts are read on the phone and only handed to the local model and the draft intent. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!-- TEN-179: read_calendar and location. Asked at first use, never at launch. The calendar is read for one range
+         (title, time, place) and the location is the coarse one (about 1 km, never FINE): both only go to the local
+         model. tensai itself never geocodes; coordinates only leave the phone through Network-tier tools (weather). -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
          listings and files from huggingface.co and nothing else: no telemetry, no other host.
          "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->

@@ -803,6 +803,8 @@
     <string name="tool_name_draft_sms">Draft SMS</string>
     <string name="tool_name_draft_email">Draft email</string>
     <string name="tool_name_find_contact">Find contact</string>
+    <string name="tool_name_read_calendar">Calendar</string>
+    <string name="tool_name_location">Location</string>
     <string name="tool_name_open_app">Open app</string>
     <string name="tool_name_open_url">Open link</string>
     <string name="tool_name_media_control">Media control</string>
@@ -827,6 +829,8 @@
     <string name="tool_desc_draft_sms">Opens Messages with a draft</string>
     <string name="tool_desc_draft_email">Opens your mail app with a draft</string>
     <string name="tool_desc_find_contact">Looks up numbers and emails in your contacts. Asks Android\'s contacts permission at first use</string>
+    <string name="tool_desc_read_calendar">Reads the events of a day or a range (title, time, place). Asks Android\'s calendar permission at first use</string>
+    <string name="tool_desc_location">Gives the phone\'s approximate position (about 1 km), for the weather for instance. Asks Android\'s location permission at first use</string>
     <string name="tool_desc_open_app">Launches an installed app</string>
     <string name="tool_desc_open_url">Opens a link in your browser</string>
     <string name="tool_desc_media_control">Play, pause and skip in the current player</string>
@@ -882,6 +886,10 @@
     <string name="tool_run_draft_email">Drafting an email…</string>
     <string name="tool_done_find_contact">Looked up a contact</string>
     <string name="tool_run_find_contact">Looking up a contact…</string>
+    <string name="tool_done_read_calendar">Read the calendar</string>
+    <string name="tool_run_read_calendar">Reading the calendar…</string>
+    <string name="tool_done_location">Got the location</string>
+    <string name="tool_run_location">Getting the location…</string>
     <string name="tool_done_open_app">Opened an app</string>
     <string name="tool_run_open_app">Opening an app…</string>
     <string name="tool_done_open_url">Opened a link</string>
@@ -910,6 +918,8 @@
     <string name="tool_refused_sms">Text refused</string>
     <string name="tool_refused_email">Email refused</string>
     <string name="tool_refused_contacts">Contacts refused</string>
+    <string name="tool_refused_calendar">Calendar refused</string>
+    <string name="tool_refused_location">Location refused</string>
     <string name="tool_refused_url">Link refused</string>
     <string name="tool_line_stopped">Stopped</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>

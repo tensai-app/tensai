@@ -1,6 +1,7 @@
 package io.github.hokanosekai.tensai.agent
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
@@ -8,6 +9,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
@@ -16,9 +18,13 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.CancellationSignal
 import android.os.StatFs
+import android.provider.CalendarContract
+import android.util.Log
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
@@ -27,6 +33,9 @@ import io.github.hokanosekai.tensai.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /** The Android side of the local tools (TEN-175): thin readers, the logic and the formats are in the tools. */
 
@@ -288,5 +297,102 @@ class AndroidContactsSource(context: Context, private val gate: PermissionGate) 
             }
         }
         return names.map { (id, name) -> Contact(id, name, phones[id].orEmpty(), emails[id].orEmpty()) }
+    }
+}
+
+/**
+ * The calendar on a real device (TEN-179): READ_CALENDAR asked through [gate] at first use, then one query on the
+ * instances table, which expands recurring events. Visible calendars only, nothing but title, time, all-day flag and
+ * place is read. Nothing is cached or logged.
+ */
+class AndroidCalendarSource(context: Context, private val gate: PermissionGate) : CalendarSource {
+    private val app = context.applicationContext
+
+    override fun isGranted(): Boolean = app.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+
+    override suspend fun access(): PermissionResult {
+        if (isGranted()) return PermissionResult.Granted
+        return gate.request(Manifest.permission.READ_CALENDAR)
+    }
+
+    override fun events(startMillis: Long, endMillis: Long, limit: Int): List<CalendarEvent> {
+        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+            ContentUris.appendId(it, startMillis)
+            ContentUris.appendId(it, endMillis)
+        }.build()
+        val events = mutableListOf<CalendarEvent>()
+        app.contentResolver.query(
+            uri,
+            arrayOf(
+                CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
+                CalendarContract.Instances.ALL_DAY, CalendarContract.Instances.EVENT_LOCATION,
+            ),
+            "${CalendarContract.Instances.VISIBLE} = 1", null, "${CalendarContract.Instances.BEGIN} ASC",
+        )?.use { c ->
+            while (events.size < limit && c.moveToNext()) {
+                events += CalendarEvent(c.getString(0).orEmpty(), c.getLong(1), c.getLong(2), c.getInt(3) == 1, c.getString(4))
+            }
+        }
+        return events
+    }
+}
+
+/**
+ * The approximate location on a real device (TEN-179): ACCESS_COARSE_LOCATION asked through [gate] at first use, then
+ * the network provider (the only one a coarse grant allows, no Play Services). A fresh fix on Android 11+ within
+ * [FIX_TIMEOUT_MS], else the newest last known position of the network or passive provider. Nothing is cached and no
+ * position is logged. A SecurityException (the permission was revoked meanwhile) is left to [LocationTool], which
+ * turns it into the settings refusal.
+ */
+class AndroidLocationSource(context: Context, private val gate: PermissionGate) : LocationSource {
+    private val app = context.applicationContext
+
+    override fun isGranted(): Boolean =
+        app.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    override suspend fun access(): PermissionResult {
+        if (isGranted()) return PermissionResult.Granted
+        return gate.request(Manifest.permission.ACCESS_COARSE_LOCATION)
+    }
+
+    // The grant is checked by the gate before this runs. A revoke in between throws SecurityException on purpose: the tool
+    // turns it into the settings refusal.
+    @SuppressLint("MissingPermission")
+    override suspend fun current(): LocationOutcome {
+        val manager = app.getSystemService(LocationManager::class.java) ?: return LocationOutcome.Failed(LocationFailure.Unavailable)
+        if (!manager.isLocationEnabled) return LocationOutcome.Failed(LocationFailure.Off)
+        return try {
+            val fresh = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                withTimeoutOrNull(FIX_TIMEOUT_MS) {
+                    suspendCancellableCoroutine<android.location.Location?> { cont ->
+                        val cancel = CancellationSignal()
+                        cont.invokeOnCancellation { cancel.cancel() }
+                        // Runnable::run: the callback runs on the location thread, resuming there is cheap, and
+                        // resuming after the cancel above is a no-op.
+                        manager.getCurrentLocation(LocationManager.NETWORK_PROVIDER, cancel, Runnable::run) { cont.resume(it) }
+                    }
+                }
+            } else {
+                null
+            }
+            val location = fresh ?: listOf(LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+                .mapNotNull { manager.getLastKnownLocation(it) }
+                .maxByOrNull { it.time }
+            if (location == null) {
+                LocationOutcome.Failed(LocationFailure.Unavailable)
+            } else {
+                LocationOutcome.Found(
+                    LocationFix(location.latitude, location.longitude, location.takeIf { it.hasAccuracy() }?.accuracy, location.time),
+                )
+            }
+        } catch (e: IllegalArgumentException) {
+            // A provider this phone does not have. The class only: a message could carry a position.
+            Log.w("tensai.location", "provider rejected: ${e.javaClass.simpleName}")
+            LocationOutcome.Failed(LocationFailure.Unavailable)
+        }
+    }
+
+    private companion object {
+        const val FIX_TIMEOUT_MS = 8_000L
     }
 }

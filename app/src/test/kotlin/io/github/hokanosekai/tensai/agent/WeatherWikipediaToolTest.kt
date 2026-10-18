@@ -39,6 +39,16 @@ class WeatherWikipediaToolTest {
         assertTrue(http.urls[1].endsWith("forecast_days=16"))
     }
 
+    @Test fun weatherRetriesOnceOn503ThenGivesUp() {
+        val recovered = FakeHttp(status(503), json(forecast))
+        assertFalse(run(WeatherTool(recovered), """{"place":"48.11,-1.67"}""").isError)
+        assertEquals(2, recovered.urls.size)
+
+        val down = FakeHttp(status(503), status(503))
+        assertTrue(run(WeatherTool(down), """{"place":"48.11,-1.67"}""").text.contains("HTTP 503"))
+        assertEquals(2, down.urls.size)
+    }
+
     @Test fun weatherTakesCoordinatesWithoutGeocoding() {
         val http = FakeHttp(json(forecast))
         val result = run(WeatherTool(http), """{"place":"48.11, -1.67"}""")
@@ -47,6 +57,16 @@ class WeatherWikipediaToolTest {
         assertEquals(1, http.urls.size)
         assertTrue(http.urls.single().contains("latitude=48.11&longitude=-1.67"))
         assertTrue(result.text.startsWith("48.11, -1.67 (Open-Meteo) \u00b7 forecast for today"))
+    }
+
+    @Test fun weatherCoordinatesAtTheBoundsAndTextThatIsNotCoordinates() {
+        val http = FakeHttp(json(forecast))
+        assertFalse(run(WeatherTool(http), """{"place":"-90,180"}""").isError)
+        assertEquals(1, http.urls.size)
+        // a name with a number in it still goes through geocoding
+        val named = FakeHttp(json("""{"generationtime_ms":0.3}"""))
+        assertTrue(run(WeatherTool(named), """{"place":"Paris 75"}""").text.contains("no place found"))
+        assertTrue(named.urls.single().startsWith("https://geocoding-api.open-meteo.com"))
     }
 
     // `day`: names the model can get right, resolved against the place's own date
@@ -122,6 +142,8 @@ class WeatherWikipediaToolTest {
         assertTrue(none.isError)
         assertTrue(none.text.contains("no place found"))
         assertTrue(run(WeatherTool(FakeHttp()), """{"place":"95,10"}""").isError)
+        assertTrue(run(WeatherTool(FakeHttp()), """{"place":"10,181"}""").isError)
+        assertTrue(run(WeatherTool(FakeHttp()), """{"place":"-91.5,10"}""").isError)
     }
 
     @Test fun weatherFailuresAreTypedMessages() {
@@ -212,5 +234,112 @@ class WeatherWikipediaToolTest {
         assertFalse(result.text, result.text.contains("NaN"))
         assertTrue(result.text, result.text.contains("now: ?C, feels ?, clear, wind ? km/h"))
         assertTrue(result.text, result.text.contains("clear, ? to ?C"))
+    }
+
+    // no place: the phone's own position
+
+    private val clock = java.time.Clock.fixed(java.time.Instant.parse("2026-10-17T10:00:00Z"), java.time.ZoneId.of("Europe/Paris"))
+
+    private class FakeLocation(
+        private val access: PermissionResult = PermissionResult.Granted,
+        private val fixAgeMs: Long = 0L,
+        private val nowMs: Long,
+    ) : LocationSource {
+        var asked = 0
+        var fetched = 0
+
+        override fun isGranted() = access == PermissionResult.Granted
+
+        override suspend fun access(): PermissionResult {
+            asked++
+            return access
+        }
+
+        override suspend fun current(): LocationOutcome {
+            fetched++
+            return LocationOutcome.Found(LocationFix(48.111983, -1.674291, 1200f, nowMs - fixAgeMs))
+        }
+    }
+
+    private fun hereTool(http: FakeHttp, location: FakeLocation, inForeground: Boolean = true) =
+        WeatherTool(http, location = location, inForeground = { inForeground }, clock = clock)
+
+    @Test fun noPlaceForecastsTheLocationWithoutGeocoding() {
+        for (args in listOf("{}", """{"place":""}""", """{"place":null}""", """{"day":"today"}""")) {
+            val http = FakeHttp(json(forecast))
+            val location = FakeLocation(nowMs = clock.millis())
+            val result = run(hereTool(http, location), args)
+
+            assertFalse(result.text, result.isError)
+            assertEquals(1, http.urls.size)
+            assertTrue(http.urls.single().startsWith("https://api.open-meteo.com/v1/forecast?latitude=48.11&longitude=-1.67"))
+            assertTrue(result.text, result.text.startsWith("your location (approx. 48.11,-1.67) (Open-Meteo)"))
+            assertEquals(1, location.fetched)
+        }
+    }
+
+    @Test fun hereWordsAreTheLocationToo() {
+        for (word in listOf("here", "Here", "current location", "My Location", "near me")) {
+            val http = FakeHttp(json(forecast))
+            val result = run(hereTool(http, FakeLocation(nowMs = clock.millis())), """{"place":""}""")
+
+            assertFalse(result.text, result.isError)
+            assertEquals(word, 1, http.urls.size)
+            assertFalse(http.urls.single().contains("geocoding"))
+            assertTrue(result.text.startsWith("your location"))
+        }
+    }
+
+    @Test fun aDeniedLocationPermissionIsRefused() {
+        val http = FakeHttp()
+        val location = FakeLocation(PermissionResult.Denied, nowMs = clock.millis())
+        val result = run(hereTool(http, location), "{}")
+
+        assertTrue(result.refused)
+        assertEquals(LocationRefusedText, result.text)
+        assertEquals(0, location.fetched)
+        assertTrue(http.urls.isEmpty())
+    }
+
+    @Test fun aPermanentlyDeniedLocationPermissionIsBlocked() {
+        val http = FakeHttp()
+        val result = run(hereTool(http, FakeLocation(PermissionResult.PermanentlyDenied, nowMs = clock.millis())), "{}")
+
+        assertTrue(result.refused)
+        assertEquals("location", blockedPermission(result.text))
+        assertTrue(http.urls.isEmpty())
+    }
+
+    @Test fun aStaleFixIsNotForecast() {
+        val http = FakeHttp()
+        val result = run(hereTool(http, FakeLocation(fixAgeMs = LOCATION_MAX_AGE_MS + 1, nowMs = clock.millis())), "{}")
+
+        assertTrue(result.isError)
+        assertEquals(LocationFailure.Stale.message, result.text)
+        assertTrue(http.urls.isEmpty())
+    }
+
+    @Test fun fromTheBackgroundItFailsBeforeTheDialog() {
+        val location = FakeLocation(PermissionResult.Denied, nowMs = clock.millis())
+        val result = run(hereTool(FakeHttp(), location, inForeground = false), "{}")
+
+        assertEquals(BACKGROUND_ERROR, result.text)
+        assertEquals(0, location.asked)
+    }
+
+    @Test fun aNamedCityNeverTouchesTheLocation() {
+        val http = FakeHttp(json(geocoding), json(forecast))
+        val location = FakeLocation(nowMs = clock.millis())
+        val result = run(hereTool(http, location), """{"place":"Rennes"}""")
+
+        assertFalse(result.isError)
+        assertEquals(2, http.urls.size)
+        assertEquals(0, location.asked)
+        assertEquals(0, location.fetched)
+    }
+
+    @Test fun withoutALocationSourceAnEmptyPlaceIsStillAnError() {
+        assertEquals("place is empty", run(WeatherTool(FakeHttp()), "{}").text)
+        assertTrue(WeatherTool(FakeHttp()).waitsForUser)
     }
 }

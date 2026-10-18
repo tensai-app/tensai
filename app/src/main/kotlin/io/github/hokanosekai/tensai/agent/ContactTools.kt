@@ -62,11 +62,19 @@ fun blockedPermission(output: String?): String? = try {
     null
 }
 
-/** The refusal for a permission that is not granted, `null` when it is. */
-internal fun refusalFor(result: PermissionResult): ToolResult? = when (result) {
+/**
+ * The refusal for a permission that is not granted, `null` when it is. [permission] is the key of the settings link
+ * (see [BlockedPermissionKey]), [refused] and [blocked] what the model reads for each kind of refusal.
+ */
+internal fun refusalFor(
+    result: PermissionResult,
+    permission: String = "contacts",
+    refused: String = ContactsRefusedText,
+    blocked: String = ContactsBlockedText,
+): ToolResult? = when (result) {
     PermissionResult.Granted -> null
-    PermissionResult.Denied -> ToolResult.refused(ContactsRefusedText)
-    PermissionResult.PermanentlyDenied -> blockedResult("contacts", ContactsBlockedText)
+    PermissionResult.Denied -> ToolResult.refused(refused)
+    PermissionResult.PermanentlyDenied -> blockedResult(permission, blocked)
 }
 
 private val combiningMarks = Regex("\\p{M}+")
@@ -168,10 +176,15 @@ private val emailTag = Regex("^(.+?)\\s+@(\\S+)$")
 /** What a name resolved to: the [value] for the intent and what the model is told it picked ("Jade Martin, mobile"). */
 internal class Resolved(val value: String, val chose: String)
 
-/** Loads the contacts, asking the permission first. @throws ContactFailure when it is refused. */
+/** Loads the contacts, asking the permission first. @throws ContactFailure when it is refused, or revoked meanwhile. */
 internal suspend fun ContactsSource.loadContacts(): List<Contact> {
     refusalFor(access())?.let { throw ContactFailure(it) }
-    return load()
+    return try {
+        load()
+    } catch (e: SecurityException) {
+        // Revoked after the check: only the app settings can grant it again.
+        throw ContactFailure(blockedResult("contacts", ContactsBlockedText))
+    }
 }
 
 private fun noContact(name: String) = ContactFailure(ToolResult.error("no contact named $name"))
