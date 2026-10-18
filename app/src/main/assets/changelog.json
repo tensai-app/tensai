@@ -2,6 +2,39 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.1",
+      "title": "Permissions + Network",
+      "date": "2026-10-18",
+      "intro": "The model can now read your calendar and your approximate location, and, if you turn it on, look things up on the web. The Internet tier is off by default: with it off, nothing leaves the phone.",
+      "groups": [
+        {
+          "label": "Web (Settings > Tools > Internet, off by default)",
+          "items": [
+            "Web search: DuckDuckGo, with Wikipedia and Marginalia as fallbacks, no key needed. Optional Tavily key (1,000 free searches a month, no card) or Brave key (monthly free credit, card required) in Settings, with a Test button",
+            "Read a web page: the model fetches a link and reads its text. HTTPS only, local and private addresses are blocked",
+            "Weather from Open-Meteo: today, tomorrow, a weekday or a date, for a city or \"here\"",
+            "Wikipedia summaries",
+            "Every network call shows where it went and what was sent: \"Sent to DuckDuckGo · <query>\""
+          ]
+        },
+        {
+          "label": "Phone, with Android permission at first use",
+          "items": [
+            "Calendar: \"what is on my calendar today?\", a day or a range up to 31 days. Only titles, times and places reach the model",
+            "Location: approximate only (about 1 km), never precise GPS. tensai does not turn it into an address",
+            "Revoking a permission while the model uses it gives a clear refusal with a link to the app settings"
+          ]
+        },
+        {
+          "label": "App",
+          "items": [
+            "What's new: tap the version in Settings",
+            "Settings > Storage shows the real free space, with a colored legend (models, other data, free)"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.0",
       "title": "Tooling",
       "date": "2026-10-17",
