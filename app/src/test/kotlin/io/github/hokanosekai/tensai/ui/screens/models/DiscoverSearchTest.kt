@@ -13,12 +13,12 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,7 +33,9 @@ import org.junit.Test
  */
 class DiscoverSearchTest {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // One virtual-time scheduler for the test body and the code under test: no real thread, no real clock.
+    private val dispatcher = StandardTestDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     @After
     fun tearDown() = scope.cancel()
@@ -86,6 +88,7 @@ class DiscoverSearchTest {
             fake.detail(it)
         },
         profile = { phone },
+        dispatcher = dispatcher,
         debounceMs = debounce,
         retryBackoffMs = 20,
     )
@@ -106,7 +109,7 @@ class DiscoverSearchTest {
     // ---- debounce and cancellation
 
     @Test
-    fun theHomeLoadsThePopularListOfTheCurrentSort() = runBlocking {
+    fun theHomeLoadsThePopularListOfTheCurrentSort() = runTest(dispatcher) {
         val fake = Fake().apply { search = { _, _ -> page("a/one") } }
         val vm = started(fake)
         vm.await { it.popular is FeedState.Loaded }
@@ -116,7 +119,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun typingWaitsForTheDebounceAndSearchesOnlyTheLastText() = runBlocking {
+    fun typingWaitsForTheDebounceAndSearchesOnlyTheLastText() = runTest(dispatcher) {
         val fake = Fake().apply { search = { q, _ -> if (q.isEmpty()) page() else page("a/$q") } }
         val vm = started(fake)
         vm.await { it.popular is FeedState.Loaded }
@@ -136,7 +139,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aNewKeystrokeCancelsTheRequestInFlightAndItsLateAnswerIsDropped() = runBlocking {
+    fun aNewKeystrokeCancelsTheRequestInFlightAndItsLateAnswerIsDropped() = runTest(dispatcher) {
         val slowStarted = CompletableDeferred<Unit>()
         val slowCancelled = CompletableDeferred<Boolean>()
         val fake = Fake().apply {
@@ -170,7 +173,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun clearingTheFieldReturnsToTheHomeAndDropsAPendingQuery() = runBlocking {
+    fun clearingTheFieldReturnsToTheHomeAndDropsAPendingQuery() = runTest(dispatcher) {
         val fake = Fake().apply { search = { _, _ -> page("a/one") } }
         val vm = started(fake)
         vm.await { it.popular is FeedState.Loaded }
@@ -184,7 +187,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aFailedSearchIsReportedAndTryAgainSearchesAtOnce() = runBlocking {
+    fun aFailedSearchIsReportedAndTryAgainSearchesAtOnce() = runTest(dispatcher) {
         var online = false
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty() || online) page("a/one") else throw HfException(HfError.Offline) }
@@ -206,7 +209,7 @@ class DiscoverSearchTest {
     // ---- pagination
 
     @Test
-    fun theNextPageIsFetchedWithTheCursorAndAppended() = runBlocking {
+    fun theNextPageIsFetchedWithTheCursorAndAppended() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty()) page() else page("a/1", "a/2", next = "cursor-2") }
             next = { page("a/2", "a/3", next = "cursor-3") }
@@ -226,7 +229,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun loadMoreOnTheLastPageOrWhileLoadingDoesNothing() = runBlocking {
+    fun loadMoreOnTheLastPageOrWhileLoadingDoesNothing() = runTest(dispatcher) {
         val gate = CompletableDeferred<Unit>()
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty()) page("p/1") else page("a/1", next = "c2") }
@@ -252,7 +255,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aFailedNextPageKeepsTheListAndFlagsTheFooterInsteadOfLooping() = runBlocking {
+    fun aFailedNextPageKeepsTheListAndFlagsTheFooterInsteadOfLooping() = runTest(dispatcher) {
         var fail = true
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty()) page() else page("a/1", next = "c2") }
@@ -275,7 +278,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aPageThatArrivesAfterANewQueryIsDropped() = runBlocking {
+    fun aPageThatArrivesAfterANewQueryIsDropped() = runTest(dispatcher) {
         val gate = CompletableDeferred<Unit>()
         val fake = Fake().apply {
             search = { q, _ ->
@@ -306,7 +309,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun thePopularListPaginatesToo() = runBlocking {
+    fun thePopularListPaginatesToo() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { _, _ -> page("a/1", next = "c2") }
             next = { page("a/2") }
@@ -323,7 +326,7 @@ class DiscoverSearchTest {
     // ---- sort and filters
 
     @Test
-    fun changingTheSortAsksTheHubAgainForPopularAndForTheSearch() = runBlocking {
+    fun changingTheSortAsksTheHubAgainForPopularAndForTheSearch() = runTest(dispatcher) {
         val fake = Fake().apply { search = { q, _ -> if (q.isEmpty()) page("p/1") else page("a/1") } }
         val vm = started(fake)
         vm.onQueryChange("qwen")
@@ -340,7 +343,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun sizeSortReordersWhatIsLoadedWithoutANewRequest() = runBlocking {
+    fun sizeSortReordersWhatIsLoadedWithoutANewRequest() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { _, _ -> page("a/big", "b/small") }
             detail = { id -> detail(id, sizeMib = if (id == "a/big") 3000 else 500) }
@@ -359,7 +362,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun theFiltersApplyToPopularAndToTheResults() = runBlocking {
+    fun theFiltersApplyToPopularAndToTheResults() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { _, _ -> page("a/tools", "b/plain", "c/huge") }
             detail = { id ->
@@ -392,7 +395,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun theCatalogRespectsToolsAndVision() = runBlocking {
+    fun theCatalogRespectsToolsAndVision() = runTest(dispatcher) {
         val vm = started(Fake())
         val all = vm.await { it.recommended.isNotEmpty() }
         assertEquals(all.recommended, all.recommendedShown)
@@ -408,7 +411,7 @@ class DiscoverSearchTest {
     // ---- links
 
     @Test
-    fun aHuggingFaceLinkOpensTheRepoWithItsFileAndNothingIsSearched() = runBlocking {
+    fun aHuggingFaceLinkOpensTheRepoWithItsFileAndNothingIsSearched() = runTest(dispatcher) {
         val fake = Fake().apply { search = { _, _ -> page() } }
         val vm = started(fake)
         vm.await { it.popular is FeedState.Loaded }
@@ -426,7 +429,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aRepoLinkHasNoFile() = runBlocking {
+    fun aRepoLinkHasNoFile() = runTest(dispatcher) {
         val vm = started(Fake())
 
         vm.onQueryChange("hf.co/bartowski/Qwen3-GGUF")
@@ -435,7 +438,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun anyOtherUrlShowsTheErrorAtOnceAndMakesNoRequestAtAll() = runBlocking {
+    fun anyOtherUrlShowsTheErrorAtOnceAndMakesNoRequestAtAll() = runTest(dispatcher) {
         val fake = Fake().apply { search = { _, _ -> page() } }
         val vm = started(fake)
         vm.await { it.popular is FeedState.Loaded }
@@ -453,7 +456,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aLinkTypedByHandIsNotOpenedHalfWay() = runBlocking {
+    fun aLinkTypedByHandIsNotOpenedHalfWay() = runTest(dispatcher) {
         val vm = started(Fake())
         val link = "hf.co/bartowski/Qwen3-GGUF"
 
@@ -462,12 +465,13 @@ class DiscoverSearchTest {
             vm.onQueryChange(link.substring(0, i + 1))
             delay(debounce / 6)
         }
+        assertNull(vm.state.value.pendingOpen)
 
         assertEquals(DiscoverEvent.OpenRepo("bartowski/Qwen3-GGUF", null), vm.await("pending link") { it.pendingOpen != null }.pendingOpen)
     }
 
     @Test
-    fun aPendingLinkIsDroppedByTheNextKeystroke() = runBlocking {
+    fun aPendingLinkIsDroppedByTheNextKeystroke() = runTest(dispatcher) {
         val vm = started(Fake())
         vm.onQueryChange("hf.co/bartowski/Qwen3-GGUF")
         vm.await { it.pendingOpen != null }
@@ -480,7 +484,7 @@ class DiscoverSearchTest {
     // ---- paging cap
 
     @Test
-    fun autoPagingStopsAfterPagesThatAddNoCardAndAUserScrollGoesOnAnyway() = runBlocking {
+    fun autoPagingStopsAfterPagesThatAddNoCardAndAUserScrollGoesOnAnyway() = runTest(dispatcher) {
         var n = 0
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty()) page() else page("r/0", next = "c1") }
@@ -516,7 +520,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun theSameFooterDoesNotAskTwiceForOnePageCount() = runBlocking {
+    fun theSameFooterDoesNotAskTwiceForOnePageCount() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { q, _ -> if (q.isEmpty()) page() else page("r/0", next = "c1") }
             next = { page("r/1", next = "c2") }
@@ -534,13 +538,13 @@ class DiscoverSearchTest {
         repeat(3) { vm.loadMore(auto = true) }
         delay(100)
 
-        assertTrue(fake.nexts.size <= 1)
+        assertTrue(fake.nexts.isEmpty())
     }
 
     // ---- transient detail failures
 
     @Test
-    fun aTransientDetailFailureIsRetriedAfterABackoffAndNeverHidden() = runBlocking {
+    fun aTransientDetailFailureIsRetriedAfterABackoffAndNeverHidden() = runTest(dispatcher) {
         val calls = AtomicInteger()
         val fake = Fake().apply {
             search = { _, _ -> page("a/one") }
@@ -560,7 +564,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aRepoThatKeepsFailingGivesUpButANewSearchClearsIt() = runBlocking {
+    fun aRepoThatKeepsFailingGivesUpButANewSearchClearsIt() = runTest(dispatcher) {
         var failing = true
         val fake = Fake().apply {
             search = { _, _ -> page("a/one") }
@@ -586,7 +590,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aNotFoundDetailIsHiddenForGood() = runBlocking {
+    fun aNotFoundDetailIsHiddenForGood() = runTest(dispatcher) {
         val fake = Fake().apply {
             search = { _, _ -> page("a/one") }
             detail = { throw HfException(HfError.NotFound) }
@@ -602,7 +606,7 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aCardWhoseRepoLeftTheListsReleasesItsClaim() = runBlocking {
+    fun aCardWhoseRepoLeftTheListsReleasesItsClaim() = runTest(dispatcher) {
         val vm = started(Fake().apply { search = { _, _ -> page("a/one") } })
         vm.await { it.popular is FeedState.Loaded }
 
@@ -612,12 +616,13 @@ class DiscoverSearchTest {
     }
 
     @Test
-    fun aProfileThatCannotBeReadDoesNotKillTheScope() = runBlocking {
+    fun aProfileThatCannotBeReadDoesNotKillTheScope() = runTest(dispatcher) {
         val vm = DiscoverViewModel(
             scope = scope,
             search = { _, _ -> page("a/one") },
             detail = { detail(it) },
             profile = { throw IllegalStateException("no profile") },
+            dispatcher = dispatcher,
             debounceMs = debounce,
         )
         vm.start()

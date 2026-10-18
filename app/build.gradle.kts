@@ -149,6 +149,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.kotlinx.coroutines.test)
     // SamplingJson uses org.json, which lives in the Android framework and is therefore a stub
     // that throws in JVM unit tests. This is the real implementation, test-only: it puts a
     // working org.json ahead of the mockable android.jar on the unit-test classpath, so the

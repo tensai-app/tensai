@@ -16,13 +16,14 @@ import io.github.hokanosekai.tensai.ui.screens.models.FailedPrimary
 import io.github.hokanosekai.tensai.ui.screens.models.RepoDownloads
 import java.util.Collections
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,7 +34,9 @@ import org.junit.Test
 /** Onboarding step 2's download (TEN-145): what each enqueue answer does, and how the card follows the queue. */
 class OnboardingDownloadTest {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // One virtual-time scheduler for the test body and the code under test: no real thread, no real clock.
+    private val dispatcher = StandardTestDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     @After
     fun tearDown() = scope.cancel()
@@ -115,6 +118,7 @@ class OnboardingDownloadTest {
         },
         libraryIds = library,
         setAllowMobileData = { allowMobile += it },
+        now = { dispatcher.scheduler.currentTime },
     )
 
     private fun row(
@@ -141,7 +145,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun downloadEnqueuesTheRealFileAndTheCommitOfTheRepoDetail() = runBlocking {
+    fun downloadEnqueuesTheRealFileAndTheCommitOfTheRepoDetail() = runTest(dispatcher) {
         val c = controller()
         c.download(reco)
 
@@ -151,7 +155,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun offlineKeepsTheCardIdleAndSaysSo() = runBlocking {
+    fun offlineKeepsTheCardIdleAndSaysSo() = runTest(dispatcher) {
         detailError = HfException(HfError.Offline)
         val c = controller()
         c.download(reco)
@@ -163,7 +167,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun aFileMissingFromTheRepoIsAFailedLookup() = runBlocking {
+    fun aFileMissingFromTheRepoIsAFailedLookup() = runTest(dispatcher) {
         val c = controller()
         c.download(model("bartowski/Small-GGUF", "Gone-Q4_K_M.gguf"))
 
@@ -172,7 +176,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun theMobileDataQuestionIsAskedThenReplayedConfirmedWithAlwaysAllow() = runBlocking {
+    fun theMobileDataQuestionIsAskedThenReplayedConfirmedWithAlwaysAllow() = runTest(dispatcher) {
         fake.answer = { confirmed -> if (confirmed) EnqueueResult.Enqueued("d1") else EnqueueResult.NeedsMobileDataConfirmation(1_234) }
         val c = controller()
         c.download(reco)
@@ -189,7 +193,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun notEnoughStorageRaisesItsDialog() = runBlocking {
+    fun notEnoughStorageRaisesItsDialog() = runTest(dispatcher) {
         fake.answer = { EnqueueResult.NotEnoughStorage(neededBytes = 5_000, freeBytes = 100) }
         val c = controller()
         c.download(reco)
@@ -201,7 +205,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun alreadyOnDeviceIsDoneWithThatModel() = runBlocking {
+    fun alreadyOnDeviceIsDoneWithThatModel() = runTest(dispatcher) {
         library.value = setOf("m1")
         fake.answer = { EnqueueResult.AlreadyOnDevice("m1") }
         val c = controller()
@@ -214,7 +218,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun alreadyQueuedFollowsTheExistingRow() = runBlocking {
+    fun alreadyQueuedFollowsTheExistingRow() = runTest(dispatcher) {
         fake.answer = { EnqueueResult.AlreadyQueued("d9") }
         fake.queue.value = listOf(row("d9", reco, DownloadStatus.Downloading, done = 300))
         val c = controller()
@@ -229,7 +233,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun notAllowedIsFlagged() = runBlocking {
+    fun notAllowedIsFlagged() = runTest(dispatcher) {
         fake.answer = { EnqueueResult.NotAllowed }
         val c = controller()
         c.download(reco)
@@ -239,7 +243,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun aDoneRowTurnsTheCardIntoTheModelOnceItIsInTheLibrary() = runBlocking {
+    fun aDoneRowTurnsTheCardIntoTheModelOnceItIsInTheLibrary() = runTest(dispatcher) {
         val c = controller()
         c.start()
         c.follow(reco)
@@ -258,7 +262,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun aFailedRowShowsItsReasonAndRetryAsksTheQueue() = runBlocking {
+    fun aFailedRowShowsItsReasonAndRetryAsksTheQueue() = runTest(dispatcher) {
         val c = controller()
         c.start()
         c.follow(reco)
@@ -275,7 +279,7 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun aRestoredScreenFindsItsRowAgainFromTheQueueByRepoAndFile() = runBlocking {
+    fun aRestoredScreenFindsItsRowAgainFromTheQueueByRepoAndFile() = runTest(dispatcher) {
         // Process death: a new controller, the saved key resolved to the entry, the row already there.
         fake.queue.value = listOf(
             row("x", other, DownloadStatus.Queued),
@@ -298,18 +302,21 @@ class OnboardingDownloadTest {
     }
 
     @Test
-    fun startingAnotherEntryDropsTheFirstOnesDownload() = runBlocking {
+    fun startingAnotherEntryDropsTheFirstOnesDownload() = runTest(dispatcher) {
         fake.queue.value = listOf(row("d1", reco, DownloadStatus.Downloading, done = 100))
         val c = controller()
         c.start()
         c.download(reco)
         c.await("first row") { it.phase is OnboardingPhase.Active }
+        // The first download is still resolving its lookup: let it finish before dropping it.
+        advanceUntilIdle()
         fake.calls.clear()
 
         c.download(other)
+        advanceUntilIdle()
 
-        until { fake.calls.any { it.startsWith("enqueue:") } }
         assertTrue(fake.calls.contains("cancel:d1"))
+        assertTrue(fake.calls.any { it.startsWith("enqueue:") })
         assertEquals(other.key, c.state.value.target?.key)
     }
 
