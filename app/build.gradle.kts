@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.hokanosekai.tensai"
+    namespace = "io.github.tensaiapp"
     compileSdk = 35
     // Same NDK as llama-kt. The app module packages the native libs, and AGP strips them with
     // its own module's NDK: without this it looked for its default NDK, which isn't installed,
@@ -17,7 +17,7 @@ android {
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "io.github.hokanosekai.tensai"
+        applicationId = "io.github.tensaiapp"
         minSdk = 29
         targetSdk = 35
         versionCode = 5

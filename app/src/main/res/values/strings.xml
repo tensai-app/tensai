@@ -11,7 +11,7 @@
 -->
 <resources>
 
-    <!-- Greetings, one per band of io.github.hokanosekai.tensai.ui.screens.Greeting. -->
+    <!-- Greetings, one per band of io.github.tensaiapp.ui.screens.Greeting. -->
     <string name="home_greeting_morning">Good morning.</string>
     <string name="home_greeting_afternoon">Good afternoon.</string>
     <string name="home_greeting_evening">Good evening.</string>
@@ -58,7 +58,7 @@
     <string name="notifications_allowed">Allowed</string>
     <string name="notifications_allow">Allow</string>
 
-    <!-- Appearance > theme. One entry per io.github.hokanosekai.tensai.ui.theme.ThemeMode. -->
+    <!-- Appearance > theme. One entry per io.github.tensaiapp.ui.theme.ThemeMode. -->
     <string name="settings_theme">Theme</string>
     <string name="settings_theme_system">System</string>
     <string name="settings_theme_system_subtitle">Follows your phone\'s day/night setting</string>
@@ -67,7 +67,7 @@
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_light_subtitle">Light, always</string>
 
-    <!-- Appearance > language. One entry per io.github.hokanosekai.tensai.data.AppLanguage. -->
+    <!-- Appearance > language. One entry per io.github.tensaiapp.data.AppLanguage. -->
     <string name="settings_language">Language</string>
     <string name="settings_language_system">System</string>
     <!-- Each language names itself (an endonym), in every locale: someone who cannot read the
@@ -75,7 +75,7 @@
     <string name="settings_language_english" translatable="false">English</string>
     <string name="settings_language_french" translatable="false">Français</string>
 
-    <!-- Inference > backend. One entry per io.github.hokanosekai.tensai.data.BackendPreference. -->
+    <!-- Inference > backend. One entry per io.github.tensaiapp.data.BackendPreference. -->
     <string name="settings_backend">Default backend</string>
     <string name="settings_backend_auto">Auto</string>
     <string name="settings_backend_auto_subtitle">Recommended: picks CPU or Vulkan per model</string>
@@ -84,7 +84,7 @@
     <string name="settings_backend_gpu">Vulkan</string>
     <string name="settings_backend_gpu_subtitle">Runs the model through Vulkan when the phone supports it</string>
 
-    <!-- Inference > read-only rows. See io.github.hokanosekai.tensai.ui.screens.settings.InferenceFacts. -->
+    <!-- Inference > read-only rows. See io.github.tensaiapp.ui.screens.settings.InferenceFacts. -->
     <string name="settings_context_size">Context size</string>
     <!-- %1$d is a token count. -->
     <plurals name="settings_context_size_value">
@@ -208,7 +208,7 @@
     <!-- Drawer > Recents, before the first conversation exists. -->
     <string name="drawer_recents_empty">No chats yet</string>
 
-    <!-- Compatibility traffic light. One label per io.github.hokanosekai.tensai.compat.Verdict. -->
+    <!-- Compatibility traffic light. One label per io.github.tensaiapp.compat.Verdict. -->
     <string name="model_compat_runs_well">Runs well</string>
     <string name="model_compat_tight_fit">Tight fit</string>
     <string name="model_compat_wont_fit">Won\'t fit</string>
@@ -225,13 +225,13 @@
     <!-- Deliberately quiet: it overrides a red light, so it must not read like the obvious action. -->
     <string name="model_compat_load_anyway">Load anyway</string>
 
-    <!-- Models > storage pressure banner. See io.github.hokanosekai.tensai.ui.screens.models.StoragePressure. -->
+    <!-- Models > storage pressure banner. See io.github.tensaiapp.ui.screens.models.StoragePressure. -->
     <string name="models_storage_low_title">Storage is nearly full</string>
     <!-- %1$s is the free space left, %2$s the average size of the models already on the phone. -->
     <string name="models_storage_low_body">Only %1$s left, and the models here take %2$s each on average.</string>
     <string name="models_storage_free_up">Free up space</string>
 
-    <!-- Models > import failure card. One body per io.github.hokanosekai.tensai.ui.screens.models.ImportFailure. -->
+    <!-- Models > import failure card. One body per io.github.tensaiapp.ui.screens.models.ImportFailure. -->
     <string name="import_failed_title">Import didn\'t finish</string>
     <!-- %1$s is the file's name. -->
     <string name="import_failed_already_imported">%1$s is already in your models.</string>
@@ -245,7 +245,7 @@
     <string name="import_failed_retry">Try again</string>
     <string name="import_failed_dismiss">Dismiss</string>
 
-    <!-- Loading > failure dialogs. See io.github.hokanosekai.tensai.ui.screens.loading.LoadFailure. -->
+    <!-- Loading > failure dialogs. See io.github.tensaiapp.ui.screens.loading.LoadFailure. -->
     <string name="load_failed_title">Couldn\'t load this model</string>
     <string name="load_failed_unreadable">This file may be damaged, or it isn\'t a model this app can run. Re-importing only helps if your copy was damaged.</string>
     <string name="load_failed_busy">Something else was still using the model. Give it a moment and try again.</string>

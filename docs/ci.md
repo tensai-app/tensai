@@ -194,7 +194,7 @@ révélés muets là-dessus (TEN-55) :
 
 ```bash
 timeout 300 adb shell am instrument -w \
-  io.github.hokanosekai.tensai.test/androidx.test.runner.AndroidJUnitRunner
+  io.github.tensaiapp.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Détails et suites à faire tourner : `docs/device-qa-queue.md` §10.

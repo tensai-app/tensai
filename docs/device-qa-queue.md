@@ -39,7 +39,7 @@ Dernière mise à jour : 2026-09-05.
 ```bash
 # Tirer la base avec son -wal
 for f in tensai.db tensai.db-wal tensai.db-shm; do
-  adb shell "run-as io.github.hokanosekai.tensai cat databases/$f" > "$f"
+  adb shell "run-as io.github.tensaiapp cat databases/$f" > "$f"
 done
 
 # Logcat natif uniquement
@@ -312,7 +312,7 @@ Même manipulation mais en changeant de modèle, ce qui déclenche un save par
 La barre d'usage doit correspondre au réel :
 
 ```bash
-adb shell 'run-as io.github.hokanosekai.tensai du -sk files/models files/sessions'
+adb shell 'run-as io.github.tensaiapp du -sk files/models files/sessions'
 ```
 
 Et un contrôle qui a du sens vu ce qui a été construit : supprimer un fichier de
@@ -347,7 +347,7 @@ s'effondre et où.
 
 ```bash
 timeout 300 adb shell am instrument -w \
-  io.github.hokanosekai.tensai.test/androidx.test.runner.AndroidJUnitRunner
+  io.github.tensaiapp.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 À faire tourner :
@@ -365,8 +365,8 @@ timeout 300 adb shell am instrument -w \
   log le dit en clair :
 
   ```
-  adb logcat -d | grep OplusHansManager | grep hokanosekai
-  ... freeze uid: 10361 io.github.hokanosekai.tensai pids: [<pid>] scene: LcdOn
+  adb logcat -d | grep OplusHansManager | grep tensaiapp
+  ... freeze uid: 10361 io.github.tensaiapp pids: [<pid>] scene: LcdOn
   ```
 
   Fréquence : 2 runs sur 8 quand la suite était plus lente, 1 sur 17 le
