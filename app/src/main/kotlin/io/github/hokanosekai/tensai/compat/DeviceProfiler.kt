@@ -145,6 +145,7 @@ class DeviceProfiler(context: Context) {
         // immediately): this instance is created here and belongs to nobody else, so it is
         // released here. That keeps the question of who owns the engine's lifetime (TEN-66's
         // question, and it is about the *shared* instance) out of this function entirely.
+        io.github.hokanosekai.tensai.engine.VulkanTuning.applyEnv()
         val engine = LlamaEngine()
         val backends = try {
             engine.availableBackends()

@@ -56,6 +56,7 @@ class DeviceInfoViewModel(
 internal suspend fun readDeviceInfo(context: Context?): DeviceInfo {
     val profile: DeviceProfile? = runCatching { RuntimeGraph.deviceProfiler.profile() }.getOrNull()
     val backends = runCatching {
+        io.github.hokanosekai.tensai.engine.VulkanTuning.applyEnv()
         val engine = LlamaEngine()
         try {
             engine.availableBackends().map { DeviceBackend(it.description, it.name, it.type, it.deviceDescription) }

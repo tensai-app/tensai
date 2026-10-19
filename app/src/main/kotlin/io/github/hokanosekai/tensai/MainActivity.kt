@@ -86,6 +86,7 @@ class MainActivity : ComponentActivity() {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        FrameStatsLogger.attach(this)
         savedInstanceState?.getString(STATE_PERMISSION)?.let {
             permissionLaunch.restore(LaunchedPermission(savedInstanceState.getLong(STATE_PERMISSION_ID), it, savedInstanceState.getBoolean(STATE_PERMISSION_RATIONALE)))
         }

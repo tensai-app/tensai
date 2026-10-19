@@ -77,6 +77,11 @@ class LlamaKtEngineImpl(
     /** Tool-prefix KV files (TEN-182), `null` keeps every conversation paying its own prefill. */
     private val prefixCache = prefixCacheDir?.let { PrefixCache(it) }
 
+    // Already done at app start; idempotent guard for any other entry point (see VulkanTuning).
+    init {
+        VulkanTuning.applyEnv()
+    }
+
     private val llamaEngine = LlamaEngine()
 
     private val dispatcher = Executors
@@ -164,6 +169,7 @@ class LlamaKtEngineImpl(
     override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = onEngineThread {
         val nGpuLayers = resolveNGpuLayers(config.backend)
         val kvCacheTypeArg = config.kvCacheType.toLibArg()
+        val tuning = VulkanTuning.forLoad(nGpuLayers)
         val libProgress = if (config.onProgress == null && config.onStage == null) {
             null
         } else {
@@ -195,6 +201,13 @@ class LlamaKtEngineImpl(
                 onProgress = libProgress,
                 kvCacheType = kvCacheTypeArg,
                 chatTemplate = config.chatTemplate,
+                flashAttn = tuning.flashAttn.arg,
+                nThreads = tuning.nThreads ?: 0,
+                nThreadsBatch = tuning.nThreadsBatch ?: 0,
+                nBatch = tuning.nBatch ?: 0,
+                nUbatch = tuning.nUbatch ?: 0,
+                typeK = tuning.typeK,
+                typeV = tuning.typeV,
             )
         } catch (e: OutOfMemoryError) {
             throw OutOfMemoryException("Out of memory while loading model at ${config.path}", e)

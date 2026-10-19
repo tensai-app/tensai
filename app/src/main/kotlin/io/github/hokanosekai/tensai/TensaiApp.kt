@@ -25,7 +25,12 @@ class TensaiApp : Application() {
         super.onCreate()
         RuntimeGraph.init(this)
         // Off the main thread: the first compatibility check would otherwise load the native lib there.
-        Thread { io.github.hokanosekai.tensai.compat.SupportedArchitectures.current() }.start()
+        // Same thread, env first: every path that can reach the backend registry calls applyEnv()
+        // (blocking, once), so the LM_GGML_VK_* variables are always set ahead of it.
+        Thread {
+            io.github.hokanosekai.tensai.engine.VulkanTuning.applyEnv()
+            io.github.hokanosekai.tensai.compat.SupportedArchitectures.current()
+        }.start()
         RuntimeGraph.applicationScope.launch {
             RuntimeGraph.inferenceQueue.state.collect { state ->
                 if (state !is QueueState.Idle) {
