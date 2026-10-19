@@ -45,7 +45,7 @@ data class VulkanLoadTuning(
  *  - device creation (first device query or backend init, at the latest the first load):
  *    `LM_GGML_VK_QUEUE_PRIORITY`, `LM_GGML_VK_MAX_NODES_PER_SUBMIT`, `LM_GGML_VK_DISABLE_*`,
  *    `LM_GGML_VK_FORCE_MMVQ`, `LM_GGML_VK_PREFER_HOST_MEMORY`, ...;
- *  - the first graph compute: `LM_GGML_VK_SUBMIT_MFLOPS` (read once, then cached).
+ *  - the first graph compute: `LM_GGML_VK_SUBMIT_MFLOPS` and `LM_GGML_VK_MATMUL_SPLIT_MFLOPS`, `LM_GGML_VK_MATMUL_SPLIT_SUBMIT` (read once, then cached).
  *
  * Experiments (all defaults null/Auto/empty):
  *  - smaller prefill batches:   nUbatch = 128 or 256, nBatch = 256 or 512
@@ -54,6 +54,12 @@ data class VulkanLoadTuning(
  *  - threads:                   nThreads / nThreadsBatch (they drive the CPU side of the graph)
  *  - shorter GPU submissions:   env = mapOf("LM_GGML_VK_SUBMIT_MFLOPS" to "2000")
  *                               and/or "LM_GGML_VK_MAX_NODES_PER_SUBMIT" to "20"
+ *  - split big matmuls (M axis) into shorter dispatches with a submit between them, MFLOP per
+ *    dispatch (unset or 0 = stock): env = mapOf("LM_GGML_VK_MATMUL_SPLIT_MFLOPS" to "4000")
+ *    (also the submit budget unless LM_GGML_VK_SUBMIT_MFLOPS is set, which wins;
+ *    at most 64 chunks per matmul)
+ *  - same, without the submit and barrier between chunks (one command buffer; does the GPU preempt
+ *    between dispatches?): also "LM_GGML_VK_MATMUL_SPLIT_SUBMIT" to "0" (default 1)
  *  - other backend knobs:       LM_GGML_VK_DISABLE_FUSION, LM_GGML_VK_DISABLE_INTEGER_DOT_PRODUCT,
  *                               LM_GGML_VK_FORCE_MMVQ / LM_GGML_VK_DISABLE_MMVQ, ...
  */
@@ -62,9 +68,14 @@ object VulkanTuning {
      * Measured on a Mali-G68 MC4 (TwIL-LM3 Q4_K_M, 308-token prompt, UI frames from FrameStatsLogger):
      *  - n_ubatch 512 (stock): prefill 3.0 tok/s, ~8.6 fps, frames frozen up to 1 s;
      *  - n_ubatch 128: prefill 3.7 tok/s, ~12 fps, worst frame ~600 ms;
-     *  - n_ubatch 128 + a LOW global priority queue: prefill 3.7 tok/s, ~65 fps, worst frame ~200 ms.
-     * The Mali preempts the low priority compute queue for the compositor, so the UI stays usable
-     * while the GPU prefills, at no cost in speed. Smaller submits keep each preemption point close.
+     *  - n_ubatch 128 + a LOW global priority queue: prefill 3.7 tok/s, ~20 fps, worst frame 360-650 ms.
+     * The Mali preempts the low priority compute queue for the compositor between dispatches, at no
+     * cost in speed. The matmul split (TEN-198) is left off: smaller dispatches cost speed in
+     * themselves (287-token prefill, same settings):
+     *  - split 1000 MFLOP, one command buffer: 2.7 tok/s, ~32 fps, worst frame 210-430 ms;
+     *  - split 1000 MFLOP, submit between chunks: 2.0 tok/s, ~32 fps, worst frame ~230 ms;
+     *  - split 4000 MFLOP, submit between chunks: 3.0 tok/s, 22-36 fps.
+     * Set LM_GGML_VK_MATMUL_SPLIT_MFLOPS=1000 with LM_GGML_VK_MATMUL_SPLIT_SUBMIT=0 to favour the UI.
      */
     val CURRENT = VulkanLoadTuning(
         nUbatch = 128,

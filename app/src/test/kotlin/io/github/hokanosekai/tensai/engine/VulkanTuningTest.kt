@@ -51,7 +51,10 @@ class VulkanTuningTest {
     fun `current tuning is the measured one`() {
         assertEquals(128, VulkanTuning.CURRENT.nUbatch)
         assertEquals(
-            mapOf("LM_GGML_VK_SUBMIT_MFLOPS" to "200", "LM_GGML_VK_QUEUE_PRIORITY" to "low"),
+            mapOf(
+                "LM_GGML_VK_SUBMIT_MFLOPS" to "200",
+                "LM_GGML_VK_QUEUE_PRIORITY" to "low",
+            ),
             VulkanTuning.CURRENT.env,
         )
     }

@@ -67,6 +67,11 @@ jobs:
       - name: KV reuse planner test
         run: third_party/llama.kt/scripts/test-kv-reuse.sh
 
+      # Découpe des matmuls Vulkan (TEN-198) : le calcul des plages de lignes, en-tête
+      # sans Vulkan, compilé et exécuté sur l'hôte.
+      - name: Vulkan matmul split test
+        run: third_party/llama.kt/scripts/test-vk-split.sh
+
       # Ce que le job JVM ne peut pas garantir : que le CMake de llama.kt, les
       # sources cpp/ vendorées, les shaders générés et libOpenCL.so tiennent
       # ensemble, et qu'il en sort un APK.
