@@ -1,8 +1,8 @@
 # tensai
 
-[![CI](https://github.com/hokanosekai/tensai/actions/workflows/ci.yml/badge.svg)](https://github.com/hokanosekai/tensai/actions/workflows/ci.yml)
+[![CI](https://github.com/tensai-app/tensai/actions/workflows/ci.yml/badge.svg)](https://github.com/tensai-app/tensai/actions/workflows/ci.yml)
 
-天才 — your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/hokanosekai/llama.kt) / llama.cpp), chat UI, and later a LAN API server and phone actions.
+天才 — your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, and later a LAN API server and phone actions.
 
 **Status: early development.** Nothing usable yet.
 
@@ -13,7 +13,7 @@ compiler (`g++`), and `glslc` (shaderc, packaged with the Vulkan SDK or as
 `shaderc` on most distros).
 
 ```bash
-git clone --recurse-submodules git@github.com:hokanosekai/tensai.git
+git clone --recurse-submodules git@github.com:tensai-app/tensai.git
 cd tensai
 ```
 
@@ -76,7 +76,7 @@ native libs: without it the release shipped them with full debug info, 164 MB.
 
 ## Architecture
 
-The app consumes [llama.kt](https://github.com/hokanosekai/llama.kt) (Kotlin/JNI binding for llama.cpp) as a git submodule (`third_party/llama.kt`), included as the `:llama-kt` Gradle module.
+The app consumes [llama.kt](https://github.com/tensai-app/llama.kt) (Kotlin/JNI binding for llama.cpp) as a git submodule (`third_party/llama.kt`), included as the `:llama-kt` Gradle module.
 
 ## License
 

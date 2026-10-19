@@ -405,7 +405,7 @@ object RuntimeGraph {
 
     /** `tensai/<version> (+<repo>)`: what Wikimedia and Open-Meteo ask a client to say about itself. */
     private val descriptiveUserAgent: String
-        get() = "tensai/${BuildConfig.VERSION_NAME} (+https://github.com/hokanosekai/tensai)"
+        get() = "tensai/${BuildConfig.VERSION_NAME} (+https://github.com/tensai-app/tensai)"
 
     /** The HTTP client of the Internet tools: no redirects, DNS pinned against private addresses, no proxy (see [OkHttpFetcher]). */
     val httpFetcher: HttpFetcher by lazy { OkHttpFetcher(userAgent = descriptiveUserAgent) }

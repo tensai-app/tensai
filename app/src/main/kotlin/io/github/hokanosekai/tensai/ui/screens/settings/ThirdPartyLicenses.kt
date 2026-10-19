@@ -54,7 +54,7 @@ val ThirdPartyLicenses = listOf(
         name = "llama.kt",
         license = "Apache 2.0",
         author = "hokanosekai",
-        url = "github.com/hokanosekai/llama.kt",
+        url = "github.com/tensai-app/llama.kt",
         textRes = R.raw.license_apache_2_0_llama_kt,
     ),
     ThirdPartyLicense(
