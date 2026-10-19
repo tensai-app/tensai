@@ -2,6 +2,33 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.2",
+      "title": "Faster follow-ups",
+      "date": "2026-10-19",
+      "intro": "Follow-up messages no longer pay again for the whole previous answer, Auto picks the faster backend for more models, and Vulkan loads keep the phone usable while they read a prompt.",
+      "groups": [
+        {
+          "label": "Faster",
+          "items": [
+            "A new message reuses the cached previous answer instead of reading it again: after a 700-token reply, the next message starts in about 5 s instead of about 50 (Qwen3-1.7B on a Dimensity 900)",
+            "Auto now runs models of an unknown architecture on the CPU, which was faster everywhere it was measured on this class of phone (TwIL-LM3: prompt 14 tok/s on CPU against 3.9 on Vulkan)"
+          ]
+        },
+        {
+          "label": "Vulkan",
+          "items": [
+            "Models that run on Vulkan read the prompt in smaller batches and on a low priority GPU queue: about 20% faster, and the interface no longer freezes for up to a second while the GPU works (it still runs below full frame rate)"
+          ]
+        },
+        {
+          "label": "Under the hood",
+          "items": [
+            "Two tests that failed now and then in CI are deterministic"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.1",
       "title": "Permissions + Network",
       "date": "2026-10-18",
