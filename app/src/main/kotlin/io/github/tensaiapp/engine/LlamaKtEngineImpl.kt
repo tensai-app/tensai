@@ -354,6 +354,13 @@ class LlamaKtEngineImpl(
         reasoningContent = reasoning.orEmpty(),
     )
 
+    private fun DecodeRequest.libTools() = tools.map { LlamaToolDefinition(it.name, it.description, it.parametersJson) }
+
+    private fun DecodeRequest.libToolChoice() = when (toolChoice) {
+        ToolChoice.Auto -> LlamaToolChoice.Auto
+        ToolChoice.None -> LlamaToolChoice.None
+    }
+
     private fun MessageRole.toLibRole(): String = when (this) {
         MessageRole.System -> "system"
         MessageRole.User -> "user"
@@ -428,11 +435,8 @@ class LlamaKtEngineImpl(
                     var toolsIgnored = false
                     if (!withTools) log("prefix cache: skipped, no tools in this request")
                     val prompt = if (withTools) {
-                        val libTools = request.tools.map { LlamaToolDefinition(it.name, it.description, it.parametersJson) }
-                        val libToolChoice = when (request.toolChoice) {
-                            ToolChoice.Auto -> LlamaToolChoice.Auto
-                            ToolChoice.None -> LlamaToolChoice.None
-                        }
+                        val libTools = request.libTools()
+                        val libToolChoice = request.libToolChoice()
                         // Before the real format below, which has to be the last one: formatChat* records
                         // the parser `completion` reads, and it only applies to the prompt it was made for.
                         restoreOrBuildToolPrefix(request, libTools, libToolChoice) { coroutineContext.ensureActive() }
@@ -652,17 +656,31 @@ class LlamaKtEngineImpl(
          *
          * Best-effort: any failure leaves a cache the decode's own prefill takes over from (a failed
          * restore resets it to empty on the native side, an interrupted prefill keeps a valid prefix).
+         *
+         * Also what [warmToolPrefix] runs, right after a load and before any request: the decode and
+         * the warm-up go through this one function, so the file one writes is the file the other reads.
+         *
+         * @param replaceResident the tokens already in the cache are an earlier prefix and nothing else
+         *   (a re-warm after the tool set changed): carry on instead of skipping. Both ways to fill it
+         *   keep what the new prefix shares with it and drop the rest.
+         * @return `true` if the cache holds the whole prefix when this returns (restored or built),
+         *   `false` for every skip, stop and failure.
          */
         private fun restoreOrBuildToolPrefix(
             request: DecodeRequest,
             tools: List<LlamaToolDefinition>,
             toolChoice: LlamaToolChoice,
+            replaceResident: Boolean = false,
             ensureActive: () -> Unit,
-        ) {
-            val cache = prefixCache ?: return log("prefix cache: off, no cache dir")
+        ): Boolean {
+            fun skip(why: String): Boolean {
+                log(why)
+                return false
+            }
+            val cache = prefixCache ?: return skip("prefix cache: off, no cache dir")
             try {
                 val resident0 = llamaEngine.kvUsed()
-                if (resident0 > 0) return log("prefix cache: skipped, KV holds $resident0 tokens already")
+                if (resident0 > 0 && !replaceResident) return skip("prefix cache: skipped, KV holds $resident0 tokens already")
                 val prefix = WarmUpPrompt.build(request.messages.takeWhile { it.role == MessageRole.System }) { rendered ->
                     llamaEngine.formatChatWithTools(
                         rendered.map { it.toLib() },
@@ -670,7 +688,7 @@ class LlamaKtEngineImpl(
                         toolChoice = toolChoice,
                         enableThinking = request.sampling.enableThinking,
                     ).prompt
-                } ?: return log("prefix cache: skipped, no boundary between the system part and the user turn")
+                } ?: return skip("prefix cache: skipped, no boundary between the system part and the user turn")
                 val file = cache.fileFor(cache.key(prefixIdentity, prefix))
                 val startMs = System.currentTimeMillis()
                 if (file.exists()) {
@@ -678,7 +696,7 @@ class LlamaKtEngineImpl(
                     if (restored >= 0) {
                         cache.touch(file)
                         log("prefix cache: restored $restored tokens in ${System.currentTimeMillis() - startMs} ms")
-                        return
+                        return true
                     }
                     // Written by another llama.cpp, or cut short. The native side left the cache empty.
                     cache.discard(file)
@@ -688,7 +706,7 @@ class LlamaKtEngineImpl(
                 // The decode needs these tokens in its prompt whatever happens here, so the only reason to
                 // stay out is the one it would refuse on itself: no room left to answer into.
                 if (!ContextBudget.hasRoom(ContextBudget.available(metadata.nCtxEffective, promptTokens))) {
-                    return log("prefix cache: skipped, $promptTokens prefix tokens leave no room in n_ctx=${metadata.nCtxEffective}")
+                    return skip("prefix cache: skipped, $promptTokens prefix tokens leave no room in n_ctx=${metadata.nCtxEffective}")
                 }
                 log("prefix cache: building $promptTokens tokens (n_ctx=${metadata.nCtxEffective})")
                 // Stop landing during the formatting above is erased by nativePrefill (it clears the
@@ -696,7 +714,7 @@ class LlamaKtEngineImpl(
                 ensureActive()
                 val resident = llamaEngine.prefill(prefix)
                 // Short of the whole prefix: interrupted, declined or failed. Nothing worth saving.
-                if (resident < promptTokens) return log("prefix cache: prefill stopped at $resident of $promptTokens tokens, nothing saved")
+                if (resident < promptTokens) return skip("prefix cache: prefill stopped at $resident of $promptTokens tokens, nothing saved")
                 val prefillMs = System.currentTimeMillis() - startMs
                 ensureActive()
                 val temp = cache.tempFor(file)
@@ -710,12 +728,47 @@ class LlamaKtEngineImpl(
                     // Gone after a commit, still there after a failed save or a throw.
                     temp.delete()
                 }
+                return true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log("prefix cache: skipped, ${e.message}")
+                return skip("prefix cache: skipped, ${e.message}")
             } finally {
                 refreshKvUsedCells()
+            }
+        }
+
+        /**
+         * TEN-205. [restoreOrBuildToolPrefix] without a decode behind it: run right after a load, so the
+         * first message only pays its own tokens. [request] carries what the next real request will
+         * (the system messages, the tools, the thinking flag), see `ChatViewModel.prefixRequest`.
+         *
+         * Same threading and cancellation contract as [warmUp]: one `async(dispatcher)`, the caller
+         * cancelling interrupts the prefill and waits for it to return, and the cache keeps the valid
+         * prefix it had reached, which the decode that follows reads as already resident. Only the
+         * prefill stops promptly: restoring a file is one native read that cannot be interrupted, so a
+         * cancel during it waits for the read to end.
+         *
+         * @return `true` if the cache holds the whole prefix, `false` when there was nothing to do
+         *   (no tools, KV already filled, no cache dir, no room).
+         */
+        override suspend fun warmToolPrefix(request: DecodeRequest, replaceResident: Boolean): Boolean {
+            checkOpen()
+            if (request.tools.isEmpty()) {
+                log("prefix cache: warm-up skipped, no tools in this request")
+                return false
+            }
+            return coroutineScope {
+                val work = async(dispatcher) {
+                    restoreOrBuildToolPrefix(request, request.libTools(), request.libToolChoice(), replaceResident) { ensureActive() }
+                }
+                try {
+                    work.await()
+                } catch (e: CancellationException) {
+                    // Repeated, not once: see [interruptUntilDone].
+                    interruptUntilDone(work) { llamaEngine.interrupt() }
+                    throw e
+                }
             }
         }
 

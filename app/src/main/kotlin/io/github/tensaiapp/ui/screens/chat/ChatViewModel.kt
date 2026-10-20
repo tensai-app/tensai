@@ -4,6 +4,7 @@ import io.github.tensaiapp.agent.AgentEvent
 import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.ToolCallOutcome
+import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.AskUserGate
 import io.github.tensaiapp.agent.PendingQuestion
 import io.github.tensaiapp.agent.UiConfirmationGate
@@ -47,6 +48,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
@@ -358,6 +360,7 @@ class ChatViewModel(
     private val askUserGate: AskUserGate = RuntimeGraph.askUserGate,
     private val memoryPrompt: MemoryPrompt = RuntimeGraph.memoryPrompt,
     private val partTokens: PartTokenCache = RuntimeGraph.partTokenCache,
+    private val toolGrants: Flow<Set<ToolTier>> = RuntimeGraph.toolSettings.grants,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -801,8 +804,15 @@ class ChatViewModel(
      */
     val contextUsage: StateFlow<ContextUsageState> = _contextUsage.asStateFlow()
 
-    /** Model loading or a reply generating: the ring spins. App-wide like [queueState], the cache is one. */
-    val busy: Flow<Boolean> = inferenceQueue.state.map { it is QueueState.Loading || it is QueueState.Generating }
+    private val _warmingPrefix = MutableStateFlow(false)
+
+    /**
+     * Model loading, a reply generating or this chat's tool prefix warming up (TEN-205): the ring spins.
+     * App-wide like [queueState] for the first two, the cache is one.
+     */
+    val busy: Flow<Boolean> = combine(inferenceQueue.state, _warmingPrefix) { state, warming ->
+        state is QueueState.Loading || state is QueueState.Generating || warming
+    }
 
     private val _contextSheetOpen = MutableStateFlow(false)
 
@@ -1022,7 +1032,7 @@ class ChatViewModel(
         if (model != null) countFixedParts(conversation, model)
         // Tools need a template that takes them, the conversation's switch on, and a tool the user granted.
         // Anything else is the plain path below, untouched by tool calling (TEN-172).
-        if (conversation?.toolsEnabled != false && currentModelSupportsTools.first() && agentRuntime.hasTools()) {
+        if (agentPathOn(conversation?.toolsEnabled != false)) {
             streamAgentTurn(conversationId, decodeRequestFor(conversation, history))
             return
         }
@@ -1034,20 +1044,112 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Whether a reply runs the agent path rather than a plain generation: [toolsEnabled] on the conversation,
+     * a template that takes tools and a tool the user granted. [generateReply]'s rule, and the warm-up's
+     * ([keepPrefixWarm]): a prefix is only worth building for a request that will carry tools.
+     */
+    private suspend fun agentPathOn(toolsEnabled: Boolean): Boolean =
+        toolsEnabled && currentModelSupportsTools.first() && agentRuntime.hasTools()
+
     /** The plain [DecodeRequest] of [conversation]'s next reply, see [generateReply] for where each setting comes from. */
-    private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>): DecodeRequest {
-        val enableThinking = conversation?.enableThinking ?: true
+    private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>): DecodeRequest =
+        requestFor(conversation.settings(), history, conversation?.let { memoryPrompt.blockFor(it.id) })
+
+    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?): DecodeRequest {
+        val enableThinking = settings.enableThinking
         val thinkingActive = enableThinking && currentModelSupportsThinking.first()
-        val sampling = SamplingJson.decode(conversation?.samplingJson)
+        val sampling = SamplingJson.decode(settings.samplingJson)
         val reasoningBudget = if (thinkingActive) {
             ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
         } else {
             null
         }
         return DecodeRequest(
-            messages = chatRepository.toEngineMessages(history, conversation?.systemPrompt, conversation?.let { memoryPrompt.blockFor(it.id) }),
+            messages = chatRepository.toEngineMessages(history, settings.systemPrompt, memory),
             sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
         )
+    }
+
+    /**
+     * The request whose prefix the first message of a conversation with [settings] will have (TEN-205):
+     * built by [requestFor] on an empty history, so the system message and the thinking flag come
+     * from the code a real send uses, and given the tools [AgentRuntime.run] gives every request of a
+     * turn. Memory is left out on purpose, it sits in the first user message, after the cut (see
+     * [MemoryContext]). The engine keys its cache on the text of the prefix it renders from this
+     * (`restoreOrBuildToolPrefix`), so equal inputs here are the same file there.
+     */
+    private suspend fun prefixRequest(settings: ConversationSettings): DecodeRequest =
+        requestFor(settings, emptyList(), memory = null).copy(tools = agentRuntime.definitions())
+
+    /**
+     * What decides [keepPrefixWarm]'s prefix besides the model: the settings that reach the prompt, the granted
+     * tiers (they decide the tool block, [grants] only triggers, the registry is read when the request is built)
+     * and whether the conversation is still empty.
+     */
+    private data class PrefixTarget(
+        val model: LoadedModelInfo,
+        val systemPrompt: String?,
+        val enableThinking: Boolean,
+        val toolsEnabled: Boolean,
+        val grants: Set<ToolTier>,
+        val empty: Boolean,
+        val foreground: Boolean,
+    )
+
+    /**
+     * Keeps the KV cache holding the tool prefix of this conversation's first message (TEN-205): builds or
+     * restores it (TEN-182) as soon as a model is loaded and idle, while the user is still reading or typing,
+     * instead of on their first message. Run from the screen's composition, so leaving it cancels the warm-up
+     * (what was decoded stays, as a valid prefix the next request reads as resident).
+     *
+     * Runs again when something that reaches the prefix changes: the model, this conversation's system
+     * prompt, thinking or tools switch, the granted tiers, or the app coming back to the foreground
+     * (leaving it cancels the warm-up). A change cancels the warm-up in flight and
+     * the next one replaces the prefix in the cache, which [InferenceQueue.warmToolPrefix] allows because
+     * nothing else is in it.
+     *
+     * Only for a conversation with no message yet (a draft included). One with a history has a saved
+     * session to restore on its first send (TEN-34), and a prefix in the cache would be one more thing
+     * that restore has to know about; its prefix is a file read away once the session is restored anyway.
+     * [InferenceQueue.warmToolPrefix] is skipped on its own for a cache that holds a conversation.
+     *
+     * A [send] while this runs cancels it through the queue (like every other user of the engine) and its
+     * generation prefills only what the warm-up had not reached. The warm-up that was cut writes no file.
+     */
+    suspend fun keepPrefixWarm() {
+        val empty = _conversationId.flatMapLatest { id ->
+            if (id == null) flowOf(true) else chatRepository.observeMessages(id).map { it.isEmpty() }
+        }
+        combine(
+            inferenceQueue.state.map { it.residentModel },
+            settings,
+            toolGrants,
+            empty,
+            AppForegroundTracker.isForeground,
+        ) { model, settings, grants, empty, foreground ->
+            model?.let { PrefixTarget(it, settings.systemPrompt, settings.enableThinking, settings.toolsEnabled, grants, empty, foreground) }
+        }
+            .distinctUntilChanged()
+            .collectLatest { target -> if (target != null) warmPrefix(target) }
+    }
+
+    private suspend fun warmPrefix(target: PrefixTarget) {
+        if (!target.empty || generationJob?.isActive == true) return
+        // As the after-reply warm-up: only with the user here, minutes of CPU unseen are not worth it. Part of
+        // the target, so leaving the app cancels a warm-up in flight and coming back starts the next one.
+        if (!target.foreground) return
+        if (!agentPathOn(target.toolsEnabled)) return
+        val request = prefixRequest(
+            ConversationSettings(systemPrompt = target.systemPrompt, enableThinking = target.enableThinking, toolsEnabled = target.toolsEnabled),
+        )
+        _warmingPrefix.value = true
+        try {
+            inferenceQueue.warmToolPrefix(request, expectedModel = target.model)
+        } finally {
+            _warmingPrefix.value = false
+            refreshContextUsage()
+        }
     }
 
     /**
@@ -1177,7 +1279,8 @@ class ChatViewModel(
      * TEN-62.
      */
     private suspend fun syncSessionForConversationSwitch(conversationId: String) {
-        if ((inferenceQueue.kvUsedPercent() ?: 0f) == 0f) {
+        // A cache holding only the tool prefix (TEN-205) is as good as empty: what it holds is a file away.
+        if ((inferenceQueue.kvUsedPercent() ?: 0f) == 0f || inferenceQueue.holdsOnlyWarmedPrefix()) {
             val (info, key) = resolveSessionKey() ?: return
             restoreOnto(conversationId, key, info)
             return

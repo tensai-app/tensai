@@ -7,6 +7,7 @@ import io.github.tensaiapp.agent.ToolCallStatus
 import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolResult
 import io.github.tensaiapp.agent.ToolTier
+import io.github.tensaiapp.agent.TierGrants
 import io.github.tensaiapp.agent.DateTimeTool
 import io.github.tensaiapp.agent.ToolRegistry
 import io.github.tensaiapp.agent.AskUserGate
@@ -44,6 +45,8 @@ import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.engine.ModelLoadConfig
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.StopReason
+import io.github.tensaiapp.engine.PrefixCache
+import io.github.tensaiapp.engine.WarmUpPrompt
 import io.github.tensaiapp.runtime.ActiveSessionTracker
 import io.github.tensaiapp.runtime.AppForegroundTracker
 import io.github.tensaiapp.runtime.InferenceQueue
@@ -59,6 +62,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -106,6 +111,10 @@ class ChatViewModelTest {
     private var memoryEnabled = true
     private lateinit var partTokens: PartTokenCache
 
+    /** The tiers [toolGrants] says are granted, what a registry built on [grants] and the view models read (TEN-205). */
+    private val grantedTiers = MutableStateFlow(setOf(ToolTier.Local))
+    private val grants = TierGrants { grantedTiers.value }
+
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
      * under it. That exclusivity is the whole point of it: see [awaitGeneration].
@@ -124,6 +133,7 @@ class ChatViewModelTest {
         memoryDao = FakeMemoryDao()
         memoryEnabled = true
         partTokens = PartTokenCache()
+        grantedTiers.value = setOf(ToolTier.Local)
         chatRepository = ChatRepository(chatDao)
         modelRepository = ModelRepository(
             context = ContextWrapper(null),
@@ -176,6 +186,7 @@ class ChatViewModelTest {
         askUserGate = askUserGate,
         memoryPrompt = MemoryPrompt(memoryDao, enabled = { memoryEnabled }),
         partTokens = partTokens,
+        toolGrants = grantedTiers,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -1842,6 +1853,252 @@ class ChatViewModelTest {
     )
 
     /**
+     * TEN-205: a template that, like Qwen3's, opens the system message with the tool block whether or not the
+     * conversation has a system prompt, and keeps the rest of what a request carries (choice, thinking flag)
+     * in front of the user's turn.
+     */
+    private fun toolTemplate(messages: List<ChatMessage>, request: DecodeRequest): String {
+        val system = messages.firstOrNull { it.role == MessageRole.System }?.content.orEmpty()
+        val tools = request.tools.joinToString(";") { "${it.name}:${it.description}:${it.parametersJson}" }
+        val rest = messages.filter { it.role != MessageRole.System }
+            .joinToString("") { "<|im_start|>${it.role}\n${it.content}<|im_end|>\n" }
+        val header = "<|im_start|>system\n$system\n#tools $tools\n#choice ${request.toolChoice}\n#think ${request.sampling.enableThinking}<|im_end|>\n"
+        return header + rest + "<|im_start|>assistant\n"
+    }
+
+    /** The [PrefixCache] file name the engine would give [request]'s prefix, under one fixed model identity. */
+    private fun prefixKey(request: DecodeRequest): String {
+        val prefix = WarmUpPrompt.build(request.messages.takeWhile { it.role == MessageRole.System }) { rendered ->
+            toolTemplate(rendered, request)
+        } ?: error("no boundary in the fake template")
+        return PrefixCache(File(storageRoot, "kv")).key("identity", prefix)
+    }
+
+    /** Lets everything that can run without waiting for the outside world run: the fakes never leave this thread. */
+    private suspend fun settle() = repeat(100) { yield() }
+
+    private fun CoroutineScope.keepWarm(viewModel: ChatViewModel) = launch { viewModel.keepPrefixWarm() }
+
+    @Test
+    fun theWarmedPrefixHasTheCacheKeyOfTheFirstRealRequestBuiltFromTheSameInputs() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        viewModel.setSystemPrompt("be brief")
+        viewModel.setEnableThinking(false)
+        awaitGeneration()
+
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        viewModel.send("hi")
+        awaitGeneration()
+        warm.cancelAndJoin()
+
+        val (warmed, _) = engine.toolPrefixWarmUps.single()
+        val real = engine.lastRequest!!
+        assertTrue("the real request carries tools", real.tools.isNotEmpty())
+        assertEquals(prefixKey(real), prefixKey(warmed))
+        // The key tells requests apart at all, so the equality above is not a given.
+        assertNotEquals(prefixKey(real), prefixKey(real.copy(messages = real.messages.drop(1))))
+        assertNotEquals(prefixKey(real), prefixKey(real.copy(tools = emptyList())))
+    }
+
+    @Test
+    fun aSendAfterTheWarmUpFindsTheWholePrefixResidentAndAWarmUpIsNotRepeated() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+
+        viewModel.send("hi")
+        awaitGeneration()
+        warm.cancelAndJoin()
+
+        assertEquals("one warm-up, none when the message arrived", 1, engine.toolPrefixWarmUps.size)
+        assertEquals("the prefix was resident, nothing of it left to prefill", listOf(PREFIX_TOKENS), engine.residentAtToolDecode)
+    }
+
+    @Test
+    fun aSendDuringTheWarmUpStopsItKeepingWhatItDecodedAndDoesNotPrefillThePrefixTwice() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.toolPrefixHangs = true
+        val viewModel = newViewModel(null)
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        engine.toolPrefixHangs = false
+
+        viewModel.send("hi")
+        awaitGeneration()
+        warm.cancelAndJoin()
+
+        assertEquals("the send interrupted the warm-up", 1, engine.toolPrefixInterrupted)
+        assertEquals(
+            "the generation finished the prefix over what was resident, and nobody warmed it again",
+            listOf(false, true),
+            engine.toolPrefixWarmUps.map { it.second },
+        )
+        assertEquals(
+            "the decode found the whole prefix resident",
+            listOf(PREFIX_TOKENS),
+            engine.residentAtToolDecode,
+        )
+        assertEquals("the reply came out", 2, chatRepository.observeMessages(viewModel.currentConversationId.value!!).first().size)
+    }
+
+    @Test
+    fun noWarmUpWhileNoToolIsGrantedThenOneOnceATierIsGranted() = runBlocking {
+        grantedTiers.value = emptySet()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool()), grants))
+        loadFakeModel(supportsTools = true)
+        val warm = keepWarm(newViewModel(null))
+        settle()
+        assertTrue("no tool is granted: a plain request has no prefix to warm", engine.toolPrefixWarmUps.isEmpty())
+
+        grantedTiers.value = setOf(ToolTier.Local)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        warm.cancelAndJoin()
+
+        assertEquals(listOf("datetime"), engine.toolPrefixWarmUps.single().first.tools.map { it.name })
+    }
+
+    @Test
+    fun noWarmUpForAConversationWithToolsSwitchedOff() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        viewModel.setToolsEnabled(false)
+        awaitGeneration()
+        val warm = keepWarm(viewModel)
+        settle()
+        warm.cancelAndJoin()
+
+        assertTrue(engine.toolPrefixWarmUps.isEmpty())
+    }
+
+    @Test
+    fun noWarmUpForAModelWhoseTemplateTakesNoTools() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = false)
+        val warm = keepWarm(newViewModel(null))
+        settle()
+        warm.cancelAndJoin()
+
+        assertTrue(engine.toolPrefixWarmUps.isEmpty())
+    }
+
+    @Test
+    fun noWarmUpForAConversationThatAlreadyHasMessages() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val id = chatRepository.createConversation(modelId = null)
+        chatRepository.appendUserMessage(id, "earlier")
+        val warm = keepWarm(newViewModel(id))
+        settle()
+        warm.cancelAndJoin()
+
+        assertTrue("its session is restored on the first send, a prefix would sit in the way", engine.toolPrefixWarmUps.isEmpty())
+    }
+
+    @Test
+    fun aTierChangeReplacesTheWarmedPrefixAndStopsTheWarmUpInFlight() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool(), phoneTool()), grants))
+        loadFakeModel(supportsTools = true)
+        engine.toolPrefixHangs = true
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+
+        engine.toolPrefixHangs = false
+        engine.toolPrefixEntered = CompletableDeferred()
+        grantedTiers.value = setOf(ToolTier.Local, ToolTier.PhoneAction)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertEquals("the first one was stopped for the second", 1, engine.toolPrefixInterrupted)
+        val (second, replacesResident) = engine.toolPrefixWarmUps.last()
+        assertEquals(listOf("datetime", "phone"), second.tools.map { it.name })
+        assertTrue("what is resident is the old prefix and nothing else: the engine may carry on over it", replacesResident)
+    }
+
+    @Test
+    fun aConversationWithASavedSessionStillRestoresOverAWarmedPrefix() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+        newViewModel(conversationB).send("hi from B")
+        awaitAssistantReply(conversationB, expectedCount = 2)
+        assertTrue("precondition: A's session is on disk", sessionDao.getByConversation(conversationA) != null)
+
+        // The model is reloaded (the swap hook clears the tracker), a new chat warms the prefix, then the user opens A.
+        inferenceQueue.unloadModel()
+        ActiveSessionTracker.clear()
+        loadImportedModel(MODEL_ID)
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        assertTrue("precondition: the cache holds the prefix", inferenceQueue.holdsOnlyWarmedPrefix())
+
+        newViewModel(conversationA).send("back in A")
+        awaitAssistantReply(conversationA, expectedCount = 4)
+        warm.cancelAndJoin()
+
+        assertEquals("A's session went back in over the prefix", 1, engine.loadSessionCalls)
+    }
+
+    @Test
+    fun aModelLoadedWhileTheAppIsInTheBackgroundIsWarmedWhenItComesBack() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        AppForegroundTracker.onActivityStopped()
+        loadFakeModel(supportsTools = true)
+        val warm = keepWarm(newViewModel(null))
+        settle()
+        assertTrue("minutes of CPU nobody sees", engine.toolPrefixWarmUps.isEmpty())
+
+        AppForegroundTracker.onActivityStarted()
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        warm.cancelAndJoin()
+
+        assertEquals(1, engine.toolPrefixWarmUps.size)
+    }
+
+    @Test
+    fun leavingTheAppStopsAWarmUpInFlightAndComingBackResumesIt() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.toolPrefixHangs = true
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+
+        AppForegroundTracker.onActivityStopped()
+        settle()
+        assertEquals("stopped when the app went away", 1, engine.toolPrefixInterrupted)
+
+        engine.toolPrefixHangs = false
+        engine.toolPrefixEntered = CompletableDeferred()
+        AppForegroundTracker.onActivityStarted()
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertEquals(2, engine.toolPrefixWarmUps.size)
+        assertTrue("over the partial prefix the first one left", engine.toolPrefixWarmUps.last().second)
+    }
+
+    private fun phoneTool() = object : Tool {
+        override val name = "phone"
+        override val description = "opens an app"
+        override val parametersSchema = """{"type":"object","properties":{}}"""
+        override val tier = ToolTier.PhoneAction
+        override suspend fun execute(argsJson: String): ToolResult = ToolResult.ok("done")
+    }
+
+    /**
      * TEN-88: the trigger. A reply that ended on its own and reached the threshold is followed by a
      * warm-up of the conversation that produced it, built from the history *including* that reply
      * (the next prompt carries it) with the conversation's own thinking setting.
@@ -2584,6 +2841,24 @@ class ChatViewModelTest {
         var warmUpInterrupted = 0
             private set
 
+        /** TEN-205: every [LoadedModel.warmToolPrefix] the engine was asked for, with its `replaceResident`. */
+        val toolPrefixWarmUps = mutableListOf<Pair<DecodeRequest, Boolean>>()
+
+        /** Completed when a tool prefix warm-up is inside the engine; reassign for each wait. */
+        var toolPrefixEntered = CompletableDeferred<Unit>()
+
+        /** Holds a tool prefix warm-up open half way through the prefix until it is cancelled. */
+        var toolPrefixHangs = false
+
+        var toolPrefixInterrupted = 0
+            private set
+
+        /**
+         * What the cache held when each decode that carried tools began: the prefix a real engine would not
+         * have to prefill again is [PREFIX_TOKENS] minus this.
+         */
+        val residentAtToolDecode = mutableListOf<Int>()
+
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             // A load gets a fresh llama.cpp context, so the cache it reports starts empty — which
             // is what makes `ChatViewModel`'s cold-start restore path reachable after a model swap.
@@ -2601,6 +2876,7 @@ class ChatViewModelTest {
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
                 lastRequest = request
+                if (request.tools.isNotEmpty()) residentAtToolDecode += usedCells
                 val scripted = scriptQueue.removeFirstOrNull() ?: scriptedEvents
                 (scripted ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }
                 usedCells += TOKENS_PER_TURN
@@ -2622,6 +2898,22 @@ class ChatViewModelTest {
                         throw e
                     }
                 }
+                return true
+            }
+
+            override suspend fun warmToolPrefix(request: DecodeRequest, replaceResident: Boolean): Boolean {
+                toolPrefixWarmUps += request to replaceResident
+                toolPrefixEntered.complete(Unit)
+                if (toolPrefixHangs) {
+                    usedCells = PREFIX_TOKENS / 2
+                    try {
+                        awaitCancellation()
+                    } catch (e: CancellationException) {
+                        toolPrefixInterrupted++
+                        throw e
+                    }
+                }
+                usedCells = PREFIX_TOKENS
                 return true
             }
 
@@ -2655,5 +2947,8 @@ class ChatViewModelTest {
         const val MODEL_NAME = "fake-model"
         const val NCTX = 100
         const val TOKENS_PER_TURN = 10
+
+        /** Tokens in the fake's whole tool prefix (TEN-205). */
+        const val PREFIX_TOKENS = 40
     }
 }

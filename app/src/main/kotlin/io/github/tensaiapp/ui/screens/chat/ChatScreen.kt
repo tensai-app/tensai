@@ -124,6 +124,8 @@ fun ChatScreen(
     DisposableEffect(viewModel) { onDispose { viewModel.leave() } }
     // Its row deleted from the Chats page while this screen was beneath it: back to a fresh draft.
     LaunchedEffect(viewModel) { viewModel.watchConversation() }
+    // The tool prefix of its first message, built while the user reads or types (TEN-205).
+    LaunchedEffect(viewModel) { viewModel.keepPrefixWarm() }
     val currentConversationId by viewModel.currentConversationId.collectAsState()
     LaunchedEffect(currentConversationId) {
         if (conversationId == null) createdConversationId = currentConversationId

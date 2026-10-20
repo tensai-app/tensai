@@ -577,6 +577,18 @@ interface LoadedModel {
      */
     suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean = false
 
+    /**
+     * Puts the fixed start of [request]'s prompt (system messages and tool block, cut where the user's
+     * words begin, TEN-182) in the KV cache, from a file when one exists, without generating anything
+     * (TEN-205). For the first prefill after a load: the decode that follows finds it resident.
+     * Cancellable like [warmUp]. An engine with no prefix cache keeps this default.
+     *
+     * @param replaceResident what the cache holds is an earlier prefix and nothing else, so it may be
+     *   replaced instead of left alone (the tool set changed since).
+     * @return `true` if the cache now holds the whole prefix, `false` if nothing was done.
+     */
+    suspend fun warmToolPrefix(request: DecodeRequest, replaceResident: Boolean = false): Boolean = false
+
     /** Tokenize [text] with this model's tokenizer and return the token count. */
     suspend fun tokenize(text: String): Int
 

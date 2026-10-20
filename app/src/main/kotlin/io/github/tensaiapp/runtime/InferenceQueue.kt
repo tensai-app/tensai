@@ -314,6 +314,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
     @Volatile
     private var activeWarmUp: Job? = null
 
+    /** See [holdsOnlyWarmedPrefix]. Written under [mutex], except by a [warmToolPrefix] that has just taken [activeWarmUp]. */
+    @Volatile
+    private var prefixOnly = false
+
+    /** The last [warmToolPrefix] ran to the end (the prefix is resident and its file written), so [generate] has nothing to finish. */
+    @Volatile
+    private var prefixWritten = false
+
     /**
      * Loads the model described by [config], implicitly unloading and
      * releasing whatever model is currently loaded first (there is never
@@ -503,6 +511,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
      */
     private suspend fun releaseLoadedLocked() {
         val previous = loadedModel
+        prefixOnly = false
         loadedModel = null
         loadedInfo = null
         loadedConfig = null
@@ -586,6 +595,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
         // *else* is generating must not run a cleanup that would clear that generation's job and
         // drop [state] out of `Generating` behind its back.
         var acquired = false
+        // The cache held a warmed prefix that was not written out when this call took the queue (see [prefixWritten]).
+        var wasPrefixOnly = false
         val model = underLockWithoutWarmUp {
             val current = _state.value
             if (current is QueueState.ModelReady) {
@@ -597,6 +608,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 // however narrow, where a stop is offered against a job that isn't there yet, and
                 // [cancelActive] would silently do nothing.
                 activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
+                wasPrefixOnly = prefixOnly && !prefixWritten
+                prefixOnly = false
                 _state.value = QueueState.Generating(current.info)
                 loadedModel
             } else {
@@ -618,6 +631,10 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 )
                 return@channelFlow
             }
+            // A warm-up cut short (a send, a background) left the prefix, whole or partial, in the cache with no
+            // file written, and decode skips its own build on a cache that is not empty. Finish it here: the
+            // prefill resumes from what is resident, so this costs the file write and nothing else (TEN-205).
+            if (wasPrefixOnly && request.tools.isNotEmpty()) model.warmToolPrefix(request, replaceResident = true)
             model.decode(request).collect { event -> send(event) }
         } finally {
             // Cleanup must run even if this coroutine was cancelled (by cancelActive() or by
@@ -797,6 +814,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
             return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         }
         val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
+        prefixOnly = false
         try {
             if (llama.loadSession(path)) SessionRestoreOutcome.Restored else SessionRestoreOutcome.EngineRefused
         } catch (e: CancellationException) {
@@ -841,6 +859,40 @@ class InferenceQueue(private val engine: InferenceEngine) {
         messages: List<ChatMessage>,
         enableThinking: Boolean,
         expectedModel: LoadedModelInfo,
+    ): WarmUpOutcome = runWarmUp(expectedModel) { it.warmUp(messages, enableThinking) }
+
+    /**
+     * [warmUp]'s twin for a model that has just been loaded (TEN-205): builds or restores the tool
+     * prefix of [request] (see [LoadedModel.warmToolPrefix]) so the first message does not pay for it.
+     * Same rules, it yields to everything and is skipped unless the queue is ready on [expectedModel].
+     *
+     * What it leaves in the cache is only that prefix, not a conversation's state, and
+     * [holdsOnlyWarmedPrefix] says so until something else takes the cache over: a conversation with a
+     * saved session must still restore over it (TEN-34's gate reads "the cache is empty").
+     *
+     * A warm-up stopped before it wrote the prefix's file is finished by the [generate] that stopped it.
+     */
+    suspend fun warmToolPrefix(request: DecodeRequest, expectedModel: LoadedModelInfo): WarmUpOutcome =
+        runWarmUp(expectedModel) { model ->
+            // Before the engine call: a cancel lands inside it, and the partial prefix it keeps counts too.
+            // Set over an empty cache too, even if the engine then skips: the flag means "empty or prefix only".
+            // Not when someone's conversation is in the cache: the engine leaves that alone, and so must the flag.
+            val replace = prefixOnly
+            if (replace || currentKvTokenCount() == 0) prefixOnly = true
+            prefixWritten = false
+            model.warmToolPrefix(request, replaceResident = replace).also { prefixWritten = it }
+        }
+
+    /**
+     * Whether the cache is empty or holds at most what [warmToolPrefix] put there, so a restore of a conversation's
+     * session may replace it without losing anything that is not on disk. Cleared by a generation, a
+     * restore, a load and an unload. A plain read, like [currentKvTokenCount].
+     */
+    fun holdsOnlyWarmedPrefix(): Boolean = prefixOnly
+
+    private suspend fun runWarmUp(
+        expectedModel: LoadedModelInfo,
+        block: suspend (LoadedModel) -> Boolean,
     ): WarmUpOutcome = coroutineScope {
         // Its own job, not the caller's: cancelling this is the queue's call and must not end
         // whatever the caller is running.
@@ -854,7 +906,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 loadedModel
             } ?: return@async WarmUpOutcome.Skipped
             try {
-                if (model.warmUp(messages, enableThinking)) WarmUpOutcome.Warmed else WarmUpOutcome.Skipped
+                if (block(model)) WarmUpOutcome.Warmed else WarmUpOutcome.Skipped
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
