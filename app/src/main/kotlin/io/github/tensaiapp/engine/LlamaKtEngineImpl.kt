@@ -660,8 +660,8 @@ class LlamaKtEngineImpl(
          * Also what [warmToolPrefix] runs, right after a load and before any request: the decode and
          * the warm-up go through this one function, so the file one writes is the file the other reads.
          *
-         * @param replaceResident the tokens already in the cache are an earlier prefix and nothing else
-         *   (a re-warm after the tool set changed): carry on instead of skipping. Both ways to fill it
+         * @param replaceResident the tokens already in the cache are an earlier prefix and nothing else, or a
+         *   conversation already saved (a re-warm after the tool set changed): carry on instead of skipping. Both ways to fill it
          *   keep what the new prefix shares with it and drop the rest.
          * @return `true` if the cache holds the whole prefix when this returns (restored or built),
          *   `false` for every skip, stop and failure.

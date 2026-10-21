@@ -4,6 +4,7 @@ import io.github.tensaiapp.data.session.SessionModelKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * The conversation currently bound to whatever model [InferenceQueue] has loaded, as last reported
@@ -35,5 +36,10 @@ object ActiveSessionTracker {
 
     fun clear() {
         _current.value = null
+    }
+
+    /** [clear], only while [conversationId] is the one reported: a report that came in since names the cache's new owner. */
+    fun clearIf(conversationId: String) {
+        _current.update { if (it?.first == conversationId) null else it }
     }
 }

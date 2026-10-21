@@ -1112,7 +1112,8 @@ class ChatViewModel(
      * Only for a conversation with no message yet (a draft included). One with a history has a saved
      * session to restore on its first send (TEN-34), and a prefix in the cache would be one more thing
      * that restore has to know about; its prefix is a file read away once the session is restored anyway.
-     * [InferenceQueue.warmToolPrefix] is skipped on its own for a cache that holds a conversation.
+     * [InferenceQueue.warmToolPrefix] is skipped on its own for a cache that holds a conversation, unless
+     * [saveConversationInCache] has saved it first and its prefix is not this one.
      *
      * A [send] while this runs cancels it through the queue (like every other user of the engine) and its
      * generation prefills only what the warm-up had not reached. The warm-up that was cut writes no file.
@@ -1145,10 +1146,40 @@ class ChatViewModel(
         )
         _warmingPrefix.value = true
         try {
-            inferenceQueue.warmToolPrefix(request, expectedModel = target.model)
+            val saved = saveConversationInCache(request)
+            // The cache is no longer that conversation's: a save under its id would put the prefix in place of its
+            // session. Only its id is cleared: a send since has reported the new owner.
+            inferenceQueue.warmToolPrefix(
+                request,
+                expectedModel = target.model,
+                replaceSaved = saved?.second,
+                onReplace = { saved?.let { ActiveSessionTracker.clearIf(it.first) } },
+            )
         } finally {
             _warmingPrefix.value = false
             refreshContextUsage()
+        }
+    }
+
+    /**
+     * Saves the conversation the cache holds so [warmPrefix] may put [request]'s prefix in its place, and
+     * answers its id with the token count the cache held before the save ([InferenceQueue.warmToolPrefix]'s
+     * `replaceSaved`), or `null` to leave the cache alone. The outgoing half of [syncSessionForConversationSwitch], with its
+     * rules: only for the conversation [ActiveSessionTracker] names, on the model it names, and only once the
+     * save has its state on disk. Without a reason to replace there is no save either: a cache that is empty
+     * or holds only a prefix already gives way, and one built with this same prefix is reused as it is by the
+     * first message.
+     */
+    private suspend fun saveConversationInCache(request: DecodeRequest): Pair<String, Int>? {
+        val resident = inferenceQueue.currentKvTokenCount() ?: return null
+        if (resident == 0 || inferenceQueue.holdsOnlyWarmedPrefix() || inferenceQueue.holdsPrefixOf(request)) return null
+        val (outgoingConversationId, outgoingKey) = ActiveSessionTracker.current.value ?: return null
+        if (outgoingConversationId == _conversationId.value) return null
+        val (_, key) = resolveSessionKey() ?: return null
+        if (outgoingKey != key) return null
+        return when (sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)) {
+            is SaveResult.Saved, is SaveResult.Unchanged -> outgoingConversationId to resident
+            else -> null
         }
     }
 

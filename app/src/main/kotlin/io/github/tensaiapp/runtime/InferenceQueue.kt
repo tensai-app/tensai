@@ -10,7 +10,9 @@ import io.github.tensaiapp.engine.LoadStage
 import io.github.tensaiapp.engine.LlamaKtEngine
 import io.github.tensaiapp.engine.LoadedModel
 import io.github.tensaiapp.engine.LoadedModelInfo
+import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ModelLoadConfig
+import io.github.tensaiapp.engine.ToolDefinition
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -322,6 +324,10 @@ class InferenceQueue(private val engine: InferenceEngine) {
     @Volatile
     private var prefixWritten = false
 
+    /** What decides the tool prefix of the last request that filled the cache, see [holdsPrefixOf]; `null` when unknown. Written like [prefixOnly]. */
+    @Volatile
+    private var residentPrefix: PrefixKey? = null
+
     /**
      * Loads the model described by [config], implicitly unloading and
      * releasing whatever model is currently loaded first (there is never
@@ -512,6 +518,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
     private suspend fun releaseLoadedLocked() {
         val previous = loadedModel
         prefixOnly = false
+        residentPrefix = null
         loadedModel = null
         loadedInfo = null
         loadedConfig = null
@@ -610,6 +617,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
                 wasPrefixOnly = prefixOnly && !prefixWritten
                 prefixOnly = false
+                residentPrefix = request.prefixKey()
                 _state.value = QueueState.Generating(current.info)
                 loadedModel
             } else {
@@ -756,6 +764,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
      */
     suspend fun saveSession(path: String): SessionSaveOutcome = underLockWithoutWarmUp {
         if (_state.value !is QueueState.ModelReady) return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
+        // No conversation's state in the cache, only a warmed prefix: written under a conversation's id, it
+        // would replace that conversation's session with it.
+        if (prefixOnly) return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
         val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
         try {
             SessionSaveOutcome.Wrote(llama.saveSession(path))
@@ -815,6 +826,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         }
         val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         prefixOnly = false
+        residentPrefix = null
         try {
             if (llama.loadSession(path)) SessionRestoreOutcome.Restored else SessionRestoreOutcome.EngineRefused
         } catch (e: CancellationException) {
@@ -871,17 +883,40 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * saved session must still restore over it (TEN-34's gate reads "the cache is empty").
      *
      * A warm-up stopped before it wrote the prefix's file is finished by the [generate] that stopped it.
+     *
+     * A conversation in the cache is left alone, unless the caller has saved it and says so with
+     * [replaceSaved]: the token count the cache held before that save. The prefix then takes its place only
+     * if the cache still holds that many tokens, nothing generated since the save, and [onReplace] runs
+     * first, before the engine touches the cache.
      */
-    suspend fun warmToolPrefix(request: DecodeRequest, expectedModel: LoadedModelInfo): WarmUpOutcome =
+    suspend fun warmToolPrefix(
+        request: DecodeRequest,
+        expectedModel: LoadedModelInfo,
+        replaceSaved: Int? = null,
+        onReplace: () -> Unit = {},
+    ): WarmUpOutcome =
         runWarmUp(expectedModel) { model ->
             // Before the engine call: a cancel lands inside it, and the partial prefix it keeps counts too.
             // Set over an empty cache too, even if the engine then skips: the flag means "empty or prefix only".
             // Not when someone's conversation is in the cache: the engine leaves that alone, and so must the flag.
-            val replace = prefixOnly
-            if (replace || currentKvTokenCount() == 0) prefixOnly = true
+            val resident = currentKvTokenCount()
+            val replaceConversation = !prefixOnly && replaceSaved != null && resident == replaceSaved
+            if (replaceConversation) onReplace()
+            val replace = prefixOnly || replaceConversation
+            if (replace || resident == 0) {
+                prefixOnly = true
+                residentPrefix = request.prefixKey()
+            }
             prefixWritten = false
             model.warmToolPrefix(request, replaceResident = replace).also { prefixWritten = it }
         }
+
+    /**
+     * Whether the last request that filled the cache had the tool prefix [request] has (the system messages,
+     * the tools and the thinking flag), so the first message of [request]'s conversation
+     * reuses it as it is. `false` when unknown: after a restore, a load, or with nothing in the cache.
+     */
+    fun holdsPrefixOf(request: DecodeRequest): Boolean = residentPrefix == request.prefixKey()
 
     /**
      * Whether the cache is empty or holds at most what [warmToolPrefix] put there, so a restore of a conversation's
@@ -958,4 +993,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
 
     /** Distinguishes "[underLockWithoutWarmUp]'s block ran and returned `null`" from "it did not run". */
     private class Ran<T>(val value: T)
+
+    /**
+     * The parts of a [DecodeRequest] its tool prefix is rendered from (see `LlamaKtEngineImpl.restoreOrBuildToolPrefix`).
+     * Not the tool choice: llama.cpp never hands it to the template, it only shapes the grammar and the parser,
+     * so the forced last step of an agent turn renders the same prefix.
+     */
+    private data class PrefixKey(val system: List<ChatMessage>, val tools: List<ToolDefinition>, val enableThinking: Boolean)
+
+    private fun DecodeRequest.prefixKey() =
+        PrefixKey(messages.takeWhile { it.role == MessageRole.System }, tools, sampling.enableThinking)
 }

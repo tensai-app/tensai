@@ -583,8 +583,8 @@ interface LoadedModel {
      * (TEN-205). For the first prefill after a load: the decode that follows finds it resident.
      * Cancellable like [warmUp]. An engine with no prefix cache keeps this default.
      *
-     * @param replaceResident what the cache holds is an earlier prefix and nothing else, so it may be
-     *   replaced instead of left alone (the tool set changed since).
+     * @param replaceResident what the cache holds is an earlier prefix and nothing else, or a conversation
+     *   already saved, so it may be replaced instead of left alone (the tool set changed since).
      * @return `true` if the cache now holds the whole prefix, `false` if nothing was done.
      */
     suspend fun warmToolPrefix(request: DecodeRequest, replaceResident: Boolean = false): Boolean = false

@@ -2051,6 +2051,111 @@ class ChatViewModelTest {
         assertEquals("A's session went back in over the prefix", 1, engine.loadSessionCalls)
     }
 
+    /** A replied with only the local tools granted, then the user granted another tier: a new chat's prefix differs from A's. */
+    private suspend fun CoroutineScope.conversationInCacheThenTierChange(): String {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool(), phoneTool()), grants))
+        loadFakeModel(supportsTools = true)
+        val conversationA = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+        grantedTiers.value = setOf(ToolTier.Local, ToolTier.PhoneAction)
+        return conversationA
+    }
+
+    @Test
+    fun aNewChatAfterATierChangeSavesTheConversationInTheCacheAndPutsThePrefixInItsPlace() = runBlocking {
+        val conversationA = conversationInCacheThenTierChange()
+
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertEquals("A's state is on disk, as it was in the cache", TOKENS_PER_TURN, sessionDao.getByConversation(conversationA)?.tokenCount)
+        val (warmed, replacesResident) = engine.toolPrefixWarmUps.single()
+        assertEquals(listOf("datetime", "phone"), warmed.tools.map { it.name })
+        assertTrue("A is saved: the engine may replace it", replacesResident)
+        assertTrue("A's session may restore over it", inferenceQueue.holdsOnlyWarmedPrefix())
+        assertNull("the cache is not A's any more, nothing may save it as A's", ActiveSessionTracker.current.value)
+
+        newViewModel(conversationA).send("back in A")
+        awaitAssistantReply(conversationA, expectedCount = 4)
+
+        assertEquals("A's session went back in over the prefix", 1, engine.loadSessionCalls)
+    }
+
+    @Test
+    fun aNewChatWithTheToolSetOfTheConversationInTheCacheLeavesItThere() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool(), phoneTool()), grants))
+        loadFakeModel(supportsTools = true)
+        val conversationA = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertFalse("the first message reuses A's prefix as it is", engine.toolPrefixWarmUps.single().second)
+        assertNull("so nothing had to be saved", sessionDao.getByConversation(conversationA))
+        assertEquals(conversationA, ActiveSessionTracker.current.value?.first)
+    }
+
+    @Test
+    fun aConversationReportedAfterTheSaveKeepsItsTrackerEntryThroughTheReplace() = runBlocking {
+        conversationInCacheThenTierChange()
+        // A send in another chat between the save and the warm-up taking the queue: it reports itself the owner.
+        engine.duringSave = { ActiveSessionTracker.report("new-owner", ActiveSessionTracker.current.value!!.second) }
+
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertTrue("precondition: the cache was replaced", engine.toolPrefixWarmUps.single().second)
+        assertEquals("only A's entry may be cleared", "new-owner", ActiveSessionTracker.current.value?.first)
+    }
+
+    @Test
+    fun aFailedSaveLeavesTheConversationInTheCache() = runBlocking {
+        val conversationA = conversationInCacheThenTierChange()
+        engine.saveShouldFail = true
+
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertFalse("A is not on disk: the engine must leave it alone", engine.toolPrefixWarmUps.single().second)
+        assertFalse(inferenceQueue.holdsOnlyWarmedPrefix())
+        assertEquals(conversationA, ActiveSessionTracker.current.value?.first)
+    }
+
+    @Test
+    fun aSendDuringTheReplaceFinishesThePrefixAndAStillRestores() = runBlocking {
+        val conversationA = conversationInCacheThenTierChange()
+        engine.toolPrefixHangs = true
+        val viewModel = newViewModel(null)
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        engine.toolPrefixHangs = false
+
+        viewModel.send("hi")
+        awaitGeneration()
+        warm.cancelAndJoin()
+
+        assertEquals("the send interrupted the warm-up", 1, engine.toolPrefixInterrupted)
+        assertEquals("the generation finished the prefix over what was resident", listOf(true, true), engine.toolPrefixWarmUps.map { it.second })
+        assertEquals("the decode found the whole prefix resident", PREFIX_TOKENS, engine.residentAtToolDecode.last())
+
+        newViewModel(conversationA).send("back in A")
+        awaitAssistantReply(conversationA, expectedCount = 4)
+
+        assertEquals(TOKENS_PER_TURN, sessionDao.getByConversation(conversationA)?.tokenCount)
+        assertEquals("A's session went back in over the new chat's cache", 1, engine.loadSessionCalls)
+    }
+
     @Test
     fun aModelLoadedWhileTheAppIsInTheBackgroundIsWarmedWhenItComesBack() = runBlocking {
         agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
@@ -2924,9 +3029,13 @@ class ChatViewModelTest {
 
         override fun kvCacheUsedCells(): Int = usedCells
 
+        /** Runs inside every [saveSession], once the state is written: what happens while a save is in flight. */
+        var duringSave: (() -> Unit)? = null
+
         override suspend fun saveSession(path: String): Int {
             if (saveShouldFail) throw RuntimeException("save failed (test)")
             File(path).writeText("state")
+            duringSave?.invoke()
             return usedCells
         }
 

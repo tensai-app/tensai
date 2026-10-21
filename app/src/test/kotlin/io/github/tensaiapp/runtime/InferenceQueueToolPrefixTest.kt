@@ -1,6 +1,7 @@
 package io.github.tensaiapp.runtime
 
 import io.github.tensaiapp.data.session.SessionRestoreOutcome
+import io.github.tensaiapp.data.session.SessionSaveOutcome
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
@@ -11,6 +12,7 @@ import io.github.tensaiapp.engine.LoadedModel
 import io.github.tensaiapp.engine.LoadedModelInfo
 import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ModelLoadConfig
+import io.github.tensaiapp.engine.ToolChoice
 import io.github.tensaiapp.engine.ToolDefinition
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -201,6 +203,81 @@ class InferenceQueueToolPrefixTest {
 
         assertEquals(listOf(false, true), engine.replaceFlags)
         assertTrue(queue.holdsOnlyWarmedPrefix())
+    }
+
+    @Test
+    fun aSavedConversationIsReplacedWhenTheCacheStillHoldsWhatWasSaved() = inTest {
+        val engine = FakeEngine(usedCells = 300)
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        var replaced = 0
+
+        assertEquals(WarmUpOutcome.Warmed, queue.warmToolPrefix(request, info, replaceSaved = 300, onReplace = { replaced++ }))
+
+        assertEquals(listOf(true), engine.replaceFlags)
+        assertEquals(1, replaced)
+        assertTrue("a saved session may now restore over it", queue.holdsOnlyWarmedPrefix())
+        assertTrue(queue.holdsPrefixOf(request))
+    }
+
+    @Test
+    fun aConversationThatMovedOnSinceItsSaveIsLeftAlone() = inTest {
+        val engine = FakeEngine(usedCells = 300)
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        var replaced = 0
+
+        queue.warmToolPrefix(request, info, replaceSaved = 290, onReplace = { replaced++ })
+
+        assertEquals("what was generated after the save is not on disk", listOf(false), engine.replaceFlags)
+        assertEquals(0, replaced)
+        assertFalse(queue.holdsOnlyWarmedPrefix())
+    }
+
+    @Test
+    fun aGenerationDuringTheReplaceOfAConversationFinishesThePrefix() = inTest {
+        val engine = FakeEngine(hold = CompletableDeferred(), usedCells = 300)
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+
+        val outcome = async { queue.warmToolPrefix(request, info, replaceSaved = 300) }
+        withTimeout(5_000) { engine.entered.await() }
+        val events = withTimeout(5_000) { queue.generate(request).toList() }
+
+        assertTrue(events.last() is DecodeEvent.Done)
+        assertEquals(WarmUpOutcome.Interrupted, outcome.await())
+        assertEquals(listOf("prefix-start", "prefix-cancelled", "prefix-start", "prefix-end", "decode"), engine.events)
+        assertEquals(listOf(true, true), engine.replaceFlags)
+        assertFalse(queue.holdsOnlyWarmedPrefix())
+    }
+
+    @Test
+    fun aCacheHoldingOnlyAPrefixIsNeverSavedAsAConversationsSession() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        queue.warmToolPrefix(request, info)
+
+        assertEquals(SessionSaveOutcome.NotAttempted, queue.saveSession("/tmp/session"))
+
+        queue.generate(request).toList()
+        assertEquals("a conversation's state is saved as before", SessionSaveOutcome.Wrote(7), queue.saveSession("/tmp/session"))
+    }
+
+    @Test
+    fun theResidentPrefixIsTheLastGenerationsAndUnknownAfterARestore() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        assertFalse("nothing in the cache", queue.holdsPrefixOf(request))
+
+        queue.generate(request.copy(messages = request.messages + ChatMessage(MessageRole.User, "hi"))).toList()
+        assertTrue("the user's words come after the prefix", queue.holdsPrefixOf(request))
+        assertTrue("the template never sees the tool choice", queue.holdsPrefixOf(request.copy(toolChoice = ToolChoice.None)))
+        assertFalse(queue.holdsPrefixOf(request.copy(tools = request.tools + ToolDefinition("phone", "opens an app", "{}"))))
+
+        queue.restoreSession("/tmp/session", expectedModel = info)
+        assertFalse(queue.holdsPrefixOf(request))
     }
 
     @Test
