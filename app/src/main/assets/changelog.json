@@ -2,6 +2,34 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.3",
+      "title": "New app id, instant first message",
+      "date": "2026-10-21",
+      "intro": "tensai now installs as io.github.tensaiapp, and a new chat no longer waits for the model to read its tool list: the first message starts in seconds.",
+      "groups": [
+        {
+          "label": "New app id",
+          "items": [
+            "This version installs as a new app, next to the previous one: Android treats a new id as a different app, so it cannot update it in place",
+            "Models and conversations stay in the previous app: import or download your models again here, then uninstall the old app when you no longer need it"
+          ]
+        },
+        {
+          "label": "Faster",
+          "items": [
+            "Right after a model loads, tensai reads the system prompt and the tool list in the background, so the first message of a chat starts in about 1 s instead of more than a minute (Qwen3-1.7B on a Dimensity 900, CPU)",
+            "Opening a new chat after changing the tools in Settings prepares the new tool list before you type, after saving the previous conversation: first message in about 4 s, and the previous conversation comes back intact"
+          ]
+        },
+        {
+          "label": "Under the hood",
+          "items": [
+            "Vulkan can split large matrix products into shorter GPU jobs to keep the interface smooth while a prompt is read; off by default while it is measured on more phones"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.2",
       "title": "Faster follow-ups",
       "date": "2026-10-19",
