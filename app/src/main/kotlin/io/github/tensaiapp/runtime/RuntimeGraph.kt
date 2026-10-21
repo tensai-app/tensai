@@ -28,6 +28,7 @@ import io.github.tensaiapp.agent.AndroidTorchControl
 import io.github.tensaiapp.agent.AskUserGate
 import io.github.tensaiapp.agent.AskUserTool
 import io.github.tensaiapp.agent.ClipboardTool
+import io.github.tensaiapp.agent.ConfirmationGate
 import io.github.tensaiapp.agent.DeviceInfoTool
 import io.github.tensaiapp.agent.MemoryTool
 import io.github.tensaiapp.agent.SearchChatsTool
@@ -456,17 +457,19 @@ object RuntimeGraph {
      * The agent loop (TEN-172), shared by the chat and, later, the API server. Results are counted with the loaded
      * model's tokenizer, which answers nothing while a generation holds the engine.
      */
-    val agentRuntime: AgentRuntime by lazy {
+    val agentRuntime: AgentRuntime by lazy { agentRuntimeOn(toolRegistry, confirmationGate) }
+
+    /** An [AgentRuntime] on [inferenceQueue]: the chat's [agentRuntime], or the debug agent bench's, which refuses what it must not run. */
+    fun agentRuntimeOn(registry: ToolRegistry, gate: ConfirmationGate): AgentRuntime =
         AgentRuntime(
-            registry = toolRegistry,
-            gate = confirmationGate,
+            registry = registry,
+            gate = gate,
             // One bounded wait for a foreign generation to leave between two iterations, see [AgentRuntime].
             waitForQueue = {
                 withTimeoutOrNull(5_000) { inferenceQueue.state.first { it is QueueState.ModelReady } } != null
             },
             countTokens = { text -> inferenceQueue.countTokens(listOf(text))?.firstOrNull() },
         )
-    }
 
     /**
      * Persisted KV-cache/prompt state per conversation (TEN-34) — see [SessionRepository].

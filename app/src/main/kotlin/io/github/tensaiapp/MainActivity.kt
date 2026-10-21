@@ -23,6 +23,7 @@ import io.github.tensaiapp.agent.LaunchedPermission
 import io.github.tensaiapp.agent.PermissionLaunchState
 import io.github.tensaiapp.agent.PermissionRequest
 import io.github.tensaiapp.agent.PermissionResult
+import io.github.tensaiapp.bench.AgentBench
 import io.github.tensaiapp.data.AppLanguage
 import io.github.tensaiapp.data.withAppLanguage
 import io.github.tensaiapp.download.LoadRequests
@@ -99,7 +100,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         // Only a fresh launch: after process death the saved intent would replay an old tap.
-        if (savedInstanceState == null) LoadRequests.offer(intent)
+        if (savedInstanceState == null) {
+            LoadRequests.offer(intent)
+            AgentBench.offer(intent, assets)
+        }
 
         lifecycleScope.launch {
             onboardingEntryState.value = OnboardingGate.entry(
@@ -145,10 +149,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** A tap on "Load" in the download-ready notification while the app is already open. */
+    /** A tap on "Load" in the download-ready notification while the app is already open, or the debug agent bench's `am start`. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         LoadRequests.offer(intent)
+        AgentBench.offer(intent, assets)
     }
 
     /** See [AppForegroundTracker] — the other half of [onStop]'s report. */

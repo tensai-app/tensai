@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "prompts": [
+    {
+      "id": "flag-colors",
+      "prompt": "Name two colors of the French flag, one line.",
+      "expected": "none"
+    },
+    {
+      "id": "capital-japan",
+      "prompt": "What is the capital of Japan? One word.",
+      "expected": "none"
+    },
+    {
+      "id": "seven-times-eight",
+      "prompt": "What is 7 times 8? Just the number.",
+      "expected": "none"
+    },
+    {
+      "id": "half-of-ten",
+      "prompt": "What is half of 10?",
+      "expected": "none"
+    },
+    {
+      "id": "rephrase-polite",
+      "prompt": "Rephrase more politely: \"Send me the report now.\"",
+      "expected": "none"
+    },
+    {
+      "id": "translate-spanish",
+      "prompt": "Translate \"good morning\" into Spanish.",
+      "expected": "none"
+    },
+    {
+      "id": "haiku-autumn",
+      "prompt": "Write a haiku about autumn.",
+      "expected": "none"
+    },
+    {
+      "id": "define-photosynthesis",
+      "prompt": "In one sentence, what is photosynthesis?",
+      "expected": "none"
+    },
+    {
+      "id": "summarize-meeting",
+      "prompt": "Summarize in one sentence: the meeting moved from Monday to Wednesday because the room was already booked on Monday.",
+      "expected": "none"
+    },
+    {
+      "id": "closest-planet",
+      "prompt": "Which planet is closest to the Sun?",
+      "expected": "none"
+    },
+    {
+      "id": "time-now",
+      "prompt": "What time is it right now?",
+      "expected": "datetime"
+    },
+    {
+      "id": "date-today",
+      "prompt": "What is today's date?",
+      "expected": "datetime"
+    },
+    {
+      "id": "time-tokyo",
+      "prompt": "What time is it in Tokyo right now?",
+      "expected": [
+        "datetime",
+        "convert_time"
+      ]
+    },
+    {
+      "id": "multiply-large",
+      "prompt": "What is 48291 times 7364, exactly?",
+      "expected": "calculate"
+    },
+    {
+      "id": "divide-decimals",
+      "prompt": "What is 98765 divided by 123, to 4 decimal places?",
+      "expected": "calculate"
+    },
+    {
+      "id": "square-root",
+      "prompt": "What is the square root of 98765.4321?",
+      "expected": "calculate"
+    },
+    {
+      "id": "miles-to-km",
+      "prompt": "Convert 26.2 miles to kilometers.",
+      "expected": "convert"
+    },
+    {
+      "id": "fahrenheit-to-celsius",
+      "prompt": "Convert 98.6 degrees Fahrenheit to Celsius.",
+      "expected": "convert"
+    },
+    {
+      "id": "memory-list",
+      "prompt": "List everything you remember about me.",
+      "expected": "memory"
+    },
+    {
+      "id": "timer-ten-minutes",
+      "prompt": "Set a timer for 10 minutes.",
+      "expected": "set_timer"
+    }
+  ]
+}

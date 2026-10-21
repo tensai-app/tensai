@@ -81,6 +81,21 @@ internal fun worthWarmingUp(stats: DecodeStats): Boolean =
     stats.tokensGenerated >= WarmUpMinTokens &&
         (stats.stopReason == StopReason.Complete || stats.stopReason == StopReason.TokenBudget)
 
+/**
+ * The sampling of a reply, see [ChatViewModel.generateReply] for where each part comes from: the knobs of
+ * [samplingJson], the [enableThinking] flag and, only when the loaded model can think ([thinkingSupported]),
+ * the reasoning split of their `maxTokens`. Shared with the agent bench, so it measures the requests a send builds.
+ */
+internal fun replySampling(samplingJson: String?, enableThinking: Boolean, thinkingSupported: Boolean): SamplingConfig {
+    val sampling = SamplingJson.decode(samplingJson)
+    val reasoningBudget = if (enableThinking && thinkingSupported) {
+        ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
+    } else {
+        null
+    }
+    return sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget)
+}
+
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
 
@@ -310,6 +325,9 @@ internal fun toolFallbackMessage(language: String): String =
         "I couldn't finish with the tools available."
     }
 
+/** Thinking of a new chat, until its toggle is flipped. Also the agent bench's default. */
+internal const val DefaultEnableThinking = true
+
 /**
  * The per-conversation settings the chat screen edits, in the shape [ConversationEntity] stores
  * them. Read off the row once there is one, held in memory for a draft (TEN-106) and handed to
@@ -318,7 +336,7 @@ internal fun toolFallbackMessage(language: String): String =
 private data class ConversationSettings(
     val samplingJson: String? = null,
     val systemPrompt: String? = null,
-    val enableThinking: Boolean = true,
+    val enableThinking: Boolean = DefaultEnableThinking,
     val toolsEnabled: Boolean = true,
 )
 
@@ -1056,20 +1074,11 @@ class ChatViewModel(
     private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>): DecodeRequest =
         requestFor(conversation.settings(), history, conversation?.let { memoryPrompt.blockFor(it.id) })
 
-    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?): DecodeRequest {
-        val enableThinking = settings.enableThinking
-        val thinkingActive = enableThinking && currentModelSupportsThinking.first()
-        val sampling = SamplingJson.decode(settings.samplingJson)
-        val reasoningBudget = if (thinkingActive) {
-            ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
-        } else {
-            null
-        }
-        return DecodeRequest(
+    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?): DecodeRequest =
+        DecodeRequest(
             messages = chatRepository.toEngineMessages(history, settings.systemPrompt, memory),
-            sampling = sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget),
+            sampling = replySampling(settings.samplingJson, settings.enableThinking, currentModelSupportsThinking.first()),
         )
-    }
 
     /**
      * The request whose prefix the first message of a conversation with [settings] will have (TEN-205):
