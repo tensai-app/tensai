@@ -4,6 +4,8 @@
 
 天才 — your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, and later a LAN API server and phone actions.
 
+Site, docs and changelog: [tensai.page](https://tensai.page).
+
 **Status: early development.** Nothing usable yet.
 
 ## Build from source
