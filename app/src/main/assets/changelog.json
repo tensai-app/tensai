@@ -2,10 +2,10 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
-      "version": "0.3.5-rc1",
+      "version": "0.3.5-rc2",
       "title": "Web pages can no longer act behind your back",
       "date": "2026-10-23",
-      "intro": "A web page tensai reads could try to make it send your data somewhere or plant a memory. Both now stop at a card you answer.",
+      "intro": "A web page tensai reads could try to make it send your data somewhere or plant a memory. Both now stop at a card you answer. Stop also works every time, even in a chat you left and came back to.",
       "groups": [
         {
           "label": "Web",
@@ -25,6 +25,15 @@
           "label": "Privacy",
           "items": [
             "The engine no longer writes the prompt to the system log"
+          ]
+        },
+        {
+          "label": "Stop",
+          "items": [
+            "Tapping Stop right after Send now always stops the reply, instead of letting it run on unseen and keep the model busy",
+            "Leaving a chat while a tool runs and coming back shows Stop again; other chats wait for that reply instead of starting one that would collide with it",
+            "Stop in the notification ends the whole reply, tool steps included",
+            "A reply cut by an engine error is shown as failed instead of as a finished answer"
           ]
         }
       ]
