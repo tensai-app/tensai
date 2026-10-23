@@ -290,41 +290,6 @@ class ChatRepository(private val dao: ChatDao) {
         }
     }
 
-    /**
-     * Repairs what a stop or a killed process can leave: an assistant message whose calls got no `tool`
-     * message right after it (a template would be handed calls with no results), or a `tool` message with
-     * no call. Per assistant message, only the calls answered by the `tool` messages that directly follow
-     * it are kept, with those results; the rest is dropped. Nothing is written back, the stored rows stay.
-     */
-    private fun withAnsweredCallsOnly(messages: List<MessageEntity>): List<MessageEntity> {
-        val out = ArrayList<MessageEntity>(messages.size)
-        var i = 0
-        while (i < messages.size) {
-            val m = messages[i]
-            if (m.role == "assistant" && !m.toolCallsJson.isNullOrBlank()) {
-                var j = i + 1
-                while (j < messages.size && messages[j].role == "tool") j++
-                val results = messages.subList(i + 1, j)
-                val calls = ToolCallsJson.decode(m.toolCallsJson)
-                val answered = calls.filter { c -> results.any { it.toolCallId == c.id } }
-                out += m.copy(
-                    toolCallsJson = when (answered.size) {
-                        calls.size -> m.toolCallsJson
-                        0 -> null
-                        else -> ToolCallsJson.encode(answered)
-                    },
-                )
-                out += results.filter { r -> answered.any { it.id == r.toolCallId } }
-                i = j
-            } else {
-                // A `tool` message reaching here follows no assistant message with calls: an orphan.
-                if (m.role != "tool") out += m
-                i++
-            }
-        }
-        return out
-    }
-
     private suspend fun insertMessage(conversationId: String, role: MessageRole, content: String): String {
         val id = UUID.randomUUID().toString()
         dao.insertMessage(
@@ -352,6 +317,42 @@ class ChatRepository(private val dao: ChatDao) {
     private fun nextCreatedAt(): Long = lastCreatedAt.updateAndGet { maxOf(System.currentTimeMillis(), it + 1) }
 
     private val lastCreatedAt = AtomicLong(0)
+}
+
+/**
+ * Repairs what a stop or a killed process can leave: an assistant message whose calls got no `tool`
+ * message right after it (a template would be handed calls with no results), or a `tool` message with
+ * no call. Per assistant message, only the calls answered by the `tool` messages that directly follow
+ * it are kept, with those results; the rest is dropped. Nothing is written back, the stored rows stay. The chat reads
+ * the same projection to rebuild what the agent's gate saw, see [io.github.tensaiapp.agent.ConversationTrust].
+ */
+internal fun withAnsweredCallsOnly(messages: List<MessageEntity>): List<MessageEntity> {
+    val out = ArrayList<MessageEntity>(messages.size)
+    var i = 0
+    while (i < messages.size) {
+        val m = messages[i]
+        if (m.role == "assistant" && !m.toolCallsJson.isNullOrBlank()) {
+            var j = i + 1
+            while (j < messages.size && messages[j].role == "tool") j++
+            val results = messages.subList(i + 1, j)
+            val calls = ToolCallsJson.decode(m.toolCallsJson)
+            val answered = calls.filter { c -> results.any { it.toolCallId == c.id } }
+            out += m.copy(
+                toolCallsJson = when (answered.size) {
+                    calls.size -> m.toolCallsJson
+                    0 -> null
+                    else -> ToolCallsJson.encode(answered)
+                },
+            )
+            out += results.filter { r -> answered.any { it.id == r.toolCallId } }
+            i = j
+        } else {
+            // A `tool` message reaching here follows no assistant message with calls: an orphan.
+            if (m.role != "tool") out += m
+            i++
+        }
+    }
+    return out
 }
 
 /**
@@ -385,7 +386,7 @@ private fun MessageRole.toStorageString(): String = when (this) {
     MessageRole.Tool -> "tool"
 }
 
-private fun String.toEngineRole(): MessageRole = when (this) {
+internal fun String.toEngineRole(): MessageRole = when (this) {
     "system" -> MessageRole.System
     "user" -> MessageRole.User
     "assistant" -> MessageRole.Assistant

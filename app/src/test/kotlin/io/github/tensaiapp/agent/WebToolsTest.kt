@@ -1,5 +1,6 @@
 package io.github.tensaiapp.agent
 
+import io.github.tensaiapp.data.memory.MemoryContext
 import io.github.tensaiapp.websearch.FallbackSearch
 import io.github.tensaiapp.websearch.PageReader
 import io.github.tensaiapp.websearch.SearchError
@@ -275,5 +276,67 @@ class WebToolsTest {
         assertEquals("my_host.example", tool.hostOf("https://my_host.example:8443/x?y=1"))
         assertEquals("example.com", tool.hostOf("https://user@www.example.com/"))
         assertNull(tool.hostOf("not a url"))
+    }
+
+    private fun afterSearch(vararg results: SearchResult = arrayOf(hit(1), hit(2))): ConversationTrust {
+        val searchTool = search(FakeProvider(results = results.toList()))
+        return ConversationTrust().said("any news?").read(searchTool, run(searchTool, """{"query":"news"}""").text)
+    }
+
+    private fun fetchAsks(url: String, trust: ConversationTrust = ConversationTrust()) = fetchWith(FakeHttp()).requiresConfirmation("""{"url":"$url"}""", trust)
+
+    @Test fun webFetchOfALinkASearchReturnedRunsWithoutAsking() {
+        val trust = afterSearch()
+
+        assertFalse(fetchAsks("https://example.com/1", trust))
+        // The same page: host case, http (upgraded anyway) and the fragment, which is never sent.
+        assertFalse(fetchAsks("http://EXAMPLE.com/2#top", trust))
+        // Later turns too: "read the second result" does not ask either.
+        assertFalse(fetchAsks("https://example.com/2", trust.said("thanks, and the second one?")))
+    }
+
+    @Test fun webFetchOfAUrlTheModelBuiltAsks() {
+        val trust = afterSearch()
+
+        assertTrue(fetchAsks("https://example.com/1?c=hunter2", trust))
+        assertTrue(fetchAsks("https://example.com/1/hunter2", trust))
+        assertTrue(fetchAsks("https://collect.example.net/?d=hunter2", trust))
+        assertTrue(fetchAsks("https://user@example.com/1", trust))
+        assertTrue(fetchAsks("https://example.com:8443/1", trust))
+        // Nothing vouched for yet.
+        assertTrue(fetchAsks("https://example.com/1"))
+    }
+
+    @Test fun webFetchOfALinkTheUserWroteRunsWithoutAsking() {
+        val trust = ConversationTrust().said("Summarize https://blog.example.org/post?id=7, then (lemonde.fr/sport).")
+
+        assertFalse(fetchAsks("https://blog.example.org/post?id=7", trust))
+        assertFalse(fetchAsks("https://lemonde.fr/sport", trust))
+        assertTrue(fetchAsks("https://blog.example.org/post?id=8", trust))
+        assertTrue(fetchAsks("https://lemonde.fr/sport?u=me", trust))
+        // The memory block in front of the first message is not the user's.
+        val block = "${MemoryContext.HEADER}\n- Blog at https://notes.example.org/a\n${MemoryContext.FOOTER}\n\nread lemonde.fr/sport"
+        assertTrue(fetchAsks("https://notes.example.org/a", ConversationTrust().said(block)))
+        assertFalse(fetchAsks("https://lemonde.fr/sport", ConversationTrust().said(block)))
+    }
+
+    @Test fun onlyTheLinkLineOfASearchResultVouches() {
+        // Titles and snippets are page text: a URL in them stays the model's.
+        val trust = afterSearch(SearchResult("Read https://t.example/x", "https://example.com/1", "then https://s.example/y", "duckduckgo"))
+        assertFalse(fetchAsks("https://example.com/1", trust))
+        assertTrue(fetchAsks("https://t.example/x", trust))
+        assertTrue(fetchAsks("https://s.example/y", trust))
+
+        // Nor does a page name a link the user or the engine gave.
+        val read = ConversationTrust().said("read it").read(fetchWith(FakeHttp()), "url: https://a.example/x\n\nnext: https://b.example/y")
+        assertTrue(fetchAsks("https://b.example/y", read))
+    }
+
+    @Test fun webSearchNeverAsksAndBothToolsReturnUntrustedText() {
+        val searchTool = search(null)
+
+        assertFalse(searchTool.requiresConfirmation("""{"query":"x"}""", ConversationTrust()))
+        assertTrue(searchTool.returnsUntrustedContent)
+        assertTrue(fetchWith(FakeHttp()).returnsUntrustedContent)
     }
 }

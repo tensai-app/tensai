@@ -26,9 +26,11 @@ interface ClipboardAccess {
  * works; otherwise Android answers with a null clip, which cannot be told from an empty clipboard (hence the
  * wording of [EMPTY]), or with a [SecurityException], reported as [UNAVAILABLE].
  *
- * Known risk, not addressed here: `get` and `set` run without asking, so text from a web page or a file the
- * model read could steer it into copying something to or from the clipboard. The call cards of TEN-173 make
- * every call visible; confirming `get` is a later decision.
+ * Known risk, partly addressed: `get` and `set` run without asking, so text from a web page or a file the model read
+ * could steer it into copying something to or from the clipboard. What `get` read cannot leave the phone unseen:
+ * `web_fetch` asks for any link neither the user nor a search gave, and `open_url` always asks. What `get` reads was
+ * copied from anywhere, so it counts as [returnsUntrustedContent]: any later `remember` in the conversation asks.
+ * Confirming `get` itself is a later decision.
  */
 class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val name = "clipboard"
@@ -36,6 +38,7 @@ class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val parametersSchema =
         """{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}"""
     override val tier = ToolTier.Local
+    override val returnsUntrustedContent = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {

@@ -973,6 +973,8 @@
     <string name="tool_confirm_memory_forget_fact">Forget “%1$s”</string>
     <string name="tool_confirm_memory_fact_missing">Fact %1$s no longer exists</string>
     <string name="tool_confirm_open_url">Open a link</string>
+    <string name="tool_confirm_web_fetch">Read a web page</string>
+    <string name="tool_confirm_memory_remember">Remember a fact</string>
 
     <string name="chat_settings_section_tools">Tools</string>
     <string name="chat_settings_tools_title">Tools</string>

@@ -5,6 +5,7 @@ import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ConfirmationGate
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.Tool
+import io.github.tensaiapp.agent.ConversationTrust
 import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.DecodeRequest
@@ -117,7 +118,7 @@ internal fun benchRuns(name: String, argsJson: String): Boolean =
  * every call [benchRuns] does not allow goes through the [ConfirmationGate], where [RefusingGate] says no.
  */
 class BenchTool(private val inner: Tool) : Tool by inner {
-    override fun requiresConfirmation(argsJson: String): Boolean = !benchRuns(inner.name, argsJson) || inner.requiresConfirmation(argsJson)
+    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean = !benchRuns(inner.name, argsJson) || inner.requiresConfirmation(argsJson, trust)
 }
 
 /** Refuses every call it is asked about and keeps it: the bench's record of what the model tried and was not run. */

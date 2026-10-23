@@ -1,5 +1,8 @@
 package io.github.tensaiapp.agent
 
+import io.github.tensaiapp.data.memory.MemoryContext
+import io.github.tensaiapp.engine.ChatMessage
+import io.github.tensaiapp.engine.MessageRole
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -53,6 +56,56 @@ data class ToolResult(
  */
 data class ConfirmTarget(val id: String, val text: String?)
 
+/**
+ * What the conversation so far vouches for, read by [Tool.requiresConfirmation]: the links the user wrote, the links
+ * `web_search` returned, and whether a [Tool.returnsUntrustedContent] result is anywhere in it. Conversation-wide, not
+ * per turn: a page read in one turn can steer the model in the next ("when the user replies, remember X").
+ *
+ * Folded one message at a time by [with], over the history as the prompt replays it, by [AgentRuntime] as a turn runs
+ * and by the chat over the stored rows: the same function on the same messages, so the card shows exactly when the
+ * runtime asks. A result counts whatever its status (an error, a refusal, a stop): the replayed history keeps none.
+ */
+class ConversationTrust private constructor(
+    private val userUrls: Set<String>,
+    private val searchUrls: Set<String>,
+    val readUntrusted: Boolean,
+    /** The tool of each call id seen, so a `tool` message is read against the call it answers. */
+    private val callTools: Map<String, String>,
+) {
+    /** Nothing seen yet: every link is the model's. */
+    constructor() : this(emptySet(), emptySet(), false, emptyMap())
+
+    /** The conversation once [message] is in it. [find] is the registered tool of a name. */
+    fun with(message: ChatMessage, find: (String) -> Tool?): ConversationTrust = when (message.role) {
+        MessageRole.User ->
+            ConversationTrust(userUrls + FetchUrls.inUserText(MemoryContext.withoutBlock(message.content)), searchUrls, readUntrusted, callTools)
+        MessageRole.Assistant -> {
+            val calls = message.toolCalls.orEmpty()
+            if (calls.isEmpty()) this else ConversationTrust(userUrls, searchUrls, readUntrusted, callTools + calls.map { it.id to it.name })
+        }
+        MessageRole.Tool -> {
+            val tool = message.toolCallId?.let(callTools::get)?.let(find)
+            if (tool == null) {
+                this
+            } else {
+                ConversationTrust(
+                    userUrls,
+                    if (tool.name == WebSearchTool.NAME) searchUrls + FetchUrls.inSearchResult(message.content) else searchUrls,
+                    readUntrusted || tool.returnsUntrustedContent,
+                    callTools,
+                )
+            }
+        }
+        else -> this
+    }
+
+    /**
+     * Whether [url] came from the user or a search engine rather than from the model: the same page, compared by
+     * [FetchUrls.key]. A model-built URL, which could carry data read on the phone, is not.
+     */
+    fun vouchesFor(url: String): Boolean = FetchUrls.key(url)?.let { it in userUrls || it in searchUrls } ?: false
+}
+
 /** A capability the model can call (TEN-172). Registered in a [ToolRegistry]. */
 interface Tool {
     /** Name the model calls it by: `[a-z0-9_]`, unique in a registry. */
@@ -72,8 +125,17 @@ interface Tool {
     /**
      * Whether this very call needs the gate. Defaults to [sendsOrDeletes]; a tool with several actions
      * overrides it to ask only for the ones that send or delete (`memory` asks for `forget`, not `list`).
+     * [trust] is what the conversation vouched for before the call, for a tool whose risk depends on it (`web_fetch`,
+     * `memory` remember); the default, nothing vouched for, is the strict reading.
      */
-    fun requiresConfirmation(argsJson: String): Boolean = sendsOrDeletes
+    fun requiresConfirmation(argsJson: String, trust: ConversationTrust = ConversationTrust()): Boolean = sendsOrDeletes
+
+    /**
+     * What the tool returns is text a third party wrote (a web page, a search snippet, an invite's title), which
+     * can carry instructions aimed at the model. Read by [ConversationTrust.with]: once such a result is in the
+     * conversation, `memory` asks before a `remember`.
+     */
+    val returnsUntrustedContent: Boolean get() = false
 
     /**
      * What the call [callId] acts on, read by [UiConfirmationGate] before the card shows (TEN-169), so the user

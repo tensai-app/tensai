@@ -116,6 +116,25 @@ class ToolUiTest {
     }
 
     @Test
+    fun aWebFetchCardShowsTheHostThenTheWholeUrl() {
+        val args = """{"url":"https://collect.example.net/p?d=hunter2"}"""
+
+        assertEquals(UiText.of(R.string.tool_confirm_web_fetch), ToolUiCatalog.confirmLabel("web_fetch", args))
+        assertEquals(
+            listOf(ToolInput("host", "collect.example.net", mono = true), ToolInput("url", "https://collect.example.net/p?d=hunter2", mono = false)),
+            ToolUiCatalog.confirmInputs("web_fetch", args),
+        )
+    }
+
+    @Test
+    fun aRememberCardShowsTheFactAsItWillBeStored() {
+        val args = """{"action":"remember","text":"  The user   likes\ntea "}"""
+
+        assertEquals(UiText.of(R.string.tool_confirm_memory_remember), ToolUiCatalog.confirmLabel("memory", args))
+        assertEquals(listOf(ToolInput("text", "The user likes tea", mono = false)), ToolUiCatalog.confirmInputs("memory", args))
+    }
+
+    @Test
     fun withoutATargetTheCardListsTheArguments() {
         assertNull(ToolUiCatalog.confirmTargetLines("memory", null))
         assertNull(ToolUiCatalog.confirmTargetLines("torch", ConfirmTarget("1", "x")))

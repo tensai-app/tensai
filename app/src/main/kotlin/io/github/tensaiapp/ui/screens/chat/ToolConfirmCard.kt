@@ -47,7 +47,9 @@ import io.github.tensaiapp.ui.tools.resolve
  * The inline "tensai wants to ..." card of a call that sends or deletes (TEN-174). Pending, it names the
  * action, lists the arguments (or what the call acts on, a fact by its text rather than its id, TEN-169) and asks
  * Deny / Allow; answered, it folds into one row, "Allowed" or "Denied".
- * Phone intents never show it (the target app confirms), except `open_url`: the browser acts on open.
+ * Phone intents never show it (the target app confirms), except `open_url`: the browser acts on open. A `web_fetch` of
+ * a URL the turn does not vouch for and a `memory` remember after untrusted content show it too, see their tools.
+ * Nothing on it is cut: the end of a URL or of a fact is what the user decides on.
  *
  * @param onAnswer `true` for Allow, `false` for Deny.
  */
@@ -91,8 +93,6 @@ fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifie
                             text = line.resolve(),
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
                     }
@@ -113,8 +113,6 @@ fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifie
                                 fontSize = 14.sp,
                                 fontFamily = if (input.mono) TensaiMono else null,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
                         }

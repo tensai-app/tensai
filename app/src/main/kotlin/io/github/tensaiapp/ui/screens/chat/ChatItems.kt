@@ -3,9 +3,14 @@ package io.github.tensaiapp.ui.screens.chat
 import io.github.tensaiapp.agent.AskUserResult
 import io.github.tensaiapp.agent.ConfirmTarget
 import io.github.tensaiapp.agent.AskUserTool
+import io.github.tensaiapp.agent.ConversationTrust
 import io.github.tensaiapp.data.chat.MessageEntity
 import io.github.tensaiapp.data.chat.ToolCallEntity
 import io.github.tensaiapp.data.chat.ToolCallsJson
+import io.github.tensaiapp.data.chat.toEngineRole
+import io.github.tensaiapp.data.chat.withAnsweredCallsOnly
+import io.github.tensaiapp.engine.ChatMessage
+import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.ui.tools.ToolCallState
 import io.github.tensaiapp.ui.tools.ToolArgsView
@@ -60,7 +65,8 @@ data class AskAnswerItem(override val key: String, val question: String, val ans
  *   [MessageEntity.toUi] keeps it).
  * - Calls that follow each other, across assistant messages, with no visible message between, are one
  *   [ToolLineItem]. Its key is its first call's message and position, so it stays put while the group grows.
- * - A call that [requiresConfirmation] is a [ConfirmationItem] when it was decided: [ConfirmDecision.Allowed]
+ * - A call that [requiresConfirmation], given what the conversation vouched for before it, is a [ConfirmationItem] when
+ *   it was decided: [ConfirmDecision.Allowed]
  *   once it ran ok, [ConfirmDecision.Denied] when refused, [ConfirmDecision.Stopped] when Stop cut it. While
  *   the turn runs it is pending while in [pendingCallIds], allowed once in [allowedIds], and shows nothing
  *   before the gate is reached. One that failed ([ToolCallState.failed]) never was a decision (it may have
@@ -73,6 +79,9 @@ data class AskAnswerItem(override val key: String, val question: String, val ans
  * @param allowedIds calls the user allowed whose result is not stored yet, see
  *   [io.github.tensaiapp.agent.UiConfirmationGate.allowed].
  * @param targets what the gated calls act on, by call id, see [io.github.tensaiapp.agent.UiConfirmationGate.targets].
+ * @param requiresConfirmation [io.github.tensaiapp.agent.AgentRuntime.requiresConfirmation], read with what [trustWith]
+ *   (the runtime's own fold) gives before the call, see [trustBeforeCalls]: a card shows exactly for the calls the gate
+ *   was asked about.
  * @param decode the calls of an assistant message, [ToolCallsJson.decode] unless the caller caches it.
  */
 internal fun buildChatItems(
@@ -82,7 +91,8 @@ internal fun buildChatItems(
     pendingCallIds: Set<String>,
     allowedIds: Collection<String>,
     targets: Map<String, ConfirmTarget> = emptyMap(),
-    requiresConfirmation: (tool: String, argsJson: String) -> Boolean,
+    requiresConfirmation: (tool: String, argsJson: String, trust: ConversationTrust) -> Boolean,
+    trustWith: (trust: ConversationTrust, message: ChatMessage) -> ConversationTrust = { trust, _ -> trust },
     decode: (MessageEntity) -> List<ToolCall> = { ToolCallsJson.decode(it.toolCallsJson) },
 ): List<ChatItem> {
     val rows = toolCalls.associateBy { it.messageId to it.callId }
@@ -113,6 +123,7 @@ internal fun buildChatItems(
         group.clear()
     }
 
+    val trust = trustBeforeCalls(messages, trustWith)
     for (message in messages) {
         if (message.role != "user" && message.role != "assistant") continue
         message.toUi()?.let {
@@ -120,7 +131,10 @@ internal fun buildChatItems(
             items += MessageItem(it)
         }
         for ((index, call) in calls[message.id].orEmpty().withIndex()) {
-            val ui = toolCallUi(message.id, call, rows[message.id to call.id], outputs[message.id to call.id], agentRunning, requiresConfirmation)
+            val before = trust.before[message.id to call.id] ?: trust.afterReply[message.id] ?: ConversationTrust()
+            val ui = toolCallUi(message.id, call, rows[message.id to call.id], outputs[message.id to call.id], agentRunning) { tool, args ->
+                requiresConfirmation(tool, args, before)
+            }
             if (call.name == AskUserTool.NAME) {
                 // Its own line, and the answer under it: a question is a turn of the conversation, not a tool run to fold.
                 flush()
@@ -159,6 +173,42 @@ internal fun buildChatItems(
     }
     flush()
     return items
+}
+
+/** What the conversation vouched for at each call, see [trustBeforeCalls]. */
+private class CallTrust(
+    /** By message and call id, for a call with a result: read just before that result. */
+    val before: Map<Pair<String, String>, ConversationTrust>,
+    /** By assistant message, after its last result: for a call with none yet (running, or waiting on its card). */
+    val afterReply: Map<String, ConversationTrust>,
+)
+
+/**
+ * Folds [trustWith] over the history as the prompt replays it ([withAnsweredCallsOnly]: a call only next to its
+ * result), the way [io.github.tensaiapp.agent.AgentRuntime.run] folds it over the prompt and the turn, and keeps the
+ * state each call was decided with. Calls run in order, so a result follows the results of the calls before it.
+ */
+private fun trustBeforeCalls(
+    messages: List<MessageEntity>,
+    trustWith: (ConversationTrust, ChatMessage) -> ConversationTrust,
+): CallTrust {
+    val before = HashMap<Pair<String, String>, ConversationTrust>()
+    val afterReply = HashMap<String, ConversationTrust>()
+    var trust = ConversationTrust()
+    var caller: String? = null
+    for (m in withAnsweredCallsOnly(messages)) {
+        val role = runCatching { m.role.toEngineRole() }.getOrNull() ?: continue
+        if (role == MessageRole.Tool) caller?.let { id -> m.toolCallId?.let { before.putIfAbsent(id to it, trust) } }
+        val calls = ToolCallsJson.decode(m.toolCallsJson).takeIf { it.isNotEmpty() }
+        trust = trustWith(trust, ChatMessage(role, m.content, toolCalls = calls, toolCallId = m.toolCallId))
+        when (role) {
+            MessageRole.Assistant -> caller = m.id
+            MessageRole.Tool -> Unit
+            else -> caller = null
+        }
+        caller?.let { afterReply[it] = trust }
+    }
+    return CallTrust(before, afterReply)
 }
 
 private fun toolCallUi(

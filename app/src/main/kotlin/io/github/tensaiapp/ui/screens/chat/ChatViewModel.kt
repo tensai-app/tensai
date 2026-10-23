@@ -426,7 +426,7 @@ class ChatViewModel(
                 combine(confirmationGate.pending, confirmationGate.targets, ::Pair),
                 confirmationGate.allowed,
             ) { stored, calls, running, (pending, targets), allowed ->
-                buildChatItems(stored, calls, id in running, pending.keys, allowed, targets, agentRuntime::requiresConfirmation, ::callsOf)
+                buildChatItems(stored, calls, id in running, pending.keys, allowed, targets, agentRuntime::requiresConfirmation, agentRuntime::trustWith, ::callsOf)
             }.flowOn(Dispatchers.Default)
         }
     }

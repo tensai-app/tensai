@@ -9,7 +9,7 @@ import org.json.JSONObject
 /**
  * `wikipedia`: the summary of the best matching article, with its link. Searches with the module's [Wikipedia]
  * provider, then reads `/api/rest_v1/page/summary/{title}` for the top hit. Text is CC BY-SA: the answer carries
- * the article URL.
+ * the article URL. Anyone can edit an article: [returnsUntrustedContent].
  *
  * @param userAgent the descriptive one Wikimedia requires (`tensai/<version> (+<repo>)`), 403 otherwise.
  */
@@ -23,6 +23,7 @@ class WikipediaTool(
     override val parametersSchema =
         """{"type":"object","properties":{"query":{"type":"string"},"lang":{"type":"string","description":"default en"}},"required":["query"]}"""
     override val tier = ToolTier.Network
+    override val returnsUntrustedContent = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {

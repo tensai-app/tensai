@@ -35,6 +35,10 @@ object WebToolLimits {
 /**
  * `web_search`: the search provider chosen in Settings, with the free fallbacks of [SearchProviders].
  *
+ * Never asks: the query goes to the search engine the user chose, not to a host the model picks, so it cannot hand
+ * data to a third party of the model's choosing. The links it returns are what lets `web_fetch` read a result
+ * without asking, see [ConversationTrust].
+ *
  * @param setup the chain for the current Settings and the name of the provider the user chose, read at each call
  *   so a change in Settings applies to the next one. A `null` chain means the chosen provider has no key yet.
  */
@@ -44,11 +48,12 @@ class WebSearchTool(
     /** [chain] is `null` when the chosen provider needs an API key that is not stored; [chosen] is its display name. */
     class Setup(val chain: FallbackSearch?, val chosen: String)
 
-    override val name = "web_search"
+    override val name = NAME
     override val description = "Searches the web. Returns titles, links and short snippets. Use web_fetch to read one result."
     override val parametersSchema =
         """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max ${WebToolLimits.MaxLimit}, default ${WebToolLimits.DefaultLimit}"}},"required":["query"]}"""
     override val tier = ToolTier.Network
+    override val returnsUntrustedContent = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
@@ -100,6 +105,10 @@ class WebSearchTool(
         }
         return out.append(footer).toString()
     }
+
+    companion object {
+        const val NAME = "web_search"
+    }
 }
 
 /**
@@ -108,6 +117,10 @@ class WebSearchTool(
  * The app's network config blocks cleartext, so the tool is https-only: an `http://` URL is upgraded to
  * `https://` before anything else, a site that only speaks http fails with a message saying so, and a redirect to
  * plain http is refused. Build the reader with `httpsOnly = true`.
+ *
+ * Asks first unless the conversation vouches for the URL ([ConversationTrust.vouchesFor]): a link the user wrote or
+ * `web_search` returned, in any turn, is read at once, any other is one the model built, and its path or query could carry what a tool read on
+ * the phone (the clipboard, a contact) to a host of an injection's choosing. The card shows the whole URL.
  */
 class WebFetchTool(
     private val reader: PageReader,
@@ -117,6 +130,12 @@ class WebFetchTool(
     override val description = "Reads one web page and returns its text. Give a full https URL, for example one from web_search."
     override val parametersSchema = """{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}"""
     override val tier = ToolTier.Network
+    override val returnsUntrustedContent = true
+
+    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean {
+        val url = runCatching { JSONObject(argsJson).stringArg("url") }.getOrNull() ?: return true
+        return !trust.vouchesFor(url)
+    }
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
@@ -161,5 +180,51 @@ class WebFetchTool(
         }
         val host = parsed ?: url.substringAfter("://", "").substringBefore('/').substringBefore('?').substringAfterLast('@').substringBefore(':')
         return host.removePrefix("www.").ifEmpty { null }
+    }
+}
+
+/**
+ * The URLs a conversation vouches for, see [ConversationTrust]. Two URLs are the same page when their [key]s are: scheme, host,
+ * port, path and query as written. Only the case of the host, the fragment (never sent) and http against https
+ * (`web_fetch` upgrades it) are let go, so a model cannot add a parameter to a vouched link.
+ */
+internal object FetchUrls {
+    private val numbered = Regex("^\\d+\\. ")
+
+    /** The page [url] reads, `null` for one that is not an http(s) URL with a host and no credentials. */
+    fun key(url: String): String? {
+        val uri = try {
+            URI(url.trim())
+        } catch (e: Exception) {
+            return null
+        }
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.rawUserInfo != null) return null
+        val host = uri.host?.lowercase() ?: return null
+        val port = if (uri.port == -1) "" else ":${uri.port}"
+        val path = uri.rawPath.orEmpty().ifEmpty { "/" }
+        return "https://$host$port$path" + uri.rawQuery?.let { "?$it" }.orEmpty()
+    }
+
+    /**
+     * The link of each result of a `web_search` answer: the line under each numbered title, as [WebSearchTool.format]
+     * writes it. A URL inside a title or a snippet is page text, not a result, and stays the model's.
+     */
+    fun inSearchResult(text: String): Set<String> {
+        val lines = text.lines()
+        return lines.indices.filter { numbered.containsMatchIn(lines[it]) }
+            .mapNotNullTo(HashSet()) { i -> lines.getOrNull(i + 1)?.takeIf { it.startsWith("   ") }?.let(::key) }
+    }
+
+    /**
+     * The links the user wrote, with or without a scheme ("lemonde.fr/sport" reads as https), without the
+     * punctuation around them.
+     */
+    fun inUserText(text: String): Set<String> = text.split(Regex("\\s+")).mapNotNullTo(HashSet()) { word ->
+        val token = word.trimStart('(', '<', '[', '"', '\'', '«').trimEnd('.', ',', ';', ':', '!', '?', ')', '>', ']', '"', '\'', '»')
+        when {
+            token.contains("://") -> key(token)
+            '.' in token && '@' !in token -> key("https://$token")
+            else -> null
+        }
     }
 }

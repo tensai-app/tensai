@@ -885,6 +885,8 @@
     <string name="tool_confirm_memory_forget_fact">Oublier « %1$s »</string>
     <string name="tool_confirm_memory_fact_missing">Le fait %1$s n\'existe plus</string>
     <string name="tool_confirm_open_url">Ouvrir un lien</string>
+    <string name="tool_confirm_web_fetch">Lire une page web</string>
+    <string name="tool_confirm_memory_remember">Retenir un fait</string>
 
     <string name="chat_settings_section_tools">Outils</string>
     <string name="chat_settings_tools_title">Outils</string>

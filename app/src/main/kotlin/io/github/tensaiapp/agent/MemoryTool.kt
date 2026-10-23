@@ -15,12 +15,11 @@ import org.json.JSONObject
  * The newest facts are already in every conversation (TEN-189, [io.github.tensaiapp.data.memory.MemoryContext]),
  * `list` is for the ones past that cap and for the ids `forget` needs. One tool with an `action` so the prompt carries one schema, not three.
  *
- * `forget` deletes user data, so it goes through the confirmation gate; `remember` and `list` do not
- * ([requiresConfirmation]). [sendsOrDeletes] stays true so the registry and Settings list the tool as one that can delete.
- *
- * Known risk, not addressed here: `remember` runs without asking, so text the model reads from a web page or a
- * file could get it to store something the user never said. The call cards of TEN-173 make every call visible,
- * and Settings > Memory lets the user delete a fact; confirming `remember` is a later decision.
+ * `forget` deletes user data, so it goes through the confirmation gate; `list` does not, and `remember` only once the
+ * conversation holds a [Tool.returnsUntrustedContent] result, in any turn ([requiresConfirmation], [ConversationTrust]):
+ * text from a web page could get the model to store something the user never said, and a fact is in every later
+ * conversation. A `remember` the user asks for in a conversation with nothing of the kind runs at once. [sendsOrDeletes] stays true so the registry and Settings list the
+ * tool as one that can delete.
  *
  * @param conversationId the active conversation, stored with a fact as its source.
  */
@@ -46,8 +45,12 @@ class MemoryTool(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ConfirmTarget>) = size > MAX_SHOWN
     }
 
-    override fun requiresConfirmation(argsJson: String): Boolean =
-        runCatching { JSONObject(argsJson).stringArg("action") == "forget" }.getOrDefault(false)
+    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean =
+        when (runCatching { JSONObject(argsJson).stringArg("action") }.getOrNull()) {
+            "forget" -> true
+            "remember" -> trust.readUntrusted
+            else -> false
+        }
 
     /**
      * The fact a `forget` deletes, looked up by id: its text, or `null` when the id is not in the store. What the card
@@ -82,7 +85,7 @@ class MemoryTool(
     }
 
     private suspend fun remember(raw: String): ToolResult {
-        val text = raw.trim().replace(Regex("\\s+"), " ")
+        val text = factText(raw)
         if (text.isEmpty()) return ToolResult.error("remember needs text")
         if (text.length > MAX_FACT_CHARS) {
             return ToolResult.error("fact too long (${text.length} characters, max $MAX_FACT_CHARS), say it shorter")
@@ -151,5 +154,8 @@ class MemoryTool(
         const val MAX_LISTED = 50
         const val MAX_LIST_CHARS = 1800
         private const val MAX_SHOWN = 32
+
+        /** The fact a `remember` of [raw] stores, on one line: what its confirmation card shows. */
+        fun factText(raw: String): String = raw.trim().replace(Regex("\\s+"), " ")
     }
 }

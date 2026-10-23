@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.WbCloudy
 import androidx.compose.ui.graphics.vector.ImageVector
 import io.github.tensaiapp.R
 import io.github.tensaiapp.agent.ConfirmTarget
+import io.github.tensaiapp.agent.MemoryTool
 
 /** What a tool call reads like while it runs and once it ran. */
 class ToolActions(@StringRes val done: Int, @StringRes val running: Int)
@@ -89,7 +90,11 @@ object ToolUiCatalog {
             ),
             confirmLabel = { args ->
                 val id = args["id"]
-                if (id != null) UiText.of(R.string.tool_confirm_memory_forget_id, id) else UiText.of(R.string.tool_confirm_memory_forget)
+                when {
+                    args["action"] == "remember" -> UiText.of(R.string.tool_confirm_memory_remember)
+                    id != null -> UiText.of(R.string.tool_confirm_memory_forget_id, id)
+                    else -> UiText.of(R.string.tool_confirm_memory_forget)
+                }
             }),
         ToolUiMeta("ask_user", Icons.Rounded.ContactSupport, R.string.tool_name_ask_user, R.string.tool_desc_ask_user,
             ToolActions(R.string.tool_done_ask_user, R.string.tool_run_ask_user),
@@ -143,7 +148,8 @@ object ToolUiCatalog {
         ToolUiMeta("web_search", Icons.Rounded.TravelExplore, R.string.tool_name_web_search, R.string.tool_desc_web_search,
             ToolActions(R.string.tool_done_web_search, R.string.tool_run_web_search)),
         ToolUiMeta("web_fetch", Icons.Rounded.Article, R.string.tool_name_web_fetch, R.string.tool_desc_web_fetch,
-            ToolActions(R.string.tool_done_web_fetch, R.string.tool_run_web_fetch)),
+            ToolActions(R.string.tool_done_web_fetch, R.string.tool_run_web_fetch),
+            confirmLabel = { UiText.of(R.string.tool_confirm_web_fetch) }),
         ToolUiMeta("weather", Icons.Rounded.WbCloudy, R.string.tool_name_weather, R.string.tool_desc_weather,
             ToolActions(R.string.tool_done_weather, R.string.tool_run_weather)),
         ToolUiMeta("wikipedia", Icons.Rounded.MenuBook, R.string.tool_name_wikipedia, R.string.tool_desc_wikipedia,
@@ -241,15 +247,20 @@ object ToolUiCatalog {
     private const val MAX_TITLE_FACT_CHARS = 60
 
     /**
-     * The rows of the confirmation card. The arguments as they are, except `open_url`: the host first, in the mono
-     * face, because the host is what the user decides on, then the whole URL.
+     * The rows of the confirmation card. The arguments as they are, except `open_url` and `web_fetch`: the host first,
+     * in the mono face, because the host is what the user decides on, then the whole URL, query included, which is
+     * where a link would carry data out. A `memory` remember shows the fact as it will be stored, and nothing else.
      */
     fun confirmInputs(tool: String, argsJson: String): List<ToolInput> {
-        val url = ToolArgsView.values(argsJson)["url"]
-        val host = if (tool == "open_url" && url != null) runCatching { java.net.URI(url.trim()).host }.getOrNull() else null
+        val args = ToolArgsView.values(argsJson)
+        if (tool == "memory" && args["action"] == "remember") return listOf(ToolInput("text", MemoryTool.factText(args["text"].orEmpty()), mono = false))
+        val url = args["url"]
+        val host = if (tool in UrlTools && url != null) runCatching { java.net.URI(url.trim()).host }.getOrNull() else null
         if (host == null) return ToolArgsView.inputs(argsJson)
         return listOf(ToolInput("host", host, mono = true), ToolInput("url", url!!, mono = false))
     }
+
+    private val UrlTools = setOf("open_url", "web_fetch")
 
     private fun actions(meta: ToolUiMeta, argsJson: String): ToolActions {
         val value = meta.variantArg?.let { ToolArgsView.values(argsJson)[it] }

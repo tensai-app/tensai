@@ -1,5 +1,8 @@
 package io.github.tensaiapp.agent
 
+import io.github.tensaiapp.engine.ChatMessage
+import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.websearch.HttpFetcher
 import io.github.tensaiapp.websearch.HttpResponse
 import io.github.tensaiapp.websearch.SearchError
@@ -68,3 +71,13 @@ class FakeProvider(
 
 fun hit(n: Int, source: String = "duckduckgo", snippet: String = "snippet $n") =
     SearchResult("Title $n", "https://example.com/$n", snippet, source)
+
+/** This trust once the user said [text]. */
+fun ConversationTrust.said(text: String): ConversationTrust = with(ChatMessage(MessageRole.User, text)) { null }
+
+/** This trust once a call of [tool] (id [id]) was answered with [output], as the prompt replays it. */
+fun ConversationTrust.read(tool: Tool, output: String, id: String = "c-${tool.name}"): ConversationTrust {
+    val find = { name: String -> tool.takeIf { it.name == name } }
+    return with(ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall(id, tool.name, "{}"))), find)
+        .with(ChatMessage(MessageRole.Tool, output, toolCallId = id), find)
+}

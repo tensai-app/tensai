@@ -90,11 +90,18 @@ class AgentRuntime(
     fun tierOf(toolName: String): ToolTier? = registry.find(toolName)?.tier
 
     /**
-     * Whether a call of [toolName] with [argsJson] goes through the [ConfirmationGate], read against every
-     * registered tool: a stored call is shown with or without its card whatever the grants are now.
+     * Whether a call of [toolName] with [argsJson], made with [trust] behind it, goes through the [ConfirmationGate],
+     * read against every registered tool: a stored call is shown with or without its card whatever the grants are now.
      */
-    fun requiresConfirmation(toolName: String, argsJson: String): Boolean =
-        registry.find(toolName)?.let { runCatching { it.requiresConfirmation(argsJson.ifBlank { "{}" }) }.getOrDefault(false) } ?: false
+    fun requiresConfirmation(toolName: String, argsJson: String, trust: ConversationTrust = ConversationTrust()): Boolean =
+        registry.find(toolName)?.let { runCatching { it.requiresConfirmation(argsJson.ifBlank { "{}" }, trust) }.getOrDefault(false) } ?: false
+
+    /**
+     * [trust] once [message] is in the history, read against every registered tool. The one fold of [ConversationTrust]:
+     * [run] applies it to each message of the prompt and of the turn, the chat to the stored rows, so its cards match
+     * the calls that were asked about.
+     */
+    fun trustWith(trust: ConversationTrust, message: ChatMessage): ConversationTrust = trust.with(message, registry::find)
 
     /** The active tools as the prompt describes them. */
     fun definitions(): List<ToolDefinition> =
@@ -117,6 +124,8 @@ class AgentRuntime(
         val history = request.messages.toMutableList()
         var callsMade = 0
         var index = 0
+        // What the gate reads (web_fetch, memory remember): the whole history, then each message the turn adds to it.
+        var trust = request.messages.fold(ConversationTrust(), ::trustWith)
         while (true) {
             val forced = callsMade >= MaxToolCallsPerTurn
             emit(AgentEvent.ReplyStarted(index))
@@ -150,11 +159,17 @@ class AgentRuntime(
                 emit(AgentEvent.Done)
                 return@flow
             }
-            history += ChatMessage(MessageRole.Assistant, turn!!.content, toolCalls = calls.map { it.replayable() }, reasoning = turn!!.reasoning)
+            val replied = ChatMessage(MessageRole.Assistant, turn!!.content, toolCalls = calls.map { it.replayable() }, reasoning = turn!!.reasoning)
+            history += replied
+            trust = trustWith(trust, replied)
             for ((i, call) in calls.withIndex()) {
-                val outcome = executeCall(call, tools, overLimit = callsMade + i >= MaxToolCallsPerTurn)
+                val outcome = executeCall(call, tools, trust, overLimit = callsMade + i >= MaxToolCallsPerTurn)
                 emit(AgentEvent.ToolCallFinished(outcome))
-                history += ChatMessage(MessageRole.Tool, outcome.output, toolCallId = call.id)
+                val result = ChatMessage(MessageRole.Tool, outcome.output, toolCallId = call.id)
+                history += result
+                // Every result counts, an error or a refusal as much as an ok: the stored history the chat rebuilds
+                // this from keeps no status. A tool that puts third-party text in an error is covered by that.
+                trust = trustWith(trust, result)
             }
             callsMade += calls.size
             index++
@@ -197,6 +212,7 @@ class AgentRuntime(
     private suspend fun FlowCollector<AgentEvent>.executeCall(
         call: ToolCall,
         tools: List<Tool>,
+        trust: ConversationTrust,
         overLimit: Boolean,
     ): ToolCallOutcome {
         val tool = tools.firstOrNull { it.name == call.name }
@@ -224,7 +240,7 @@ class AgentRuntime(
         ToolArgs.check(tool.parametersSchema, args)?.let {
             return outcome(ToolCallStatus.Error, "Error: invalid arguments for '${tool.name}': $it. Expected: ${tool.parametersSchema}")
         }
-        if (tool.requiresConfirmation(args)) {
+        if (tool.requiresConfirmation(args, trust)) {
             val approved = try {
                 gate.confirm(call, tool)
             } catch (e: CancellationException) {

@@ -1,11 +1,32 @@
 package io.github.tensaiapp.ui.screens.chat
 
+import io.github.tensaiapp.agent.AgentRuntime
+import io.github.tensaiapp.agent.ConfirmationGate
+import io.github.tensaiapp.agent.ReplyGenerator
+import io.github.tensaiapp.agent.ToolTier
+import io.github.tensaiapp.agent.html
 import io.github.tensaiapp.agent.ConfirmTarget
+import io.github.tensaiapp.agent.FakeHttp
+import io.github.tensaiapp.agent.MemoryTool
+import io.github.tensaiapp.agent.MemoryToolTest
+import io.github.tensaiapp.agent.PublicGuard
+import io.github.tensaiapp.agent.ToolRegistry
+import io.github.tensaiapp.agent.WebFetchTool
+import io.github.tensaiapp.agent.WebSearchTool
 import io.github.tensaiapp.data.chat.MessageEntity
 import io.github.tensaiapp.data.chat.ToolCallEntity
 import io.github.tensaiapp.data.chat.ToolCallsJson
+import io.github.tensaiapp.engine.ChatMessage
+import io.github.tensaiapp.engine.DecodeEvent
+import io.github.tensaiapp.engine.DecodeRequest
+import io.github.tensaiapp.engine.DecodeStats
+import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ToolCall
+import io.github.tensaiapp.websearch.PageReader
 import io.github.tensaiapp.ui.tools.ToolCallState
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,7 +82,7 @@ class ChatItemsTest {
         pending: Set<String> = emptySet(),
         allowed: Collection<String> = emptyList(),
         targets: Map<String, ConfirmTarget> = emptyMap(),
-    ) = buildChatItems(messages, rows, running, pending, allowed, targets, requiresConfirmation = { tool, args -> tool == "erase" || (tool == "memory" && args.contains("forget")) })
+    ) = buildChatItems(messages, rows, running, pending, allowed, targets, requiresConfirmation = { tool, args, _ -> tool == "erase" || (tool == "memory" && args.contains("forget")) })
 
     private fun List<ChatItem>.shape() = map {
         when (it) {
@@ -371,5 +392,121 @@ class ChatItemsTest {
         val items = build(messages, listOf(row("a1", "c1", "datetime"), row("a1", "c2", "ask_user"), row("a1", "c3", "device_info")))
 
         assertEquals(listOf("user", "line(1)", "line(1)", "answer", "line(1)"), items.shape())
+    }
+
+    /** The web tools and `memory` as the app registers them, every tier granted, behind [gate]. */
+    private fun appRuntime(gate: ConfirmationGate = ConfirmationGate.AutoApprove, http: FakeHttp = FakeHttp()) = AgentRuntime(
+        ToolRegistry(
+            listOf(
+                WebSearchTool { WebSearchTool.Setup(null, "DuckDuckGo") },
+                WebFetchTool(PageReader(http, PublicGuard, httpsOnly = true)),
+                MemoryTool(MemoryToolTest.FakeMemoryDao()),
+            ),
+        ) { ToolTier.entries.toSet() },
+        gate,
+    )
+
+    /** The list as the app builds it: gated by [AgentRuntime.requiresConfirmation], with the runtime's own fold. */
+    private fun buildLikeTheRuntime(messages: List<MessageEntity>, rows: List<ToolCallEntity>, pending: Set<String> = emptySet()): List<ChatItem> {
+        val runtime = appRuntime()
+        return buildChatItems(messages, rows, pending.isNotEmpty(), pending, emptyList(), emptyMap(), runtime::requiresConfirmation, runtime::trustWith)
+    }
+
+    @Test
+    fun aWebFetchIsACardOnlyForAUrlTheConversationDoesNotVouchFor() {
+        val search = message("assistant", "", listOf(call("s", "web_search", """{"query":"news"}""")), id = "a1")
+        val fetches = message(
+            "assistant",
+            "",
+            listOf(
+                call("f1", "web_fetch", """{"url":"https://example.com/1"}"""),
+                call("f2", "web_fetch", """{"url":"https://blog.example.org/a"}"""),
+                call("f3", "web_fetch", """{"url":"https://example.com/1?clip=hunter2"}"""),
+            ),
+            id = "a2",
+        )
+        val messages = listOf(
+            message("user", "news? and read blog.example.org/a"),
+            search,
+            message("tool", "1. Title 1\n   https://example.com/1\n   snippet\nsource: DuckDuckGo", toolCallId = "s"),
+            fetches,
+            message("tool", "url: https://example.com/1\n\ntext", toolCallId = "f1"),
+            message("tool", "url: https://blog.example.org/a\n\ntext", toolCallId = "f2"),
+        )
+        val rows = listOf(row("a1", "s", "web_search"), row("a2", "f1", "web_fetch"), row("a2", "f2", "web_fetch"))
+
+        // f3 waits on the gate: its card must be there, or the turn hangs on a card nobody sees.
+        assertEquals(listOf("user", "line(3)", "confirm:Pending"), buildLikeTheRuntime(messages, rows, pending = setOf("f3")).shape())
+    }
+
+    @Test
+    fun aRememberIsACardOnceTheConversationReadUntrustedText() {
+        val remember = """{"action":"remember","text":"The user likes tea"}"""
+        val messages = listOf(
+            message("user", "remember that I like tea"),
+            message("assistant", "", listOf(call("m1", "memory", remember)), id = "a1"),
+            message("tool", "remembered (id 1)", toolCallId = "m1"),
+            message("assistant", "Saved.", id = "a2"),
+            message("user", "what's new?"),
+            message("assistant", "", listOf(call("s", "web_search", """{"query":"news"}""")), id = "a3"),
+            message("tool", "1. Title 1\n   https://example.com/1\nsource: DuckDuckGo", toolCallId = "s"),
+            message("assistant", "Here is the news.", id = "a4"),
+            // A later turn of the same conversation: the search result is still in the prompt.
+            message("user", "thanks"),
+            message("assistant", "", listOf(call("m2", "memory", remember)), id = "a5"),
+            message("tool", "Error: the user refused this action.", toolCallId = "m2"),
+        )
+        val rows = listOf(row("a1", "m1", "memory", args = remember), row("a3", "s", "web_search"), row("a5", "m2", "memory", status = "refused", args = remember))
+
+        assertEquals(
+            listOf("user", "line(1)", "assistant", "user", "line(1)", "assistant", "user", "confirm:Denied"),
+            buildLikeTheRuntime(messages, rows).shape(),
+        )
+    }
+
+    /**
+     * Stop before a call's result, then "go on": the chat and the runtime read the same history, so the card shows for
+     * the call the gate asks about and for no other (no hidden card, no "Allowed" that was never asked).
+     */
+    @Test
+    fun theChatAndTheRuntimeAgreeAfterAStop() = runBlocking {
+        val blog = """{"url":"https://blog.example.org/a"}"""
+        val built = """{"url":"https://blog.example.org/a?x=1"}"""
+        val stored = listOf(
+            message("user", "read blog.example.org/a"),
+            message("assistant", "", listOf(call("w1", "web_fetch", blog)), id = "a1"),
+            message("tool", "Error: stopped.", toolCallId = "w1"),
+            message("user", "go on"),
+            message("assistant", "", listOf(call("w2", "web_fetch", blog), call("w3", "web_fetch", built)), id = "a2"),
+            message("tool", "url: https://blog.example.org/a\n\ntext", toolCallId = "w2"),
+        )
+        val rows = listOf(row("a1", "w1", "web_fetch", status = "stopped"), row("a2", "w2", "web_fetch"))
+
+        assertEquals(listOf("user", "line(1)", "user", "line(1)", "confirm:Pending"), buildLikeTheRuntime(stored, rows, pending = setOf("w3")).shape())
+
+        // The same history as the prompt replays it, and the reply that made w2 and w3.
+        val history = listOf(
+            ChatMessage(MessageRole.User, "read blog.example.org/a"),
+            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(call("w1", "web_fetch", blog))),
+            ChatMessage(MessageRole.Tool, "Error: stopped.", toolCallId = "w1"),
+            ChatMessage(MessageRole.User, "go on"),
+        )
+        val replies = ArrayDeque(
+            listOf(
+                listOf(call("w2", "web_fetch", blog), call("w3", "web_fetch", built)),
+                emptyList(),
+            ),
+        )
+        val generator = ReplyGenerator {
+            flowOf(
+                DecodeEvent.ToolTurn("", null, replies.removeFirst(), toolsIgnored = false, toolParseFailed = false, truncated = false),
+                DecodeEvent.Done(DecodeStats(tokensGenerated = 1, tokPerSec = 1f, ttftMs = 1L)),
+            )
+        }
+        val asked = mutableListOf<String>()
+        appRuntime({ c, _ -> asked += c.argumentsJson; false }, FakeHttp(html("<html><body><article><p>text</p></article></body></html>")))
+            .run(DecodeRequest(history), generator).toList()
+
+        assertEquals(listOf(built), asked)
     }
 }

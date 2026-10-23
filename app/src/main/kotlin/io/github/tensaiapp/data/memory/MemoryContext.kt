@@ -68,6 +68,16 @@ object MemoryContext {
         if (first < 0) return messages
         return messages.toMutableList().also { it[first] = it[first].copy(content = block + "\n\n" + it[first].content) }
     }
+
+    /**
+     * [content] without the block [prepend] put in front of it: the user's own words, for the agent's gate. A fact
+     * holds no line break, so the first footer line is the block's.
+     */
+    fun withoutBlock(content: String): String {
+        if (!content.startsWith(HEADER)) return content
+        val end = content.indexOf("\n$FOOTER\n\n")
+        return if (end < 0) content else content.substring(end + FOOTER.length + 3)
+    }
 }
 
 /**
