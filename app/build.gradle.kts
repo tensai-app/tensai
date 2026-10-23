@@ -77,7 +77,14 @@ android {
     }
 
     buildTypes {
+        // Installs next to the CI-signed release as "tensai dev", with its own data, so a fix can be
+        // tried on a phone that runs the release without a tag or touching the real app's chats.
+        debug {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["appLabel"] = "tensai dev"
+        }
         release {
+            manifestPlaceholders["appLabel"] = "tensai"
             if (releaseSigningAvailable) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

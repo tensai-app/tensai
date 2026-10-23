@@ -71,7 +71,7 @@
         android:name=".TensaiApp"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:label="tensai"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Tensai"
         android:supportsRtl="true">
