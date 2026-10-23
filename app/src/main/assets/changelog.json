@@ -2,6 +2,34 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.5-rc1",
+      "title": "Web pages can no longer act behind your back",
+      "date": "2026-10-23",
+      "intro": "A web page tensai reads could try to make it send your data somewhere or plant a memory. Both now stop at a card you answer.",
+      "groups": [
+        {
+          "label": "Web",
+          "items": [
+            "Reading a page you named or a link a search returned works as before; any other address shows a card with the site and the full address first",
+            "So text from a page cannot quietly send your clipboard, contacts or notes to another site"
+          ]
+        },
+        {
+          "label": "Memory",
+          "items": [
+            "Once a chat has read a web page, Wikipedia, your calendar, the clipboard or past chats, remembering a new fact asks first and shows the fact exactly as it will be stored",
+            "Asking tensai to remember something in a chat that read none of these works without a card"
+          ]
+        },
+        {
+          "label": "Privacy",
+          "items": [
+            "The engine no longer writes the prompt to the system log"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.4",
       "title": "Clearer confirmations, cleaner maths",
       "date": "2026-10-23",
