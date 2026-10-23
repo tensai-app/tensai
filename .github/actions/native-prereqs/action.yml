@@ -77,7 +77,7 @@ runs:
   # génération est complète, pour ne jamais figer un jeu partiel.
   - name: Restore generated Vulkan shaders
     id: shader-cache
-    uses: actions/cache/restore@v6
+    uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
     with:
       path: |
         third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/shaders
@@ -112,7 +112,7 @@ runs:
 
   - name: Save generated Vulkan shaders
     if: steps.shader-cache.outputs.cache-hit != 'true'
-    uses: actions/cache/save@v6
+    uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
     with:
       path: |
         third_party/llama.kt/llama-kt/src/main/cpp/ggml-vulkan/shaders
@@ -124,9 +124,9 @@ runs:
     shell: bash
     run: ./third_party/llama.kt/scripts/build-opencl.sh
 
-  - uses: actions/setup-java@v6
+  - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
     with:
       distribution: temurin
       java-version: '21'
 
-  - uses: gradle/actions/setup-gradle@v5
+  - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
