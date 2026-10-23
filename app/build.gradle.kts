@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.tensaiapp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.3.5-rc3"
+        versionCode = 12
+        versionName = "0.3.5"
 
         // Short commit of the llama.kt submodule this build compiles (TEN-158, "This device"),
         // "" when git or the checkout is not there (source tarball).
