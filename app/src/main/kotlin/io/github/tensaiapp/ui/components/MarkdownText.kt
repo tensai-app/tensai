@@ -60,6 +60,8 @@ import org.commonmark.node.Code
 import org.commonmark.node.Emphasis
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.HardLineBreak
+import org.commonmark.node.HtmlBlock
+import org.commonmark.node.HtmlInline
 import org.commonmark.node.Heading
 import org.commonmark.node.IndentedCodeBlock
 import org.commonmark.node.Link
@@ -72,10 +74,68 @@ import org.commonmark.node.SoftLineBreak
 import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.Text as MarkdownTextNode
 import org.commonmark.node.ThematicBreak
+import org.commonmark.parser.IncludeSourceSpans
 import org.commonmark.parser.Parser
 
 /** Shared, stateless — commonmark's [Parser] is safe to reuse across calls, so one instance serves every [MarkdownText] in the app. */
 private val markdownParser: Parser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
+
+/** The same parser with inline source spans, for [parseMarkdown]'s detection pass only: spans cost on every parse. */
+private val spannedMarkdownParser: Parser = Parser.builder()
+    .extensions(listOf(TablesExtension.create()))
+    .includeSourceSpans(IncludeSourceSpans.BLOCKS_AND_INLINES)
+    .build()
+
+/** A run of `*` with an ASCII letter or digit on each side and a digit on at least one: `17*23`, `2*x`, `x*2`, `2**10`. */
+private val arithmeticAsterisks = Regex("""(?<=[0-9])\*+(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])\*+(?=[0-9])""")
+
+/**
+ * [markdown] parsed the way [MarkdownText] draws it, with one departure from CommonMark (TEN-168): a run of `*`
+ * that has an ASCII letter or digit right before and right after it, and a digit on at least one of those two
+ * sides (`17*23=391`, `2*x`, `x*2`, `2**10`), neither opens nor closes emphasis and stays literal.
+ *
+ * CommonMark already holds `_` to that inside a word, but lets `*` emphasise intraword, so `7*55 is 385, and
+ * 11*35=385` lost two asterisks and went italic in between. The parser cannot be told otherwise (the `*`
+ * processor is built in, a second one conflicts), so those runs are backslash-escaped and the source parsed
+ * again. The digit is what keeps `**API**s` and `**H**ello` bold; ASCII only, so `重要**です` keeps its bold too.
+ * Never inside code, raw HTML or an autolink, where a backslash is drawn as typed: a parse with source spans
+ * finds those.
+ *
+ * Runs on every streamed chunk, so the usual reply, with no such run, costs one plain parse.
+ */
+internal fun parseMarkdown(markdown: String): Node {
+    if (!arithmeticAsterisks.containsMatchIn(markdown)) return markdownParser.parse(markdown)
+    val literal = BooleanArray(markdown.length)
+    spannedMarkdownParser.parse(markdown).markLiteral(markdown, literal)
+    val escaped = StringBuilder(markdown.length + 8)
+    var from = 0
+    for (run in arithmeticAsterisks.findAll(markdown)) {
+        if (run.range.any { literal[it] }) continue
+        escaped.append(markdown, from, run.range.first)
+        repeat(run.value.length) { escaped.append("\\*") }
+        from = run.range.last + 1
+    }
+    escaped.append(markdown, from, markdown.length)
+    return markdownParser.parse(escaped.toString())
+}
+
+/** Flags in [literal] the characters of [source] that code, raw HTML and autolinks show as typed. */
+private fun Node.markLiteral(source: String, literal: BooleanArray) {
+    val shownAsTyped = when (this) {
+        is Code, is FencedCodeBlock, is IndentedCodeBlock, is HtmlBlock, is HtmlInline -> true
+        is Link -> sourceSpans.firstOrNull()?.let { source.getOrNull(it.inputIndex) == '<' } == true
+        else -> false
+    }
+    if (shownAsTyped) {
+        sourceSpans.forEach { span -> literal.fill(true, span.inputIndex, minOf(span.inputIndex + span.length, literal.size)) }
+        return
+    }
+    var child = firstChild
+    while (child != null) {
+        child.markLiteral(source, literal)
+        child = child.next
+    }
+}
 
 /**
  * Which typographic scale block headings are drawn at (TEN-89).
@@ -126,7 +186,7 @@ fun MarkdownText(
     style: TextStyle = MaterialTheme.typography.bodyLarge,
     headings: MarkdownHeadings = MarkdownHeadings.Display,
 ) {
-    val document = remember(markdown) { markdownParser.parse(markdown) }
+    val document = remember(markdown) { parseMarkdown(markdown) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         document.children().forEach { block -> MarkdownBlock(node = block, color = color, style = style, headings = headings) }
     }
