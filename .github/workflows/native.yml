@@ -72,6 +72,11 @@ jobs:
       - name: Vulkan matmul split test
         run: third_party/llama.kt/scripts/test-vk-split.sh
 
+      # Valeur de retour de nativeCompletion : -1 sur un llama_decode en échec, pas
+      # un nombre de tokens lu comme une réponse finie. En-tête sans llama.
+      - name: Completion result test
+        run: third_party/llama.kt/scripts/test-completion-result.sh
+
       # Ce que le job JVM ne peut pas garantir : que le CMake de llama.kt, les
       # sources cpp/ vendorées, les shaders générés et libOpenCL.so tiennent
       # ensemble, et qu'il en sort un APK.

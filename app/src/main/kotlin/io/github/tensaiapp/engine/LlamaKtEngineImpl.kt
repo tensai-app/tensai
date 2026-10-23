@@ -539,14 +539,11 @@ class LlamaKtEngineImpl(
                         // Last look before committing to a call that can hold this thread for
                         // minutes. Everything above (`formatChat`, `tokenize`) is a blocking
                         // native call with no suspension point, so a cancellation landing during
-                        // it is not delivered anywhere — and `awaitClose`'s interrupt(), the only
-                        // other thing that fires, sets a flag that `completion` clears on entry
-                        // when it rewinds the context. A stop arriving in that window is simply
-                        // erased: the decode runs to the end, the "stop" button does nothing
-                        // visible, and the next load waits out a generation nobody wanted. There
-                        // is no second interrupt to try — the flag was consumed — so the check has
-                        // to happen before the call rather than be retried after it.
-                        coroutineContext.ensureActive()
+                        // it is not delivered anywhere, and `awaitClose`'s interrupt() fires once.
+                        // The interrupt left pending by the previous decode is cleared first, so
+                        // that one, arriving at any point after the check, stops this completion
+                        // (see [startInterruptible] for the window this used to leave open).
+                        //
                         // TEN-79: llama.cpp's own count of the tokens it sampled — the *only*
                         // figure comparable to nPredict. `tokenCount` is not it and never was: the
                         // token callback fires once per flushable piece of text, not once per
@@ -555,14 +552,20 @@ class LlamaKtEngineImpl(
                         // `LlamaEngine.completion`'s @return). Comparing that undercount against
                         // nPredict is what let a reply cut off at its budget be reported as
                         // `Complete`, which is the same thing TEN-60 set out to fix.
-                        val tokensPredicted =
+                        val tokensPredicted = startInterruptible(
+                            resetInterrupt = { llamaEngine.resetInterrupt() },
+                            ensureActive = { coroutineContext.ensureActive() },
+                        ) {
                             llamaEngine.completion(prompt, libParams, callback, chatParseCallback)
+                        }
 
                         // A negative count is not a count (TEN-91): a C++ exception escaped the
                         // decode and `tensai_jni.cpp`'s JNI guard answered with a sentinel rather
                         // than letting it unwind into the VM and kill the process. Before that
                         // guard existed there was nothing to handle here, because there was no
-                        // process left to handle it.
+                        // process left to handle it. A `llama_decode` that returns an error lands
+                        // here too: it used to end the loop the way an EOS does and come back as a
+                        // count, read below as a reply the model finished.
                         //
                         // Reported as an error, not as a `Done`, because it is one. `-1` is below
                         // every `nPredict`, so letting it through to `stopReason` below would have
@@ -709,10 +712,11 @@ class LlamaKtEngineImpl(
                     return skip("prefix cache: skipped, $promptTokens prefix tokens leave no room in n_ctx=${metadata.nCtxEffective}")
                 }
                 log("prefix cache: building $promptTokens tokens (n_ctx=${metadata.nCtxEffective})")
-                // Stop landing during the formatting above is erased by nativePrefill (it clears the
-                // interrupt flag on entry), so look before committing to minutes of prefill and a save.
-                ensureActive()
-                val resident = llamaEngine.prefill(prefix)
+                // Look before committing to minutes of prefill and a save, after clearing the
+                // interrupt a previous call left pending: see [startInterruptible].
+                val resident = startInterruptible({ llamaEngine.resetInterrupt() }, ensureActive) {
+                    llamaEngine.prefill(prefix)
+                }
                 // Short of the whole prefix: interrupted, declined or failed. Nothing worth saving.
                 if (resident < promptTokens) return skip("prefix cache: prefill stopped at $resident of $promptTokens tokens, nothing saved")
                 val prefillMs = System.currentTimeMillis() - startMs
@@ -781,9 +785,9 @@ class LlamaKtEngineImpl(
          * and then *waits for it to return*: [coroutineScope] does not complete until `work` has,
          * so a caller that cancels and joins (the queue does, before a generation, a swap or a
          * save) really does get the engine thread back, and never starts its own call behind a
-         * prefill that is still decoding. The `ensureActive()` before the native call is
-         * [decode]'s last-look for the same reason: `nativePrefill` clears the interrupt flag on
-         * entry, so a cancel landing during the formatting above it would be erased.
+         * prefill that is still decoding. The native call goes through [startInterruptible], like
+         * [decode]'s: the interrupt is reset before the last cancellation check, so a cancel
+         * landing after that check is never erased.
          *
          * [refreshKvUsedCells] runs on every way out, interrupted included: a prefill moves the
          * cache without a single token callback to refresh it, and the published figure is what
@@ -807,8 +811,9 @@ class LlamaKtEngineImpl(
                         if (!ContextBudget.hasRoom(ContextBudget.available(metadata.nCtxEffective, promptTokens))) {
                             return@async false
                         }
-                        ensureActive()
-                        val resident = llamaEngine.prefill(prompt)
+                        val resident = startInterruptible({ llamaEngine.resetInterrupt() }, { ensureActive() }) {
+                            llamaEngine.prefill(prompt)
+                        }
                         // Negative is the native side failing, not declining: a failure, not a skip.
                         if (resident < 0) throw InferenceException("Prefill failed in the native engine (returned $resident)")
                         resident > 0
