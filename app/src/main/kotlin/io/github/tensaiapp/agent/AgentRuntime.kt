@@ -141,7 +141,7 @@ class AgentRuntime(
                 emit(AgentEvent.Error(if (it is QueueBusyException) QueueBusyException("The model was busy with another task, the turn stopped") else it))
                 return@flow
             }
-            val turn = reply.turn
+            val turn = reply.turn?.let { bareCall(it, tools) ?: it }
             val calls = if (forced || turn == null) emptyList() else uniqueIds(turn.toolCalls, turnId, index, usedIds)
             emit(
                 AgentEvent.ReplyFinished(
@@ -193,6 +193,18 @@ class AgentRuntime(
             }
         }
         return Reply(stats, turn, error)
+    }
+
+    /**
+     * [turn] as a call when its whole content is one written as bare JSON ([BareToolCall]), with no content
+     * left: it then goes through the same validation, gate and history as a tagged call, and the reply is
+     * stored and replayed as a call, not as the JSON. `null` when it is not one, or the engine's parse is not
+     * one to second-guess (it found calls, failed, was cut short, or the template never showed the tools).
+     */
+    private fun bareCall(turn: DecodeEvent.ToolTurn, tools: List<Tool>): DecodeEvent.ToolTurn? {
+        if (turn.toolCalls.isNotEmpty() || turn.toolParseFailed || turn.truncated || turn.toolsIgnored) return null
+        val call = BareToolCall.parse(turn.content, tools.map { it.name }) ?: return null
+        return turn.copy(content = "", toolCalls = listOf(call))
     }
 
     /**

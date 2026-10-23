@@ -53,9 +53,10 @@ class AgentRuntimeTest {
         content: String = text,
         toolParseFailed: Boolean = false,
         truncated: Boolean = false,
+        toolsIgnored: Boolean = false,
     ): List<DecodeEvent> = listOf(
         DecodeEvent.Token(text),
-        DecodeEvent.ToolTurn(content, null, calls, toolsIgnored = false, toolParseFailed = toolParseFailed, truncated = truncated),
+        DecodeEvent.ToolTurn(content, null, calls, toolsIgnored = toolsIgnored, toolParseFailed = toolParseFailed, truncated = truncated),
         DecodeEvent.Done(DecodeStats(tokensGenerated = 1, tokPerSec = 1f, ttftMs = 1L)),
     )
 
@@ -555,6 +556,84 @@ class AgentRuntimeTest {
         val finished = events.filterIsInstance<AgentEvent.ReplyFinished>().single()
         assertTrue(finished.truncated)
         assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun aCallWrittenAsBareJsonRunsAndIsReplayedAsACall() = runBlocking {
+        val tool = FakeTool()
+        val gen = ScriptedGenerator(reply("""{"name": "echo", "arguments": {"text": "hi"}}"""), reply("done"))
+
+        val events = runtime(tool).run(userTurn, gen).toList()
+
+        assertEquals(1, tool.runs)
+        val first = events.filterIsInstance<AgentEvent.ReplyFinished>().first()
+        assertEquals("", first.content)
+        assertEquals(listOf("echo"), first.calls.map { it.name })
+        val replayed = gen.requests[1].messages[1]
+        assertEquals("", replayed.content)
+        assertEquals(listOf("echo"), replayed.toolCalls!!.map { it.name })
+        assertEquals("hi", org.json.JSONObject(replayed.toolCalls!!.single().argumentsJson).getString("text"))
+        assertEquals(events.outcomes().single().call.id, gen.requests[1].messages[2].toolCallId)
+    }
+
+    @Test
+    fun aBareJsonCallGoesThroughTheConfirmationGate() = runBlocking {
+        val tool = FakeTool(name = "send", sendsOrDeletes = true)
+        val gen = ScriptedGenerator(reply("""{"name": "send", "arguments": {"text": "hi"}}"""), reply("understood"))
+
+        val events = runtime(tool, gate = ConfirmationGate { _, _ -> false }).run(userTurn, gen).toList()
+
+        assertEquals(0, tool.runs)
+        assertEquals(ToolCallStatus.Refused, events.outcomes().single().status)
+    }
+
+    @Test
+    fun bareJsonIsLeftAloneWhenTheEnginesParseFailedWasCutOrHadNoTools() = runBlocking {
+        val text = """{"name": "echo", "arguments": {"text": "hi"}}"""
+        for (flagged in listOf(reply(text, toolParseFailed = true), reply(text, truncated = true), reply(text, toolsIgnored = true))) {
+            val tool = FakeTool()
+            val gen = ScriptedGenerator(flagged)
+
+            val events = runtime(tool).run(userTurn, gen).toList()
+
+            assertEquals(0, tool.runs)
+            val finished = events.filterIsInstance<AgentEvent.ReplyFinished>().single()
+            assertEquals(text, finished.content)
+            assertTrue(finished.calls.isEmpty())
+            assertEquals(1, gen.requests.size)
+        }
+    }
+
+    @Test
+    fun aBareJsonCallAfterTheLimitIsDroppedNotRun() = runBlocking {
+        val tool = FakeTool()
+        val gen = ScriptedGenerator(
+            reply(calls = (1..5).map { call("c$it") }),
+            reply("""{"name": "echo", "arguments": {"text": "late"}}"""),
+        )
+
+        val events = runtime(tool).run(userTurn, gen).toList()
+
+        assertEquals(5, tool.runs)
+        assertEquals(ToolChoice.None, gen.requests[1].toolChoice)
+        val last = events.filterIsInstance<AgentEvent.ReplyFinished>().last()
+        assertTrue(last.droppedCalls)
+        assertTrue(last.calls.isEmpty())
+        assertEquals("", last.content)
+        assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun bareJsonNamingAnUnknownToolStaysTheAnswer() = runBlocking {
+        val text = """{"name": "launch_rockets", "arguments": {}}"""
+        val gen = ScriptedGenerator(reply(text))
+
+        val events = runtime(FakeTool()).run(userTurn, gen).toList()
+
+        val finished = events.filterIsInstance<AgentEvent.ReplyFinished>().single()
+        assertEquals(text, finished.content)
+        assertTrue(finished.calls.isEmpty())
+        assertEquals(1, gen.requests.size)
     }
 
     @Test
