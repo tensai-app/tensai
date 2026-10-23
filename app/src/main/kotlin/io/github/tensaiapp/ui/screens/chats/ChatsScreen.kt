@@ -77,6 +77,7 @@ import io.github.tensaiapp.data.chat.ConversationEntity
 import io.github.tensaiapp.data.models.ModelRepository
 import io.github.tensaiapp.data.session.SessionRepository
 import io.github.tensaiapp.runtime.ActiveSessionTracker
+import io.github.tensaiapp.runtime.ChatTurns
 import io.github.tensaiapp.runtime.InferenceQueue
 import io.github.tensaiapp.runtime.RuntimeGraph
 import io.github.tensaiapp.ui.components.TensaiButton
@@ -266,19 +267,23 @@ fun ChatsScreen(
 /**
  * Deletes [ids] with their messages and saved sessions. A generation running for one of them is
  * cancelled first and the active-session pointer dropped, so a later save (backgrounding, model
- * swap) cannot write a session file for a conversation that no longer exists.
+ * swap) cannot write a session file for a conversation that no longer exists. Its turn is stopped
+ * too, and waited for: a cut turn writes its last rows on the way out, and they must not land after
+ * the delete.
  */
 internal suspend fun deleteChats(
     ids: List<String>,
     chatRepository: ChatRepository,
     sessionRepository: SessionRepository,
     inferenceQueue: InferenceQueue = RuntimeGraph.inferenceQueue,
+    chatTurns: ChatTurns = RuntimeGraph.chatTurns,
 ) {
     ids.forEach { id ->
         if (ActiveSessionTracker.current.value?.first == id) {
             inferenceQueue.cancelActive()
             ActiveSessionTracker.clear()
         }
+        chatTurns.stop(id)?.join()
         sessionRepository.delete(id)
         chatRepository.deleteConversation(id)
     }

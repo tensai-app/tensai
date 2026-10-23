@@ -383,6 +383,9 @@ object RuntimeGraph {
     /** The API keys of the search providers that need one, encrypted (TEN-174). */
     val searchKeys: SearchKeyStores by lazy { SearchKeyStores(appContext) }
 
+    /** The chat turns running, by conversation: a chat screen reopened mid-turn stops it from here, see [ChatTurns]. */
+    val chatTurns: ChatTurns by lazy { ChatTurns() }
+
     /** Asks the user before a call that sends or deletes (TEN-174): the chat draws its card, see [UiConfirmationGate]. */
     val confirmationGate: UiConfirmationGate by lazy { UiConfirmationGate() }
 

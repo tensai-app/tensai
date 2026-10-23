@@ -48,6 +48,7 @@ import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.PrefixCache
 import io.github.tensaiapp.engine.WarmUpPrompt
 import io.github.tensaiapp.runtime.ActiveSessionTracker
+import io.github.tensaiapp.runtime.ChatTurns
 import io.github.tensaiapp.runtime.AppForegroundTracker
 import io.github.tensaiapp.runtime.InferenceQueue
 import io.github.tensaiapp.runtime.PartTokenCache
@@ -60,6 +61,7 @@ import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -110,6 +112,7 @@ class ChatViewModelTest {
     private lateinit var memoryDao: FakeMemoryDao
     private var memoryEnabled = true
     private lateinit var partTokens: PartTokenCache
+    private lateinit var chatTurns: ChatTurns
 
     /** The tiers [toolGrants] says are granted, what a registry built on [grants] and the view models read (TEN-205). */
     private val grantedTiers = MutableStateFlow(setOf(ToolTier.Local))
@@ -133,6 +136,7 @@ class ChatViewModelTest {
         memoryDao = FakeMemoryDao()
         memoryEnabled = true
         partTokens = PartTokenCache()
+        chatTurns = ChatTurns()
         grantedTiers.value = setOf(ToolTier.Local)
         chatRepository = ChatRepository(chatDao)
         modelRepository = ModelRepository(
@@ -187,6 +191,7 @@ class ChatViewModelTest {
         memoryPrompt = MemoryPrompt(memoryDao, enabled = { memoryEnabled }),
         partTokens = partTokens,
         toolGrants = grantedTiers,
+        chatTurns = chatTurns,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -1596,6 +1601,149 @@ class ChatViewModelTest {
         assertEquals(listOf("stopped", "stopped"), chatDao.toolCalls.map { it.status })
         assertNull(viewModel.error.value)
         assertFalse(viewModel.canStop.first())
+    }
+
+    /** A tool that never returns, and the signal that it has started. */
+    private fun hangingTool(entered: CompletableDeferred<Unit>) = object : Tool {
+        override val name = "hang"
+        override val description = "never returns"
+        override val parametersSchema = """{"type":"object","properties":{}}"""
+        override val tier = ToolTier.Local
+        override suspend fun execute(argsJson: String): ToolResult {
+            entered.complete(Unit)
+            awaitCancellation()
+        }
+    }
+
+    /**
+     * The chat left and reopened while a tool runs is a new instance, and the queue reads idle. It
+     * still offers Stop, its Stop ends the turn the first one started, and a send there is refused until then.
+     */
+    @Test
+    fun aChatReopenedDuringAToolStopsTheTurnAndRefusesASend() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(hangingTool(entered))))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"))
+        val id = chatRepository.createConversation(modelId = null)
+        newViewModel(id).send("go")
+        entered.await()
+
+        val reopened = newViewModel(id)
+        assertTrue("the turn is still this conversation's", reopened.canStop.first())
+        assertTrue(reopened.turnRunning.first())
+        reopened.send("again")
+        reopened.regenerate()
+        reopened.stop()
+        awaitGeneration()
+
+        val stored = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool"), stored.map { it.role })
+        assertEquals(listOf("stopped"), chatDao.toolCalls.map { it.status })
+        assertTrue(chatTurns.running.value.isEmpty())
+        assertFalse(reopened.canStop.first())
+        assertFalse(reopened.turnRunning.first())
+    }
+
+    /** While a tool of A runs the engine is A's, a send in B would take it from under the turn. */
+    @Test
+    fun aSendInAnotherConversationIsRefusedWhileATurnRunsATool() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(hangingTool(entered))))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"))
+        val a = chatRepository.createConversation(modelId = null)
+        val b = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(a)
+        val viewModelB = newViewModel(b)
+        viewModelA.send("go")
+        entered.await()
+
+        viewModelB.send("hi")
+        assertFalse("B has no turn of its own to stop", viewModelB.canStop.first())
+        viewModelA.stop()
+        awaitGeneration()
+
+        assertTrue(chatDao.observeMessages(b).first().isEmpty())
+        assertEquals(listOf("stopped"), chatDao.toolCalls.map { it.status })
+    }
+
+    /**
+     * Stop then Send on the reopened chat: the turn leaves the registry only once the rows it writes on the way
+     * out are written, so the new message lands after them and the history reads user, calls, results, user.
+     */
+    @Test
+    fun aSendRightAfterAStopLandsAfterTheRowsTheCutTurnWrites() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(hangingTool(entered))))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"))
+        val id = chatRepository.createConversation(modelId = null)
+        newViewModel(id).send("go")
+        entered.await()
+        val reopened = newViewModel(id)
+
+        // Unconfined: runs inside the write that empties the registry, before anything else can.
+        var resultsWhenFreed: List<String>? = null
+        val freed = launch(Dispatchers.Unconfined) {
+            chatTurns.running.first { it.isEmpty() }
+            resultsWhenFreed = chatDao.toolCalls.map { it.status }
+            reopened.send("again")
+        }
+        reopened.stop()
+        freed.join()
+        awaitGeneration()
+
+        assertEquals("the cut call was closed before the turn let go", listOf("stopped"), resultsWhenFreed)
+        val stored = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool", "user", "assistant"), stored.map { it.role })
+        assertEquals("again", stored[3].content)
+    }
+
+    /**
+     * An empty chat does not warm its tool prefix while another conversation's turn runs a tool: the cache holds
+     * that turn, and the warm-up would save it and swap it out. It warms once the turn is over.
+     */
+    @Test
+    fun noPrefixWarmUpWhileAnotherConversationsTurnRunsATool() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(hangingTool(entered))))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"))
+        val a = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(a)
+        viewModelA.send("go")
+        entered.await()
+        val warmUpsBefore = engine.toolPrefixWarmUps.size
+
+        val warm = keepWarm(newViewModel(null))
+        settle()
+        assertEquals("nothing warmed while A's tool runs", warmUpsBefore, engine.toolPrefixWarmUps.size)
+
+        viewModelA.stop()
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        warm.cancelAndJoin()
+        awaitGeneration()
+    }
+
+    /** A question asked after the chat was reopened is shown there, and leaving that screen dismisses it. */
+    @Test
+    fun aChatReopenedMidTurnShowsItsQuestionAndLeavingDismissesIt() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += answerReply("Okay.")
+        val id = chatRepository.createConversation(modelId = null)
+        newViewModel(id).send("text Jade")
+        withTimeout(5_000) { askUserGate.pending.first { it.isNotEmpty() } }
+
+        val reopened = newViewModel(id)
+        assertNotNull(reopened.pendingQuestion.first())
+        reopened.leave()
+        awaitGeneration()
+
+        assertEquals("""{"dismissed":true}""", chatRepository.observeMessages(id).first().single { it.role == "tool" }.content)
+        assertTrue(chatTurns.running.value.isEmpty())
     }
 
     /** TEN-173: the Tools switch is stored per conversation, and a draft's choice lands in the row its first send creates. */

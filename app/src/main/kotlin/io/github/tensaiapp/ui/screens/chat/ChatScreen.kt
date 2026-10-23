@@ -146,7 +146,9 @@ fun ChatScreen(
     LaunchedEffect(messages) { messages?.let { onEmptyChanged(it.isEmpty()) } }
     val error by viewModel.error.collectAsState()
     val queueState by viewModel.queueState.collectAsState()
-    val isGenerating = queueState is QueueState.Generating
+    // A turn holds the engine while the queue reads idle too (a restore, a tool between two generations): Send stays off.
+    val turnRunning by viewModel.turnRunning.collectAsState(initial = false)
+    val isGenerating = queueState is QueueState.Generating || turnRunning
     // Narrower than isGenerating, and only the stop button uses it — see ChatViewModel.canStop.
     val canStop by viewModel.canStop.collectAsState(initial = false)
     // Generating still has a model resident, so the pill's chip must not fall

@@ -97,7 +97,11 @@ class InferenceService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_UNLOAD -> RuntimeGraph.applicationScope.launch { RuntimeGraph.inferenceQueue.unloadModel() }
-            ACTION_STOP_GENERATION -> RuntimeGraph.inferenceQueue.cancelActive()
+            ACTION_STOP_GENERATION -> {
+                RuntimeGraph.inferenceQueue.cancelActive()
+                // The whole turn, not only its generation: the in-app Stop's rule.
+                RuntimeGraph.chatTurns.stopAll()
+            }
         }
         // Not sticky: this service's lifecycle is entirely state-driven (see class
         // KDoc). If the system kills it, TensaiApp's observer restarts it on the

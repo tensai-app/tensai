@@ -64,9 +64,9 @@ fun interface ConfirmationGate {
  *
  * Between two generations the queue is free: a foreign generation (a warm-up aside, which is cancelled)
  * may take it, and the next generation is then rejected as busy. [waitForQueue] gets one bounded wait
- * per generation, then the turn ends with a [QueueBusyException] error. For the same reason the
- * notification's Stop, which only cancels the queue's active generation, does nothing while a tool
- * runs; the in-app Stop cancels the whole turn.
+ * per generation, then the turn ends with a [QueueBusyException] error. For the same reason cancelling
+ * the queue's active generation does nothing while a tool runs: Stop, in the app or the notification,
+ * cancels the whole turn (see `ChatTurns`).
  *
  * A tool runs on [Dispatchers.IO], detached from the turn: one that ignores cancellation is abandoned
  * at its timeout (reported [ToolCallStatus.Timeout]) and the loop moves on, see [Tool.execute].

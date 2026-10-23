@@ -31,6 +31,7 @@ import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.ActiveSessionTracker
+import io.github.tensaiapp.runtime.ChatTurns
 import io.github.tensaiapp.runtime.AppForegroundTracker
 import io.github.tensaiapp.runtime.GenerationStopSignal
 import io.github.tensaiapp.runtime.InferenceQueue
@@ -44,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +60,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -98,12 +101,6 @@ internal fun replySampling(samplingJson: String?, enableThinking: Boolean, think
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
-
-/**
- * The conversations with an agent turn running in this process, so a chat screen opened (or rebuilt) while the turn
- * goes on still shows its calls as running rather than stopped. Process-wide for the reason [ActiveSessionTracker] is.
- */
-private val runningAgentTurns = MutableStateFlow<Set<String>>(emptySet())
 
 /**
  * How an assistant reply's generation ended, as far as the *reader* is concerned — see
@@ -379,6 +376,7 @@ class ChatViewModel(
     private val memoryPrompt: MemoryPrompt = RuntimeGraph.memoryPrompt,
     private val partTokens: PartTokenCache = RuntimeGraph.partTokenCache,
     private val toolGrants: Flow<Set<ToolTier>> = RuntimeGraph.toolSettings.grants,
+    private val chatTurns: ChatTurns = RuntimeGraph.chatTurns,
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -422,7 +420,7 @@ class ChatViewModel(
             combine(
                 chatRepository.observeMessages(id),
                 chatRepository.observeToolCalls(id),
-                runningAgentTurns,
+                chatTurns.running,
                 combine(confirmationGate.pending, confirmationGate.targets, ::Pair),
                 confirmationGate.allowed,
             ) { stored, calls, running, (pending, targets), allowed ->
@@ -441,7 +439,10 @@ class ChatViewModel(
      * The question of this chat's running turn the model is waiting on (TEN-187), `null` when there is none: the screen
      * swaps the input bar for its card. At most one, a turn runs its calls one after the other.
      */
-    val pendingQuestion: Flow<PendingQuestion?> = askUserGate.pending.map { pending -> pending.values.firstOrNull { it.callId in turnCallIds } }
+    val pendingQuestion: Flow<PendingQuestion?> = askUserGate.pending.map { pending ->
+        val callIds = runningTurn()?.callIds.orEmpty()
+        pending.values.firstOrNull { it.callId in callIds }
+    }
         .distinctUntilChanged()
 
     /** The user's answer to [callId]'s question: the chosen options, then the typed text if any. The turn goes on with it. */
@@ -461,18 +462,18 @@ class ChatViewModel(
     private val _generatingHere = MutableStateFlow(false)
 
     /**
-     * `true` for as long as an agent turn *this* instance started is running, tool execution included:
-     * the queue is idle then, so [canStop] cannot read it off [queueState]. See [stop].
+     * This conversation's running turn, whichever instance started it: a screen reopened mid-turn is a new
+     * instance, and the turn's job, stop signal and calls are what it needs to stop it, answer its cards and
+     * refuse a second send. See [ChatTurns].
      */
-    private val _agentRunning = MutableStateFlow(false)
+    private fun runningTurn(): ChatTurns.Turn? = _conversationId.value?.let { chatTurns.running.value[it] }
 
-    /** The running agent turn's stop signal, marked by [stop] so the reply it cuts is recorded as stopped. */
-    @Volatile
-    private var agentStopSignal: GenerationStopSignal? = null
-
-    /** The ids of the calls the running agent turn made, so [leave] denies the cards of this turn and no other. */
-    @Volatile
-    private var turnCallIds: Set<String> = emptySet()
+    /**
+     * A turn runs in any conversation, see [ChatTurns]. The queue reads idle for parts of it (a restore, a
+     * tool between two generations), so [ChatScreen] adds this to [queueState] to know the engine is spoken
+     * for, and [send] refuses.
+     */
+    val turnRunning: Flow<Boolean> = chatTurns.running.map { it.isNotEmpty() }
 
     /**
      * Whether the stop button on *this* conversation's screen would stop a reply belonging to it
@@ -493,9 +494,9 @@ class ChatViewModel(
      * one saying "mine" is enough; requiring both would inherit both weaknesses.
      */
     val canStop: Flow<Boolean> =
-        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId, _agentRunning) { state, active, here, id, agent ->
+        combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId, chatTurns.running) { state, active, here, id, turns ->
             // An agent turn is stoppable between its generations too: a tool runs while the queue is idle.
-            agent || (state is QueueState.Generating && (here || (id != null && active?.first == id)))
+            (id != null && id in turns) || (state is QueueState.Generating && (here || (id != null && active?.first == id)))
         }
 
     /**
@@ -675,6 +676,7 @@ class ChatViewModel(
             ActiveSessionTracker.clear()
         }
         generationJob?.cancel()
+        chatTurns.stop(id)
         warmUpJob?.cancel()
         _error.value = null
         draft.value = ConversationSettings()
@@ -694,9 +696,9 @@ class ChatViewModel(
      */
     fun leave() {
         warmUpJob?.cancel()
-        if (_agentRunning.value) {
-            confirmationGate.deny(turnCallIds)
-            askUserGate.dismiss(turnCallIds)
+        runningTurn()?.let {
+            confirmationGate.deny(it.callIds)
+            askUserGate.dismiss(it.callIds)
         }
     }
 
@@ -711,10 +713,16 @@ class ChatViewModel(
      * later: [generateReply] restores a persisted session before it decodes anything, which is
      * file I/O, and a generation that breaks before ever reaching the engine must not leave the
      * previous one's banner up either.
+     *
+     * Also a no-op while a turn runs, in this conversation or another, see [ChatTurns]: the queue reads
+     * [QueueState.ModelReady] while an agent turn runs a tool, and a reply started then would take the
+     * engine from under it (its next generation is refused as busy, and here the history has calls with
+     * no result yet). Refused rather than queued, as the queue refuses a second generation: [ChatScreen]
+     * keeps Send disabled through [turnRunning], so this only catches a stray call.
      */
     fun send(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || generationJob?.isActive == true) return
+        if (trimmed.isEmpty() || generationJob?.isActive == true || chatTurns.running.value.isNotEmpty()) return
         if (inferenceQueue.state.value !is QueueState.ModelReady) {
             _error.value = ChatError.NoModelLoaded
             return
@@ -725,8 +733,10 @@ class ChatViewModel(
         warmUpJob?.cancel()
         generationJob = scope.launch {
             val conversationId = ensureConversation()
-            chatRepository.appendUserMessage(conversationId, trimmed)
-            generateReply(conversationId)
+            asTurn(conversationId) { turn ->
+                chatRepository.appendUserMessage(conversationId, trimmed)
+                generateReply(conversationId, turn)
+            }
         }
     }
 
@@ -760,13 +770,23 @@ class ChatViewModel(
      */
     fun stop() {
         inferenceQueue.cancelActive()
-        // The notification's Stop only calls [InferenceQueue.cancelActive], so it does nothing during a tool: only
-        // this in-app Stop ends the turn there (see [AgentRuntime]).
         // A tool running between two generations has no queue job to cancel: end the whole turn, its
-        // `finally` records what was cut. Marked first, for the reason [InferenceQueue.cancelActive] does.
-        if (_agentRunning.value) {
-            agentStopSignal?.markRequested()
-            generationJob?.cancel()
+        // `finally` records what was cut. Through [ChatTurns], so a screen reopened mid-turn stops it too.
+        _conversationId.value?.let(chatTurns::stop)
+    }
+
+    /**
+     * Runs [block] as [conversationId]'s turn in [ChatTurns], its job the calling coroutine's. The entry is
+     * dropped once [block] is over, its own `finally` included: a turn that was cut still has rows to
+     * write, and a send let through before them would land in the middle.
+     */
+    private suspend fun asTurn(conversationId: String, block: suspend (ChatTurns.Turn) -> Unit) {
+        val turn = ChatTurns.Turn(currentCoroutineContext().job)
+        chatTurns.start(conversationId, turn)
+        try {
+            block(turn)
+        } finally {
+            chatTurns.finish(conversationId, turn)
         }
     }
 
@@ -780,9 +800,11 @@ class ChatViewModel(
      * Clears [error] on the way in for the same reason [send] does, and this is the entry point
      * the failure banner's own Retry button goes through: it is what makes a retry that works
      * take the banner down with it.
+     *
+     * Refused while a turn runs anywhere, as [send] is.
      */
     fun regenerate() {
-        if (generationJob?.isActive == true) return
+        if (generationJob?.isActive == true || chatTurns.running.value.isNotEmpty()) return
         // A draft has no reply to redo. Not reachable from the UI (no bubble, and a failure banner
         // only follows a send, which created the row), checked so it stays a no-op regardless.
         val conversationId = _conversationId.value ?: return
@@ -793,11 +815,13 @@ class ChatViewModel(
         _error.value = null
         warmUpJob?.cancel()
         generationJob = scope.launch {
-            // The whole last turn: with tools it is replies and tool results, not one assistant message.
-            chatRepository.observeMessages(conversationId).first()
-                .takeLastWhile { it.role == "assistant" || it.role == "tool" }
-                .forEach { chatRepository.deleteMessage(it.id) }
-            generateReply(conversationId)
+            asTurn(conversationId) { turn ->
+                // The whole last turn: with tools it is replies and tool results, not one assistant message.
+                chatRepository.observeMessages(conversationId).first()
+                    .takeLastWhile { it.role == "assistant" || it.role == "tool" }
+                    .forEach { chatRepository.deleteMessage(it.id) }
+                generateReply(conversationId, turn)
+            }
         }
     }
 
@@ -1034,7 +1058,7 @@ class ChatViewModel(
      * [ReasoningBudget.splitting] — never stored, so it cannot go stale against the max-tokens the
      * user actually set.
      */
-    private suspend fun generateReply(conversationId: String) {
+    private suspend fun generateReply(conversationId: String, turn: ChatTurns.Turn) {
         // Before the sync below, not left to [InferenceQueue.generate]: a switch saves the outgoing
         // conversation first, and the save would then be the one cancelling the outgoing
         // conversation's warm-up, after this conversation's user has already been kept waiting.
@@ -1051,12 +1075,12 @@ class ChatViewModel(
         // Tools need a template that takes them, the conversation's switch on, and a tool the user granted.
         // Anything else is the plain path below, untouched by tool calling (TEN-172).
         if (agentPathOn(conversation?.toolsEnabled != false)) {
-            streamAgentTurn(conversationId, decodeRequestFor(conversation, history))
+            streamAgentTurn(conversationId, decodeRequestFor(conversation, history), turn)
             return
         }
         val assistantId = chatRepository.startAssistantMessage(conversationId)
         val request = decodeRequestFor(conversation, history)
-        val finished = streamInto(assistantId, request)
+        val finished = streamInto(assistantId, request, turn.stopSignal)
         if (model != null && finished != null && worthWarmingUp(finished)) {
             warmUpAfterReply(conversationId, model)
         }
@@ -1104,6 +1128,7 @@ class ChatViewModel(
         val grants: Set<ToolTier>,
         val empty: Boolean,
         val foreground: Boolean,
+        val idle: Boolean,
     )
 
     /**
@@ -1136,16 +1161,18 @@ class ChatViewModel(
             settings,
             toolGrants,
             empty,
-            AppForegroundTracker.isForeground,
-        ) { model, settings, grants, empty, foreground ->
-            model?.let { PrefixTarget(it, settings.systemPrompt, settings.enableThinking, settings.toolsEnabled, grants, empty, foreground) }
+            combine(AppForegroundTracker.isForeground, chatTurns.running) { foreground, turns -> foreground to turns.isEmpty() },
+        ) { model, settings, grants, empty, (foreground, idle) ->
+            model?.let { PrefixTarget(it, settings.systemPrompt, settings.enableThinking, settings.toolsEnabled, grants, empty, foreground, idle) }
         }
             .distinctUntilChanged()
             .collectLatest { target -> if (target != null) warmPrefix(target) }
     }
 
     private suspend fun warmPrefix(target: PrefixTarget) {
-        if (!target.empty || generationJob?.isActive == true) return
+        // Not while a turn runs, in any conversation: one holds the cache between its generations, and the
+        // save below would swap it out. Part of the target, so the turn ending starts the warm-up.
+        if (!target.empty || !target.idle || generationJob?.isActive == true) return
         // As the after-reply warm-up: only with the user here, minutes of CPU unseen are not worth it. Part of
         // the target, so leaving the app cancels a warm-up in flight and coming back starts the next one.
         if (!target.foreground) return
@@ -1403,7 +1430,7 @@ class ChatViewModel(
      *   failed (or this coroutine was cancelled, in which case nothing is returned at all), what
      *   [generateReply] decides on a warm-up from (TEN-88).
      */
-    private suspend fun streamInto(assistantId: String, request: DecodeRequest): DecodeStats? {
+    private suspend fun streamInto(assistantId: String, request: DecodeRequest, stopSignal: GenerationStopSignal): DecodeStats? {
         val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
         var failed = false
@@ -1412,10 +1439,9 @@ class ChatViewModel(
         // whatever reads the history next sees the finished reply.
         var finished: DecodeStats? = null
         var lastPersistAt = 0L
-        // Fresh per turn, and handed to the queue so it is *this* generation that gets marked when
-        // the user stops one — see [GenerationStopSignal] for why a flag on this object could not
-        // be trusted to mean that.
-        val stopSignal = GenerationStopSignal()
+        // [stopSignal] is the turn's, fresh per turn, and handed to the queue so it is *this* generation
+        // that gets marked when the user stops one: see [GenerationStopSignal] for why a flag on this
+        // object could not be trusted to mean that.
         _generatingHere.value = true
         try {
             inferenceQueue.generate(request, stopSignal).collect { event ->
@@ -1532,9 +1558,8 @@ class ChatViewModel(
      * result (a flow cannot emit once cancelled, so the runtime leaves that to us) and a reply cut
      * mid-stream ends as [streamInto]'s would, kept when it has content or was stopped.
      */
-    private suspend fun streamAgentTurn(conversationId: String, request: DecodeRequest) {
-        val stopSignal = GenerationStopSignal()
-        agentStopSignal = stopSignal
+    private suspend fun streamAgentTurn(conversationId: String, request: DecodeRequest, turn: ChatTurns.Turn) {
+        val stopSignal = turn.stopSignal
         var parser = ReplyStreamSplitter(toolsActive = true)
         // The reply being streamed, and the last one that made calls: the audit rows point at it.
         var openReplyId: String? = null
@@ -1577,9 +1602,6 @@ class ChatViewModel(
         }
 
         _generatingHere.value = true
-        _agentRunning.value = true
-        runningAgentTurns.update { it + conversationId }
-        turnCallIds = emptySet()
         try {
             agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }).collect { event ->
                 when (event) {
@@ -1614,7 +1636,7 @@ class ChatViewModel(
                         if (event.calls.isNotEmpty()) {
                             callingReplyId = id
                             unanswered = event.calls
-                            turnCallIds = turnCallIds + event.calls.map { it.id }
+                            turn.callIds = turn.callIds + event.calls.map { it.id }
                         }
                         // With calls (or calls dropped after the limit), the engine's own content is the one
                         // without the call markup.
@@ -1657,10 +1679,7 @@ class ChatViewModel(
                 }
             }
         } finally {
-            _agentRunning.value = false
-            runningAgentTurns.update { it - conversationId }
             _generatingHere.value = false
-            agentStopSignal = null
             refreshContextUsage()
             var keptCutReply = false
             withContext(NonCancellable) {
