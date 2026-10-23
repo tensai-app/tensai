@@ -45,14 +45,15 @@ import io.github.tensaiapp.ui.tools.resolve
 
 /**
  * The inline "tensai wants to ..." card of a call that sends or deletes (TEN-174). Pending, it names the
- * action, lists the arguments and asks Deny / Allow; answered, it folds into one row, "Allowed" or "Denied".
+ * action, lists the arguments (or what the call acts on, a fact by its text rather than its id, TEN-169) and asks
+ * Deny / Allow; answered, it folds into one row, "Allowed" or "Denied".
  * Phone intents never show it (the target app confirms), except `open_url`: the browser acts on open.
  *
  * @param onAnswer `true` for Allow, `false` for Deny.
  */
 @Composable
 fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    val action = ToolUiCatalog.confirmLabel(item.call.tool, item.call.argsJson).resolve()
+    val action = ToolUiCatalog.confirmLabel(item.call.tool, item.call.argsJson, item.target).resolve()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val reducedMotion = rememberReducedMotion()
     Surface(
@@ -81,8 +82,21 @@ fun ToolConfirmCard(item: ConfirmationItem, onAnswer: (Boolean) -> Unit, modifie
                     letterSpacing = (-0.01).em,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+                val targetLines = ToolUiCatalog.confirmTargetLines(item.call.tool, item.target)
+                val inputs = if (targetLines == null) ToolUiCatalog.confirmInputs(item.call.tool, item.call.argsJson) else emptyList()
                 Column(modifier = Modifier.padding(top = 10.dp)) {
-                    for (input in ToolUiCatalog.confirmInputs(item.call.tool, item.call.argsJson)) {
+                    for (line in targetLines.orEmpty()) {
+                        HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
+                        Text(
+                            text = line.resolve(),
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
+                    for (input in inputs) {
                         HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
                         Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 8.dp)) {
                             Text(

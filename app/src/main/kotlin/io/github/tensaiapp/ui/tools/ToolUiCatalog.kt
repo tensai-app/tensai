@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WbCloudy
 import androidx.compose.ui.graphics.vector.ImageVector
 import io.github.tensaiapp.R
+import io.github.tensaiapp.agent.ConfirmTarget
 
 /** What a tool call reads like while it runs and once it ran. */
 class ToolActions(@StringRes val done: Int, @StringRes val running: Int)
@@ -209,9 +210,35 @@ object ToolUiCatalog {
 
     private val SENT_ARGS = mapOf("web_search" to "query", "wikipedia" to "query", "weather" to "place", "web_fetch" to "url")
 
-    /** The "tensai wants to ..." line of the confirmation card. */
-    fun confirmLabel(tool: String, argsJson: String): UiText =
-        byId[tool]?.confirmLabel?.invoke(ToolArgsView.values(argsJson)) ?: UiText.of(R.string.tool_confirm_generic, name(tool))
+    /**
+     * The "tensai wants to ..." line of the confirmation card. A `memory` forget whose [target] was read names the
+     * fact by its text, shortened (TEN-169); without it (a card folded before this process ran) it falls back to the id.
+     */
+    fun confirmLabel(tool: String, argsJson: String, target: ConfirmTarget? = null): UiText {
+        if (tool == "memory" && target != null) {
+            return if (target.text != null) UiText.of(R.string.tool_confirm_memory_forget_fact, shortFact(target.text)) else UiText.of(R.string.tool_confirm_memory_forget)
+        }
+        return byId[tool]?.confirmLabel?.invoke(ToolArgsView.values(argsJson)) ?: UiText.of(R.string.tool_confirm_generic, name(tool))
+    }
+
+    /**
+     * The lines that stand for a call's arguments on the confirmation card when its [target] was read (TEN-169): the
+     * whole fact when the title had to shorten it, "Fact 7 no longer exists" for an id the store does not have. Empty
+     * when [confirmLabel] says it all, `null` when the card lists the arguments instead.
+     */
+    fun confirmTargetLines(tool: String, target: ConfirmTarget?): List<UiText>? {
+        if (tool != "memory" || target == null) return null
+        val text = target.text ?: return listOf(UiText.of(R.string.tool_confirm_memory_fact_missing, target.id))
+        return if (shortFact(text) == text) emptyList() else listOf(UiText.Raw(text))
+    }
+
+    /** A fact cut to [MAX_TITLE_FACT_CHARS] code points with an ellipsis, for the card's title. Never splits a surrogate pair. */
+    private fun shortFact(text: String): String {
+        if (text.codePointCount(0, text.length) <= MAX_TITLE_FACT_CHARS) return text
+        return text.substring(0, text.offsetByCodePoints(0, MAX_TITLE_FACT_CHARS - 1)).trimEnd() + "…"
+    }
+
+    private const val MAX_TITLE_FACT_CHARS = 60
 
     /**
      * The rows of the confirmation card. The arguments as they are, except `open_url`: the host first, in the mono

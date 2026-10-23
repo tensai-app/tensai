@@ -1,6 +1,7 @@
 package io.github.tensaiapp.agent
 
 import io.github.tensaiapp.engine.ToolCall
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,21 +42,45 @@ class UiConfirmationGate(private val timeoutMs: Long = DefaultTimeoutMs) : Confi
      */
     val allowed: StateFlow<List<String>> = _allowed.asStateFlow()
 
+    private val _targets = MutableStateFlow<Map<String, ConfirmTarget>>(emptyMap())
+
+    /**
+     * What the calls asked about act on, by call id (TEN-169), see [Tool.confirmTarget]. Read before the call is
+     * [pending], so the card names the fact from its first frame, and kept after the answer, bounded like [allowed]:
+     * an allowed `forget` has deleted its fact, and the folded card still names it.
+     */
+    val targets: StateFlow<Map<String, ConfirmTarget>> = _targets.asStateFlow()
+
     override suspend fun confirm(call: ToolCall, tool: Tool): Boolean {
         val request = PendingConfirmation(call, CompletableDeferred())
-        var replaced: PendingConfirmation? = null
-        _pending.update { current ->
-            replaced = current[call.id]
-            current + (call.id to request)
-        }
-        replaced?.decision?.complete(false)
         try {
-            val allow = withTimeoutOrNull(timeoutMs) { request.decision.await() } ?: false
+            val allow = withTimeoutOrNull(timeoutMs) {
+                readTarget(call, tool)
+                var replaced: PendingConfirmation? = null
+                _pending.update { current ->
+                    replaced = current[call.id]
+                    current + (call.id to request)
+                }
+                replaced?.decision?.complete(false)
+                request.decision.await()
+            } ?: false
             if (allow) _allowed.value = (_allowed.value + call.id).takeLast(MaxAllowedIds)
             return allow
         } finally {
             _pending.update { current -> if (current[call.id] === request) current - call.id else current }
         }
+    }
+
+    /** Keeps what [call] acts on. A lookup that fails is no answer: the card shows the arguments, the user still decides. */
+    private suspend fun readTarget(call: ToolCall, tool: Tool) {
+        val found = try {
+            tool.confirmTarget(call.id, call.argumentsJson)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return
+        _targets.update { current -> (current - call.id + (call.id to found)).entries.toList().takeLast(MaxAllowedIds).associate { it.key to it.value } }
     }
 
     /** The user's answer for the call [callId]; ignored when that call is not pending. */

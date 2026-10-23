@@ -1,5 +1,6 @@
 package io.github.tensaiapp.ui.screens.chat
 
+import io.github.tensaiapp.agent.ConfirmTarget
 import io.github.tensaiapp.data.chat.MessageEntity
 import io.github.tensaiapp.data.chat.ToolCallEntity
 import io.github.tensaiapp.data.chat.ToolCallsJson
@@ -59,7 +60,8 @@ class ChatItemsTest {
         running: Boolean = false,
         pending: Set<String> = emptySet(),
         allowed: Collection<String> = emptyList(),
-    ) = buildChatItems(messages, rows, running, pending, allowed, requiresConfirmation = { tool, args -> tool == "erase" || (tool == "memory" && args.contains("forget")) })
+        targets: Map<String, ConfirmTarget> = emptyMap(),
+    ) = buildChatItems(messages, rows, running, pending, allowed, targets, requiresConfirmation = { tool, args -> tool == "erase" || (tool == "memory" && args.contains("forget")) })
 
     private fun List<ChatItem>.shape() = map {
         when (it) {
@@ -228,6 +230,16 @@ class ChatItemsTest {
         )
 
         assertEquals(listOf("line(1)", "confirm:Denied"), build(listOf(a1), rows).shape())
+    }
+
+    @Test
+    fun aForgetCardCarriesTheFactItActsOn() {
+        val a1 = message("assistant", "", listOf(call("c1", "memory", """{"action":"forget","id":1}""")), id = "a1")
+        val tea = ConfirmTarget("1", "Likes tea")
+
+        val items = build(listOf(a1), running = true, pending = setOf("c1"), targets = mapOf("c1" to tea, "other" to ConfirmTarget("2", "x")))
+
+        assertEquals(tea, (items.single() as ConfirmationItem).target)
     }
 
     @Test

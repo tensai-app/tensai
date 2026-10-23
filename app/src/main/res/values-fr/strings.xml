@@ -877,8 +877,10 @@
     <string name="ask_submit">Valider</string>
     <string name="tool_confirm_denied">Refusé</string>
     <string name="tool_confirm_generic">Utiliser %1$s</string>
-    <string name="tool_confirm_memory_forget">Supprimer un fait de la mémoire</string>
-    <string name="tool_confirm_memory_forget_id">Supprimer le fait %1$s de la mémoire</string>
+    <string name="tool_confirm_memory_forget">Oublier un fait</string>
+    <string name="tool_confirm_memory_forget_id">Oublier le fait %1$s</string>
+    <string name="tool_confirm_memory_forget_fact">Oublier « %1$s »</string>
+    <string name="tool_confirm_memory_fact_missing">Le fait %1$s n\'existe plus</string>
     <string name="tool_confirm_open_url">Ouvrir un lien</string>
 
     <string name="chat_settings_section_tools">Outils</string>

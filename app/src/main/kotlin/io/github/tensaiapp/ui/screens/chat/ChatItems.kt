@@ -1,6 +1,7 @@
 package io.github.tensaiapp.ui.screens.chat
 
 import io.github.tensaiapp.agent.AskUserResult
+import io.github.tensaiapp.agent.ConfirmTarget
 import io.github.tensaiapp.agent.AskUserTool
 import io.github.tensaiapp.data.chat.MessageEntity
 import io.github.tensaiapp.data.chat.ToolCallEntity
@@ -29,8 +30,16 @@ data class MessageItem(val message: ChatMessageUi) : ChatItem {
 /** The consecutive tool calls between two pieces of assistant text, as one line. */
 data class ToolLineItem(override val key: String, val calls: List<ToolCallUi>) : ChatItem
 
-/** A call that went through the confirmation gate: asking, or answered. */
-data class ConfirmationItem(override val key: String, val call: ToolCallUi, val decision: ConfirmDecision) : ChatItem
+/**
+ * A call that went through the confirmation gate: asking, or answered. [target] is what it acts on, read from the
+ * store before the card showed (TEN-169), `null` when the tool reads none or this process did not ask.
+ */
+data class ConfirmationItem(
+    override val key: String,
+    val call: ToolCallUi,
+    val decision: ConfirmDecision,
+    val target: ConfirmTarget? = null,
+) : ChatItem
 
 /**
  * What the user answered an `ask_user` question, drawn as a user bubble under the call's line (TEN-187). Built from
@@ -63,6 +72,7 @@ data class AskAnswerItem(override val key: String, val question: String, val ans
  *
  * @param allowedIds calls the user allowed whose result is not stored yet, see
  *   [io.github.tensaiapp.agent.UiConfirmationGate.allowed].
+ * @param targets what the gated calls act on, by call id, see [io.github.tensaiapp.agent.UiConfirmationGate.targets].
  * @param decode the calls of an assistant message, [ToolCallsJson.decode] unless the caller caches it.
  */
 internal fun buildChatItems(
@@ -71,6 +81,7 @@ internal fun buildChatItems(
     agentRunning: Boolean,
     pendingCallIds: Set<String>,
     allowedIds: Collection<String>,
+    targets: Map<String, ConfirmTarget> = emptyMap(),
     requiresConfirmation: (tool: String, argsJson: String) -> Boolean,
     decode: (MessageEntity) -> List<ToolCall> = { ToolCallsJson.decode(it.toolCallsJson) },
 ): List<ChatItem> {
@@ -135,7 +146,7 @@ internal fun buildChatItems(
             when {
                 decision != null -> {
                     flush()
-                    items += ConfirmationItem("confirm:${message.id}:${call.id}", ui, decision)
+                    items += ConfirmationItem("confirm:${message.id}:${call.id}", ui, decision, targets[call.id])
                 }
                 // Gated and running but not asked yet: nothing to show until the gate is reached.
                 ui.confirmed && ui.state == ToolCallState.Running -> flush()

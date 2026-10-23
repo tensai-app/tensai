@@ -5,6 +5,7 @@ import io.github.tensaiapp.data.memory.MemoryDao
 import io.github.tensaiapp.data.memory.MemoryFactEntity
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.coroutines.coroutineContext
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -40,8 +41,27 @@ class MemoryTool(
     override val tier = ToolTier.Local
     override val sendsOrDeletes = true
 
+    /** What each `forget` card showed, by call id, see [confirmTarget]. Bounded: a denied call never comes to take its own. */
+    private val shown = object : LinkedHashMap<String, ConfirmTarget>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ConfirmTarget>) = size > MAX_SHOWN
+    }
+
     override fun requiresConfirmation(argsJson: String): Boolean =
         runCatching { JSONObject(argsJson).stringArg("action") == "forget" }.getOrDefault(false)
+
+    /**
+     * The fact a `forget` deletes, looked up by id: its text, or `null` when the id is not in the store. What the card
+     * shows is kept for [callId], and [forget] deletes the row only if it still reads that: SQLite hands a deleted top
+     * id to the next fact, so "id 7" on Allow may no longer be the fact the card named.
+     */
+    override suspend fun confirmTarget(callId: String, argsJson: String): ConfirmTarget? {
+        val args = runCatching { JSONObject(argsJson) }.getOrNull() ?: return null
+        val id = forgetId(args)
+        if (args.stringArg("action") != "forget" || id < 0) return null
+        val target = ConfirmTarget(id.toString(), dao.textOf(id))
+        synchronized(shown) { shown[callId] = target }
+        return target
+    }
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
@@ -53,8 +73,9 @@ class MemoryTool(
             "remember" -> remember(args.stringArg("text").orEmpty())
             "list" -> list()
             "forget" -> {
-                val id = if (args.isNull("id")) -1 else args.optLong("id", -1)
-                if (id < 0) ToolResult.error("forget needs the id of a fact, see list") else forget(id)
+                val id = forgetId(args)
+                val confirmed = coroutineContext[ToolCallContext]?.callId?.let { synchronized(shown) { shown.remove(it) } }
+                if (id < 0) ToolResult.error("forget needs the id of a fact, see list") else forget(id, confirmed)
             }
             else -> ToolResult.error("action must be remember, list or forget, got '$action'")
         }
@@ -100,18 +121,35 @@ class MemoryTool(
         return "${fact.id} | $date | ${fact.text}"
     }
 
-    private suspend fun forget(id: Long): ToolResult =
-        if (dao.delete(id) > 0) {
-            onForgotten()
-            ToolResult.ok("forgotten (id $id)")
-        } else {
-            ToolResult.error("no fact with id $id, see list")
+    /** The `id` of a `forget`, -1 when missing: one reading for the card and the delete. */
+    private fun forgetId(args: JSONObject): Long = if (args.isNull("id")) -1 else args.optLong("id", -1)
+
+    /**
+     * Deletes fact [id]. When a card showed it, [confirmed] is what the user saw, and the row goes only while it
+     * still reads that: a card that said the fact no longer exists deletes nothing.
+     */
+    private suspend fun forget(id: Long, confirmed: ConfirmTarget?): ToolResult {
+        val deleted = when {
+            confirmed == null -> dao.delete(id)
+            confirmed.text == null -> 0
+            else -> dao.deleteIfText(id, confirmed.text)
         }
+        return when {
+            deleted > 0 -> {
+                onForgotten()
+                ToolResult.ok("forgotten (id $id)")
+            }
+            confirmed != null && dao.textOf(id) != null ->
+                ToolResult.error("fact $id changed since the user confirmed it, nothing deleted, see list")
+            else -> ToolResult.error("no fact with id $id, see list")
+        }
+    }
 
     companion object {
         const val MAX_FACT_CHARS = 300
         /** Rows read for a `list`: more than fit in [MAX_LIST_CHARS] for short facts, a bound for the query. */
         const val MAX_LISTED = 50
         const val MAX_LIST_CHARS = 1800
+        private const val MAX_SHOWN = 32
     }
 }

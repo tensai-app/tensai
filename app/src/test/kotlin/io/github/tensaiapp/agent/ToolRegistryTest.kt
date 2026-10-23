@@ -80,7 +80,9 @@ class ToolRegistryTest {
                 override suspend fun count() = 0
                 override fun observeCount() = kotlinx.coroutines.flow.emptyFlow<Int>()
                 override suspend fun findIdByText(text: String): Long? = null
+                override suspend fun textOf(id: Long): String? = null
                 override suspend fun delete(id: Long) = 0
+                override suspend fun deleteIfText(id: Long, text: String) = 0
                 override suspend fun deleteAll() = Unit
             }),
         )

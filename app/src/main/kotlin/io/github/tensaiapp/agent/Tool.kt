@@ -47,6 +47,12 @@ data class ToolResult(
     }
 }
 
+/**
+ * What a gated call acts on, as the confirmation card names it (TEN-169): the fact a `forget` deletes, by its
+ * text rather than its id. [text] is `null` when [id] matches nothing any more.
+ */
+data class ConfirmTarget(val id: String, val text: String?)
+
 /** A capability the model can call (TEN-172). Registered in a [ToolRegistry]. */
 interface Tool {
     /** Name the model calls it by: `[a-z0-9_]`, unique in a registry. */
@@ -68,6 +74,14 @@ interface Tool {
      * overrides it to ask only for the ones that send or delete (`memory` asks for `forget`, not `list`).
      */
     fun requiresConfirmation(argsJson: String): Boolean = sendsOrDeletes
+
+    /**
+     * What the call [callId] acts on, read by [UiConfirmationGate] before the card shows (TEN-169), so the user
+     * decides on the fact and not on its id. `null`, the default, when the arguments say it all. Called from the
+     * turn's own context, so it must be main-safe, as Room's suspend queries are. A tool that answers should hold
+     * [execute] for [callId] to what it answered: the store can change between the card and the tap.
+     */
+    suspend fun confirmTarget(callId: String, argsJson: String): ConfirmTarget? = null
 
     /**
      * The call waits for the user (`ask_user`): [AgentRuntime] puts no timeout on it, the tier's does not apply.

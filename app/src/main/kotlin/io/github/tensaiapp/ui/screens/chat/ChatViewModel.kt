@@ -423,10 +423,10 @@ class ChatViewModel(
                 chatRepository.observeMessages(id),
                 chatRepository.observeToolCalls(id),
                 runningAgentTurns,
-                confirmationGate.pending,
+                combine(confirmationGate.pending, confirmationGate.targets, ::Pair),
                 confirmationGate.allowed,
-            ) { stored, calls, running, pending, allowed ->
-                buildChatItems(stored, calls, id in running, pending.keys, allowed, agentRuntime::requiresConfirmation, ::callsOf)
+            ) { stored, calls, running, (pending, targets), allowed ->
+                buildChatItems(stored, calls, id in running, pending.keys, allowed, targets, agentRuntime::requiresConfirmation, ::callsOf)
             }.flowOn(Dispatchers.Default)
         }
     }

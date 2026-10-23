@@ -48,9 +48,17 @@ interface MemoryDao {
     @Query("SELECT id FROM memory_facts WHERE text = :text COLLATE NOCASE LIMIT 1")
     suspend fun findIdByText(text: String): Long?
 
+    /** The text of fact [id], `null` when it does not exist: what the confirmation card of a `forget` shows. */
+    @Query("SELECT text FROM memory_facts WHERE id = :id")
+    suspend fun textOf(id: Long): String?
+
     /** Rows deleted: 0 when [id] does not exist. */
     @Query("DELETE FROM memory_facts WHERE id = :id")
     suspend fun delete(id: Long): Int
+
+    /** Like [delete], but only while fact [id] still reads [text]: what the user confirmed. 0 otherwise. */
+    @Query("DELETE FROM memory_facts WHERE id = :id AND text = :text")
+    suspend fun deleteIfText(id: Long, text: String): Int
 
     @Query("DELETE FROM memory_facts")
     suspend fun deleteAll()

@@ -964,8 +964,10 @@
     <string name="ask_submit">Submit</string>
     <string name="tool_confirm_denied">Denied</string>
     <string name="tool_confirm_generic">Use %1$s</string>
-    <string name="tool_confirm_memory_forget">Delete a fact from memory</string>
-    <string name="tool_confirm_memory_forget_id">Delete fact %1$s from memory</string>
+    <string name="tool_confirm_memory_forget">Forget a fact</string>
+    <string name="tool_confirm_memory_forget_id">Forget fact %1$s</string>
+    <string name="tool_confirm_memory_forget_fact">Forget “%1$s”</string>
+    <string name="tool_confirm_memory_fact_missing">Fact %1$s no longer exists</string>
     <string name="tool_confirm_open_url">Open a link</string>
 
     <string name="chat_settings_section_tools">Tools</string>

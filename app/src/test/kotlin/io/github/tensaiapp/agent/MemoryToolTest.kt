@@ -6,6 +6,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -33,7 +34,9 @@ class MemoryToolTest {
         override suspend fun count() = rows.size
         override fun observeCount(): Flow<Int> = flowOf(rows.size)
         override suspend fun findIdByText(text: String) = rows.firstOrNull { it.text.equals(text, ignoreCase = true) }?.id
+        override suspend fun textOf(id: Long) = rows.firstOrNull { it.id == id }?.text
         override suspend fun delete(id: Long) = if (rows.removeAll { it.id == id }) 1 else 0
+        override suspend fun deleteIfText(id: Long, text: String) = if (rows.removeAll { it.id == id && it.text == text }) 1 else 0
         override suspend fun deleteAll() = rows.clear()
     }
 
@@ -120,6 +123,60 @@ class MemoryToolTest {
         assertTrue(run("""{"action":"forget","id":99}""").isError)
         assertTrue(run("""{"action":"forget"}""").isError)
         assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun aForgetNamesItsFactByTextBeforeTheCardShows() {
+        run("""{"action":"remember","text":"My favourite tea is genmaicha"}""")
+
+        assertEquals(
+            ConfirmTarget("1", "My favourite tea is genmaicha"),
+            runBlocking { tool.confirmTarget("c1", """{"action":"forget","id":1}""") },
+        )
+        assertEquals(ConfirmTarget("7", null), runBlocking { tool.confirmTarget("c2", """{"action":"forget","id":7}""") })
+        assertNull(runBlocking { tool.confirmTarget("c3", """{"action":"list"}""") })
+        assertNull(runBlocking { tool.confirmTarget("c4", """{"action":"forget"}""") })
+        assertNull(runBlocking { tool.confirmTarget("c5", "not json") })
+    }
+
+    /** SQLite gives a deleted top id to the next fact: Allow must not delete a fact the card never named. */
+    @Test
+    fun aForgetWhoseIdWasReusedDeletesNothing() {
+        run("""{"action":"remember","text":"Likes tea"}""")
+        val args = """{"action":"forget","id":1}"""
+        runBlocking { tool.confirmTarget("c1", args) }
+        dao.rows.clear()
+        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Rennes", createdAt = clock)
+
+        val result = runBlocking { withContext(ToolCallContext("c1")) { tool.execute(args) } }
+
+        assertTrue(result.isError)
+        assertTrue(result.text, result.text.contains("changed since the user confirmed it"))
+        assertEquals(listOf("Lives in Rennes"), dao.rows.map { it.text })
+    }
+
+    @Test
+    fun aForgetCardThatFoundNothingDeletesNothing() {
+        val args = """{"action":"forget","id":1}"""
+        runBlocking { tool.confirmTarget("c1", args) }
+        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Rennes", createdAt = clock)
+
+        val result = runBlocking { withContext(ToolCallContext("c1")) { tool.execute(args) } }
+
+        assertTrue(result.isError)
+        assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun aConfirmedForgetDeletesTheFactTheCardNamed() {
+        run("""{"action":"remember","text":"Likes tea"}""")
+        val args = """{"action":"forget","id":1}"""
+        runBlocking { tool.confirmTarget("c1", args) }
+
+        val result = runBlocking { withContext(ToolCallContext("c1")) { tool.execute(args) } }
+
+        assertEquals("forgotten (id 1)", result.text)
+        assertTrue(dao.rows.isEmpty())
     }
 
     @Test

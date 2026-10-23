@@ -21,6 +21,8 @@ class FakeMemoryDao : MemoryDao {
     override suspend fun count() = rows.size
     override fun observeCount(): Flow<Int> = flowOf(rows.size)
     override suspend fun findIdByText(text: String) = rows.firstOrNull { it.text.equals(text, ignoreCase = true) }?.id
+    override suspend fun textOf(id: Long) = rows.firstOrNull { it.id == id }?.text
     override suspend fun delete(id: Long) = if (rows.removeAll { it.id == id }) 1 else 0
+    override suspend fun deleteIfText(id: Long, text: String) = if (rows.removeAll { it.id == id && it.text == text }) 1 else 0
     override suspend fun deleteAll() = rows.clear()
 }

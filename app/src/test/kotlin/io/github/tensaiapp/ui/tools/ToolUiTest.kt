@@ -2,6 +2,7 @@ package io.github.tensaiapp.ui.tools
 
 import io.github.tensaiapp.R
 import io.github.tensaiapp.agent.CalculateTool
+import io.github.tensaiapp.agent.ConfirmTarget
 import io.github.tensaiapp.agent.ConvertTimeTool
 import io.github.tensaiapp.agent.ConvertTool
 import io.github.tensaiapp.agent.DateTimeTool
@@ -70,6 +71,54 @@ class ToolUiTest {
         assertEquals(UiText.of(R.string.tool_confirm_memory_forget_id, "3"), ToolUiCatalog.confirmLabel("memory", """{"action":"forget","id":3}"""))
         assertEquals(UiText.of(R.string.tool_confirm_memory_forget), ToolUiCatalog.confirmLabel("memory", """{"action":"forget"}"""))
         assertEquals(UiText.of(R.string.tool_confirm_generic, UiText.of(R.string.tool_name_torch)), ToolUiCatalog.confirmLabel("torch", "{}"))
+    }
+
+    @Test
+    fun aForgetCardNamesTheFactNotItsId() {
+        val args = """{"action":"forget","id":1}"""
+        val tea = ConfirmTarget("1", "My favourite tea is genmaicha")
+
+        assertEquals(UiText.of(R.string.tool_confirm_memory_forget_fact, "My favourite tea is genmaicha"), ToolUiCatalog.confirmLabel("memory", args, tea))
+        // The title says it all: no `action` / `id` rows under it.
+        assertEquals(emptyList<UiText>(), ToolUiCatalog.confirmTargetLines("memory", tea))
+    }
+
+    @Test
+    fun aLongFactIsShortenedInTheTitleAndShownWholeUnderIt() {
+        val long = "The user keeps a sourdough starter called Clint and feeds it every morning at seven"
+        val target = ConfirmTarget("2", long)
+
+        val label = ToolUiCatalog.confirmLabel("memory", """{"action":"forget","id":2}""", target) as UiText.Res
+        val shown = label.args.single() as String
+
+        assertTrue(shown.endsWith("…"))
+        assertEquals(60, shown.codePointCount(0, shown.length))
+        assertTrue(long.startsWith(shown.removeSuffix("…")))
+        assertEquals(listOf(UiText.Raw(long)), ToolUiCatalog.confirmTargetLines("memory", target))
+    }
+
+    @Test
+    fun theTitleNeverCutsAnEmojiInHalf() {
+        // 58 letters then emoji: a cut at 59 UTF-16 units would keep half of the first one.
+        val fact = "x".repeat(58) + "\uD83C\uDF75\uD83C\uDF75 every morning"
+
+        val shown = (ToolUiCatalog.confirmLabel("memory", "{}", ConfirmTarget("1", fact)) as UiText.Res).args.single() as String
+
+        assertEquals("x".repeat(58) + "\uD83C\uDF75…", shown)
+    }
+
+    @Test
+    fun aFactThatNoLongerExistsIsSaidSo() {
+        val gone = ConfirmTarget("7", null)
+
+        assertEquals(UiText.of(R.string.tool_confirm_memory_forget), ToolUiCatalog.confirmLabel("memory", """{"action":"forget","id":7}""", gone))
+        assertEquals(listOf(UiText.of(R.string.tool_confirm_memory_fact_missing, "7")), ToolUiCatalog.confirmTargetLines("memory", gone))
+    }
+
+    @Test
+    fun withoutATargetTheCardListsTheArguments() {
+        assertNull(ToolUiCatalog.confirmTargetLines("memory", null))
+        assertNull(ToolUiCatalog.confirmTargetLines("torch", ConfirmTarget("1", "x")))
     }
 
     // ---- the tool line

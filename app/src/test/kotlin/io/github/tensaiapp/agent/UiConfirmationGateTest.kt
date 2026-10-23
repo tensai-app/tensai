@@ -26,6 +26,28 @@ class UiConfirmationGateTest {
 
     private val call = ToolCall("c1", "erase", """{"id":1}""")
 
+    /** Names what the call acts on, as `memory` does for a `forget`. */
+    private class NamingTool : Tool {
+        override val name = "erase"
+        override val description = "stub"
+        override val parametersSchema = """{"type":"object","properties":{}}"""
+        override val tier = ToolTier.Local
+        override val sendsOrDeletes = true
+        override suspend fun confirmTarget(callId: String, argsJson: String) = ConfirmTarget("1", "Likes tea")
+        override suspend fun execute(argsJson: String) = ToolResult.ok("")
+    }
+
+    /** Its lookup fails, the store being unreadable. */
+    private class FailingLookupTool : Tool {
+        override val name = "erase"
+        override val description = "stub"
+        override val parametersSchema = """{"type":"object","properties":{}}"""
+        override val tier = ToolTier.Local
+        override val sendsOrDeletes = true
+        override suspend fun confirmTarget(callId: String, argsJson: String): ConfirmTarget? = error("database closed")
+        override suspend fun execute(argsJson: String) = ToolResult.ok("")
+    }
+
     @Test
     fun allowLetsTheCallRunAndNotesIt() = runBlocking {
         val gate = UiConfirmationGate()
@@ -37,6 +59,31 @@ class UiConfirmationGateTest {
         assertTrue(answer.await())
         assertTrue(gate.pending.value.isEmpty())
         assertEquals(listOf("c1"), gate.allowed.value)
+    }
+
+    @Test
+    fun theTargetsAreReadBeforeTheCardShowsAndOutliveTheAnswer() = runBlocking {
+        val gate = UiConfirmationGate()
+        val answer = async(start = CoroutineStart.UNDISPATCHED) { gate.confirm(call, NamingTool()) }
+
+        gate.pending.first { it.isNotEmpty() }
+        assertEquals(ConfirmTarget("1", "Likes tea"), gate.targets.value["c1"])
+        gate.answer("c1", allow = true)
+
+        assertTrue(answer.await())
+        assertEquals(ConfirmTarget("1", "Likes tea"), gate.targets.value["c1"])
+    }
+
+    @Test
+    fun aFailingLookupStillAsksTheUser() = runBlocking {
+        val gate = UiConfirmationGate()
+        val answer = async(start = CoroutineStart.UNDISPATCHED) { gate.confirm(call, FailingLookupTool()) }
+
+        withTimeout(5_000) { gate.pending.first { it.isNotEmpty() } }
+        assertTrue(gate.targets.value.isEmpty())
+        gate.answer("c1", allow = true)
+
+        assertTrue(answer.await())
     }
 
     @Test
