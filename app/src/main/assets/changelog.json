@@ -2,6 +2,27 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.4",
+      "title": "Clearer confirmations, cleaner maths",
+      "date": "2026-10-23",
+      "intro": "Asking tensai to forget something now shows exactly which fact goes, and products like 17*23 no longer turn a reply into italics.",
+      "groups": [
+        {
+          "label": "Memory",
+          "items": [
+            "The card that asks before forgetting a fact shows the fact itself, not its number; a long fact is shown in full under the title",
+            "If the fact changed or disappeared between the card and your answer, nothing is deleted"
+          ]
+        },
+        {
+          "label": "Fixed",
+          "items": [
+            "An asterisk between numbers, as in 17*23=391, stays an asterisk instead of turning the text around it into italics, in replies and in the reasoning block"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.3",
       "title": "New app id, instant first message",
       "date": "2026-10-21",
