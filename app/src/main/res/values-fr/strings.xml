@@ -138,6 +138,9 @@
 
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Licences open source</string>
+    <string name="settings_privacy">Confidentialité</string>
+    <string name="settings_privacy_summary">Tout tourne sur ce téléphone. Les outils Internet ne fonctionnent qu\'une fois activés.</string>
+    <string name="settings_privacy_url">https://tensai.page/fr/privacy/</string>
 
     <!-- Nouveautés (TEN-193) -->
     <string name="changelog_title">Nouveautés</string>

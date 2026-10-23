@@ -171,6 +171,10 @@
     <!-- About. -->
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Open-source licenses</string>
+    <string name="settings_privacy">Privacy</string>
+    <string name="settings_privacy_summary">Everything runs on this phone. Internet tools only run if you turn them on.</string>
+    <!-- The site's privacy policy. A translation changes the locale path only, never the host. -->
+    <string name="settings_privacy_url">https://tensai.page/privacy/</string>
 
     <!-- What's new (TEN-193) -->
     <string name="changelog_title">What\'s new</string>

@@ -28,6 +28,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.CellTower
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.rounded.Construction
 import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.PrivacyTip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -368,6 +370,22 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_licenses),
                     onClick = onNavigateToLicenses,
                     trailing = { Chevron() },
+                )
+                RowDivider()
+                val privacyUrl = stringResource(R.string.settings_privacy_url)
+                SettingsRow(
+                    icon = Icons.Rounded.PrivacyTip,
+                    title = stringResource(R.string.settings_privacy),
+                    supporting = stringResource(R.string.settings_privacy_summary),
+                    onClick = { openLink(context, privacyUrl) },
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
                 )
             }
 
