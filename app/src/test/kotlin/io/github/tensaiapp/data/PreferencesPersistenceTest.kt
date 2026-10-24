@@ -77,6 +77,16 @@ class PreferencesPersistenceTest {
     }
 
     @Test
+    fun yourInstructionsComeBackAfterARestart() = runBlocking {
+        val file = File(dir, "instructions.preferences_pb")
+
+        withStore(file) { InstructionsSettings(it).setGlobal("Use metric units.") }
+        val restored = withStore(file) { InstructionsSettings(it).global.first() }
+
+        assertEquals("Use metric units.", restored)
+    }
+
+    @Test
     fun theLanguagePickedInSettingsComesBackAfterARestart() = runBlocking {
         val file = File(dir, "language.preferences_pb")
 

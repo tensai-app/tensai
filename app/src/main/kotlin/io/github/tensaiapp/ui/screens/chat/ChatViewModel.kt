@@ -3,6 +3,7 @@ package io.github.tensaiapp.ui.screens.chat
 import io.github.tensaiapp.agent.AgentEvent
 import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ReplyGenerator
+import io.github.tensaiapp.agent.SystemPrompt
 import io.github.tensaiapp.agent.ToolCallOutcome
 import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.AskUserGate
@@ -329,16 +330,18 @@ internal const val DefaultEnableThinking = true
  * The per-conversation settings the chat screen edits, in the shape [ConversationEntity] stores
  * them. Read off the row once there is one, held in memory for a draft (TEN-106) and handed to
  * [ChatRepository.createConversation] on the draft's first send. The defaults are a fresh row's.
+ * [createdAt] is read, never edited: the base prompt's date (see [SystemPrompt]), `null` for a draft.
  */
 private data class ConversationSettings(
     val samplingJson: String? = null,
     val systemPrompt: String? = null,
     val enableThinking: Boolean = DefaultEnableThinking,
     val toolsEnabled: Boolean = true,
+    val createdAt: Long? = null,
 )
 
 private fun ConversationEntity?.settings(): ConversationSettings =
-    if (this == null) ConversationSettings() else ConversationSettings(samplingJson, systemPrompt, enableThinking, toolsEnabled)
+    if (this == null) ConversationSettings() else ConversationSettings(samplingJson, systemPrompt, enableThinking, toolsEnabled, createdAt)
 
 /**
  * Drives a single conversation's chat screen (TEN-32): streams [ChatRepository]'s persisted
@@ -377,6 +380,9 @@ class ChatViewModel(
     private val partTokens: PartTokenCache = RuntimeGraph.partTokenCache,
     private val toolGrants: Flow<Set<ToolTier>> = RuntimeGraph.toolSettings.grants,
     private val chatTurns: ChatTurns = RuntimeGraph.chatTurns,
+    /** The user's instructions for every chat ([io.github.tensaiapp.data.InstructionsSettings]): a layer of each request, previewed by the settings sheet. */
+    val globalInstructions: Flow<String> = RuntimeGraph.instructionsSettings.global,
+    private val systemPrompts: SystemPrompt = SystemPrompt(),
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -900,9 +906,10 @@ class ChatViewModel(
         val id = _conversationId.value
         val conversation = id?.let { chatRepository.getConversation(it) }
         var history = id?.let { chatRepository.observeMessages(it).first() }.orEmpty()
-        val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
 
         val definitionsText = definitionsTextFor(conversation, info)
+        // The system message of the path a send would take: the agent's names the tools in play.
+        val systemPrompt = systemPromptFor(conversation.settings(), agent = definitionsText != null, globalInstructions.first())
         // The facts ride in the first user message, so they weigh on the prompt from the first send on.
         val memoryBlock = if (history.any { it.role == "user" }) memoryPrompt.blockFor(id) else null
         val partKey = info?.let { it.modelId ?: it.name } ?: conversation?.modelId
@@ -998,11 +1005,12 @@ class ChatViewModel(
      * system prompt and tools of the shared prefix, TEN-182) would read as template overhead (TEN-190).
      */
     private suspend fun countFixedParts(conversation: ConversationEntity?, info: LoadedModelInfo) {
-        val systemPrompt = conversation?.systemPrompt?.takeIf { it.isNotBlank() }
+        val definitionsText = definitionsTextFor(conversation, info)
+        val systemPrompt = systemPromptFor(conversation.settings(), agent = definitionsText != null, globalInstructions.first())
         val key = info.modelId ?: info.name
         val texts = listOfNotNull(
             systemPrompt,
-            definitionsTextFor(conversation, info),
+            definitionsText,
             conversation?.let { memoryPrompt.blockFor(it.id) },
         ).filter { partTokens.get(key, it) == null }
         if (texts.isEmpty()) return
@@ -1075,11 +1083,16 @@ class ChatViewModel(
         // Tools need a template that takes them, the conversation's switch on, and a tool the user granted.
         // Anything else is the plain path below, untouched by tool calling (TEN-172).
         if (agentPathOn(conversation?.toolsEnabled != false)) {
-            streamAgentTurn(conversationId, decodeRequestFor(conversation, history), turn)
+            val settings = conversation.settings()
+            val global = globalInstructions.first()
+            // The base prompt names the tools the turn offers, read by the runtime when it starts: see [AgentRuntime.run].
+            streamAgentTurn(conversationId, decodeRequestFor(conversation, history, agent = true), turn) { tools ->
+                systemPromptWith(settings, tools, global)
+            }
             return
         }
         val assistantId = chatRepository.startAssistantMessage(conversationId)
-        val request = decodeRequestFor(conversation, history)
+        val request = decodeRequestFor(conversation, history, agent = false)
         val finished = streamInto(assistantId, request, turn.stopSignal)
         if (model != null && finished != null && worthWarmingUp(finished)) {
             warmUpAfterReply(conversationId, model)
@@ -1094,15 +1107,34 @@ class ChatViewModel(
     private suspend fun agentPathOn(toolsEnabled: Boolean): Boolean =
         toolsEnabled && currentModelSupportsTools.first() && agentRuntime.hasTools()
 
-    /** The plain [DecodeRequest] of [conversation]'s next reply, see [generateReply] for where each setting comes from. */
-    private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>): DecodeRequest =
-        requestFor(conversation.settings(), history, conversation?.let { memoryPrompt.blockFor(it.id) })
+    /**
+     * The [DecodeRequest] of [conversation]'s next reply, without tools (the agent loop adds them), see
+     * [generateReply] for where each setting comes from. [agent]: the reply runs the agent path, whose
+     * system message names the tools a turn offers.
+     */
+    private suspend fun decodeRequestFor(conversation: ConversationEntity?, history: List<MessageEntity>, agent: Boolean): DecodeRequest {
+        val settings = conversation.settings()
+        val system = systemPromptFor(settings, agent, globalInstructions.first())
+        return requestFor(settings, history, conversation?.let { memoryPrompt.blockFor(it.id) }, system)
+    }
 
-    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?): DecodeRequest =
+    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?, system: String?): DecodeRequest =
         DecodeRequest(
-            messages = chatRepository.toEngineMessages(history, settings.systemPrompt, memory),
+            messages = chatRepository.toEngineMessages(history, system, memory),
             sampling = replySampling(settings.samplingJson, settings.enableThinking, currentModelSupportsThinking.first()),
         )
+
+    /**
+     * The system message of a request on [settings], see [SystemPrompt] for its layers: the base prompt,
+     * then [global] and the conversation's own instructions. [agent]: for the agent path, the base prompt
+     * then names the tools [AgentRuntime.definitions] offers right now; the plain path offers none.
+     */
+    private fun systemPromptFor(settings: ConversationSettings, agent: Boolean, global: String): String? =
+        systemPromptWith(settings, if (agent) agentRuntime.definitions().mapTo(HashSet()) { it.name } else null, global)
+
+    /** [systemPromptFor] with the offered [tools] named, `null` for the plain path. */
+    private fun systemPromptWith(settings: ConversationSettings, tools: Set<String>?, global: String): String? =
+        systemPrompts.build(tools = tools, startedAt = settings.createdAt, global = global, chat = settings.systemPrompt)
 
     /**
      * The request whose prefix the first message of a conversation with [settings] will have (TEN-205):
@@ -1110,19 +1142,23 @@ class ChatViewModel(
      * from the code a real send uses, and given the tools [AgentRuntime.run] gives every request of a
      * turn. Memory is left out on purpose, it sits in the first user message, after the cut (see
      * [MemoryContext]). The engine keys its cache on the text of the prefix it renders from this
-     * (`restoreOrBuildToolPrefix`), so equal inputs here are the same file there.
+     * (`restoreOrBuildToolPrefix`), so equal inputs here are the same file there, and a change of
+     * any layer of the system message ([global] included) is another file.
      */
-    private suspend fun prefixRequest(settings: ConversationSettings): DecodeRequest =
-        requestFor(settings, emptyList(), memory = null).copy(tools = agentRuntime.definitions())
+    private suspend fun prefixRequest(settings: ConversationSettings, global: String): DecodeRequest =
+        requestFor(settings, emptyList(), memory = null, systemPromptFor(settings, agent = true, global)).copy(tools = agentRuntime.definitions())
 
     /**
-     * What decides [keepPrefixWarm]'s prefix besides the model: the settings that reach the prompt, the granted
+     * What decides [keepPrefixWarm]'s prefix besides the model: the settings that reach the prompt (the user's
+     * [global] instructions and the conversation's start, for the base prompt's date, included), the granted
      * tiers (they decide the tool block, [grants] only triggers, the registry is read when the request is built)
      * and whether the conversation is still empty.
      */
     private data class PrefixTarget(
         val model: LoadedModelInfo,
         val systemPrompt: String?,
+        val global: String,
+        val createdAt: Long?,
         val enableThinking: Boolean,
         val toolsEnabled: Boolean,
         val grants: Set<ToolTier>,
@@ -1138,7 +1174,7 @@ class ChatViewModel(
      * (what was decoded stays, as a valid prefix the next request reads as resident).
      *
      * Runs again when something that reaches the prefix changes: the model, this conversation's system
-     * prompt, thinking or tools switch, the granted tiers, or the app coming back to the foreground
+     * prompt, the user's instructions for every chat, thinking or tools switch, the granted tiers, or the app coming back to the foreground
      * (leaving it cancels the warm-up). A change cancels the warm-up in flight and
      * the next one replaces the prefix in the cache, which [InferenceQueue.warmToolPrefix] allows because
      * nothing else is in it.
@@ -1158,12 +1194,17 @@ class ChatViewModel(
         }
         combine(
             inferenceQueue.state.map { it.residentModel },
-            settings,
+            combine(settings, globalInstructions, ::Pair),
             toolGrants,
             empty,
             combine(AppForegroundTracker.isForeground, chatTurns.running) { foreground, turns -> foreground to turns.isEmpty() },
-        ) { model, settings, grants, empty, (foreground, idle) ->
-            model?.let { PrefixTarget(it, settings.systemPrompt, settings.enableThinking, settings.toolsEnabled, grants, empty, foreground, idle) }
+        ) { model, (settings, global), grants, empty, (foreground, idle) ->
+            model?.let {
+                PrefixTarget(
+                    it, settings.systemPrompt, global, settings.createdAt, settings.enableThinking, settings.toolsEnabled,
+                    grants, empty, foreground, idle,
+                )
+            }
         }
             .distinctUntilChanged()
             .collectLatest { target -> if (target != null) warmPrefix(target) }
@@ -1178,7 +1219,13 @@ class ChatViewModel(
         if (!target.foreground) return
         if (!agentPathOn(target.toolsEnabled)) return
         val request = prefixRequest(
-            ConversationSettings(systemPrompt = target.systemPrompt, enableThinking = target.enableThinking, toolsEnabled = target.toolsEnabled),
+            ConversationSettings(
+                systemPrompt = target.systemPrompt,
+                enableThinking = target.enableThinking,
+                toolsEnabled = target.toolsEnabled,
+                createdAt = target.createdAt,
+            ),
+            target.global,
         )
         _warmingPrefix.value = true
         try {
@@ -1253,7 +1300,11 @@ class ChatViewModel(
             val history = chatRepository.observeMessages(conversationId).first()
             if (history.lastOrNull()?.role != "assistant") return@launch
             inferenceQueue.warmUp(
-                messages = chatRepository.toEngineMessages(history, conversation.systemPrompt, memoryPrompt.blockFor(conversationId)),
+                messages = chatRepository.toEngineMessages(
+                    history,
+                    systemPromptFor(conversation.settings(), agent = false, globalInstructions.first()),
+                    memoryPrompt.blockFor(conversationId),
+                ),
                 enableThinking = conversation.enableThinking,
                 expectedModel = model,
             )
@@ -1557,8 +1608,15 @@ class ChatViewModel(
      * `finally` then closes what was cut: calls of the last reply that never finished get a `stopped`
      * result (a flow cannot emit once cancelled, so the runtime leaves that to us) and a reply cut
      * mid-stream ends as [streamInto]'s would, kept when it has content or was stopped.
+     *
+     * [system] builds the system message from the tools the turn offers, see [AgentRuntime.run].
      */
-    private suspend fun streamAgentTurn(conversationId: String, request: DecodeRequest, turn: ChatTurns.Turn) {
+    private suspend fun streamAgentTurn(
+        conversationId: String,
+        request: DecodeRequest,
+        turn: ChatTurns.Turn,
+        system: (Set<String>) -> String?,
+    ) {
         val stopSignal = turn.stopSignal
         var parser = ReplyStreamSplitter(toolsActive = true)
         // The reply being streamed, and the last one that made calls: the audit rows point at it.
@@ -1603,7 +1661,7 @@ class ChatViewModel(
 
         _generatingHere.value = true
         try {
-            agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }).collect { event ->
+            agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }, system).collect { event ->
                 when (event) {
                     AgentEvent.TurnStarted -> Unit
                     is AgentEvent.ReplyStarted -> {

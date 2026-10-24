@@ -114,14 +114,24 @@ class AgentRuntime(
      * Runs a turn on [request] (the history, ending on the user's message). [request]'s own tools are
      * replaced by the registry's active ones, read once here: a grant changed mid-turn applies to the next.
      * Cold, runs when collected.
+     *
+     * [system], when given, builds the system message from the names of those same tools and replaces the
+     * request's own: the base prompt names a tool only when the turn offers it, even when a grant changed
+     * between the request being built and the turn starting.
      */
-    fun run(request: DecodeRequest, generator: ReplyGenerator): Flow<AgentEvent> = flow {
+    fun run(request: DecodeRequest, generator: ReplyGenerator, system: ((Set<String>) -> String?)? = null): Flow<AgentEvent> = flow {
         emit(AgentEvent.TurnStarted)
         val tools = registry.active()
-        val definitions = definitions()
+        val definitions = tools.map { ToolDefinition(it.name, it.description, it.parametersSchema) }
         val turnId = UUID.randomUUID().toString().take(8)
         val usedIds = HashSet<String>()
-        val history = request.messages.toMutableList()
+        val messages = if (system == null) {
+            request.messages
+        } else {
+            listOfNotNull(system(tools.mapTo(HashSet()) { it.name })?.let { ChatMessage(MessageRole.System, it) }) +
+                request.messages.dropWhile { it.role == MessageRole.System }
+        }
+        val history = messages.toMutableList()
         var callsMade = 0
         var index = 0
         // What the gate reads (web_fetch, memory remember): the whole history, then each message the turn adds to it.

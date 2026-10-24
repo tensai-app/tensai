@@ -110,6 +110,33 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun theSystemMessageNamesTheToolsTheTurnOffersNotTheOnesTheRequestWasBuiltWith() = runBlocking {
+        var granted = setOf(ToolTier.Local, ToolTier.Network)
+        val registry = ToolRegistry(listOf(FakeTool("calculate"), FakeTool("web_search", tier = ToolTier.Network))) { granted }
+        val built = DecodeRequest(listOf(ChatMessage(MessageRole.System, "names calculate, web_search"), ChatMessage(MessageRole.User, "go")))
+        // Revoked after the request was built, before the turn starts.
+        granted = setOf(ToolTier.Local)
+        val gen = ScriptedGenerator(reply("hello"))
+
+        AgentRuntime(registry).run(built, gen) { names -> "names ${names.sorted().joinToString()}" }.toList()
+
+        val sent = gen.requests.single()
+        assertEquals(listOf("calculate"), sent.tools.map { it.name })
+        assertEquals(listOf(MessageRole.System, MessageRole.User), sent.messages.map { it.role })
+        assertEquals("names calculate", sent.messages.first().content)
+    }
+
+    @Test
+    fun withoutASystemBuilderTheRequestsOwnMessagesGoAsTheyAre() = runBlocking {
+        val gen = ScriptedGenerator(reply("hello"))
+        val built = DecodeRequest(listOf(ChatMessage(MessageRole.System, "mine"), ChatMessage(MessageRole.User, "go")))
+
+        runtime(FakeTool()).run(built, gen).toList()
+
+        assertEquals(built.messages, gen.requests.single().messages)
+    }
+
+    @Test
     fun oneCallIsRunAndItsResultComesBackToTheModel() = runBlocking {
         val tool = FakeTool()
         val gen = ScriptedGenerator(reply(calls = listOf(call("c1"))), reply("done"))

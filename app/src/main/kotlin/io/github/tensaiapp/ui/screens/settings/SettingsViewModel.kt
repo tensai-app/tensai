@@ -8,6 +8,7 @@ import io.github.tensaiapp.data.ChangelogRepository
 import io.github.tensaiapp.data.ContextRepository
 import io.github.tensaiapp.data.AutoMemoryShare
 import io.github.tensaiapp.data.ContextSetting
+import io.github.tensaiapp.data.InstructionsSettings
 import io.github.tensaiapp.data.LanguageRepository
 import io.github.tensaiapp.data.ThemeRepository
 import io.github.tensaiapp.data.models.ModelEntity
@@ -73,6 +74,7 @@ class SettingsViewModel(
     private val contextRepository: ContextRepository = RuntimeGraph.contextRepository,
     private val sessionRepository: SessionRepository = RuntimeGraph.sessionRepository,
     private val downloadPreferences: DownloadPreferences = RuntimeGraph.downloadPreferences,
+    private val instructionsSettings: InstructionsSettings = RuntimeGraph.instructionsSettings,
     private val tokenStore: TokenStore = RuntimeGraph.tokenStore,
     private val checkToken: suspend (String) -> HfTokenCheck = { RuntimeGraph.hfClient.checkToken(it) },
     models: Flow<List<ModelEntity>> = RuntimeGraph.modelRepository.models,
@@ -180,6 +182,13 @@ class SettingsViewModel(
 
     fun setAllowMobileData(allowed: Boolean) {
         scope.launch { downloadPreferences.setAllowMobileData(allowed) }
+    }
+
+    /** "Your instructions", added to every chat's system message, see [InstructionsSettings]. */
+    val globalInstructions: Flow<String> = instructionsSettings.global
+
+    fun setGlobalInstructions(text: String) {
+        scope.launch { instructionsSettings.setGlobal(text) }
     }
 
     /**

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- French of the debug values/strings.xml, same keys and placeholders. -->
+<resources>
+    <string name="bench_title">Banc agent (debug)</string>
+    <string name="bench_hint">Lance les prompts du banc sur le modèle chargé. Les conversations ne sont pas touchées.</string>
+    <string name="bench_thinking">Réflexion</string>
+    <string name="bench_examples">Exemples few-shot</string>
+    <string name="bench_run">Lancer le banc agent</string>
+    <string name="bench_starting">Démarrage…</string>
+    <string name="bench_running">En cours, %1$d prompts sur %2$d</string>
+    <string name="bench_failed">Non lancé : %1$s</string>
+    <string name="bench_stopped_early">Arrêté avant le dernier prompt, voir logcat tensai.bench</string>
+</resources>

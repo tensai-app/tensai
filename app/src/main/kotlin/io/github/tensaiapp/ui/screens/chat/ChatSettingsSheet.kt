@@ -58,6 +58,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Tune
@@ -205,6 +206,8 @@ internal fun SheetDragHandle() {
  * @param supportsTools whether the loaded model's template takes tools, see [ChatViewModel.currentModelSupportsTools]:
  *   the Tools row (TEN-173) is only there then. The sheet does not show the model's name, so the Tools badge is not either.
  * @param toolsEnabled this conversation's Tools switch, committed on tap by [onToolsEnabledChange].
+ * @param globalInstructions the user's instructions for every chat, previewed on one line over this chat's
+ *   own (which come after them in the system message); a tap on the preview runs [onEditGlobalInstructions].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -222,6 +225,8 @@ fun ChatSettingsSheet(
     supportsTools: Boolean = false,
     toolsEnabled: Boolean = true,
     onToolsEnabledChange: (Boolean) -> Unit = {},
+    globalInstructions: String = "",
+    onEditGlobalInstructions: () -> Unit = {},
 ) {
     TensaiBottomSheet(
         onDismissRequest = onDismiss,
@@ -298,6 +303,8 @@ fun ChatSettingsSheet(
             ) {
                 Section(stringResource(R.string.chat_settings_section_instructions)) {
                     SheetCard {
+                        GlobalInstructionsRow(text = globalInstructions, onClick = onEditGlobalInstructions)
+                        HorizontalDivider(color = MaterialTheme.tensaiTints.outline)
                         PromptField(
                             value = promptDraft,
                             onValueChange = { promptDraft = it },
@@ -450,7 +457,7 @@ private fun <T> motionSpec(reducedMotion: Boolean): FiniteAnimationSpec<T> =
  * change that was persisted by other means (Reset).
  */
 @Composable
-private fun <T> DebouncedWrite(value: T, resetKey: Any?, write: (T) -> Unit) {
+internal fun <T> DebouncedWrite(value: T, resetKey: Any?, write: (T) -> Unit) {
     var sent by remember(resetKey) { mutableStateOf(value) }
     val latest by rememberUpdatedState(value)
     val writer by rememberUpdatedState(write)
@@ -510,6 +517,45 @@ internal fun SheetCard(content: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column { content() }
+    }
+}
+
+/**
+ * The user's instructions for every chat on one line ("None" when there are none), over this chat's own:
+ * they come first in the system message. Edited in Settings, where a tap leads.
+ */
+@Composable
+private fun GlobalInstructionsRow(text: String, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_global_instructions),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = text.trim().replace('\n', ' ').ifEmpty { stringResource(R.string.settings_global_instructions_none) },
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

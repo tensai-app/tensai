@@ -85,6 +85,7 @@ import io.github.tensaiapp.ui.tools.toolLineSummary
  *   row on the first send (TEN-106), see [ChatViewModel]'s KDoc.
  * @param onNavigateToModels the context sheet's "Load" when it has no model to name, and the model picker's "Manage models".
  * @param onNavigateToSettings the context sheet's way to the context length setting (TEN-161).
+ * @param onNavigateToGlobalInstructions the settings sheet's way to "Your instructions" in Settings.
  * @param onNavigateToLoad the context sheet's "Load" (the model the conversation was started on) and the
  *   model picker's pick. The caller makes the load come back to this conversation.
  * @param onNavigateToDiscover the model picker's way to Discover.
@@ -102,6 +103,7 @@ fun ChatScreen(
     conversationId: String?,
     onNavigateToModels: () -> Unit,
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToGlobalInstructions: () -> Unit = {},
     onNavigateToLoad: (modelId: String) -> Unit = {},
     onNavigateToDiscover: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
@@ -164,6 +166,7 @@ fun ChatScreen(
     val systemPrompt by viewModel.systemPrompt.collectAsState(initial = null)
     val supportsTools by viewModel.currentModelSupportsTools.collectAsState(initial = null)
     val toolsEnabled by viewModel.toolsEnabled.collectAsState(initial = null)
+    val globalInstructions by viewModel.globalInstructions.collectAsState(initial = "")
 
     var input by rememberSaveable { mutableStateOf("") }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
@@ -477,6 +480,11 @@ fun ChatScreen(
             onEnableThinkingChange = viewModel::setEnableThinking,
             onReset = { viewModel.resetTuning(resetThinking = currentSupportsThinking) },
             onDismiss = { settingsOpen = false },
+            globalInstructions = globalInstructions,
+            onEditGlobalInstructions = {
+                settingsOpen = false
+                onNavigateToGlobalInstructions()
+            },
         )
     }
 }

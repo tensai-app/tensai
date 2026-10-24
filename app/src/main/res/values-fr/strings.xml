@@ -337,7 +337,7 @@
     <string name="context_runtime_reply">%1$s tok/s · premier token %2$s s</string>
     <string name="context_runtime_reply_ttft">Premier token %1$s s</string>
     <string name="chat_settings_reset">Réinitialiser le réglage</string>
-    <string name="chat_settings_section_instructions">Instructions</string>
+    <string name="chat_settings_section_instructions">Instructions de cette conversation</string>
     <string name="chat_settings_prompt_placeholder">Comment tensai doit-il se comporter dans cette discussion ?</string>
     <string name="chat_settings_prompt_chars">%1$d car.</string>
     <string name="chat_settings_thinking_supporting">Réfléchir avant de répondre</string>
@@ -948,4 +948,15 @@
     <string name="tools_test_format">%1$s a répondu dans un format inattendu</string>
     <string name="tools_test_network">%1$s est injoignable</string>
     <string name="tools_key_invalid">Cela ne ressemble pas à une clé d\'API</string>
+    <!-- Base prompt and global instructions -->
+    <string name="settings_global_instructions">Vos instructions</string>
+    <string name="settings_global_instructions_hint">Appliquées à toutes les conversations</string>
+    <string name="settings_global_instructions_none">Aucune</string>
+    <string name="settings_global_instructions_value">~%1$d tokens</string>
+    <string name="settings_global_instructions_body">Ajoutées à chaque conversation, après le prompt de base de tensai et avant les instructions propres à la conversation.</string>
+    <string name="settings_global_instructions_placeholder">Par exemple : réponses courtes, unités métriques.</string>
+    <string name="settings_global_instructions_tokens">~%1$d / %2$d tokens</string>
+    <string name="settings_base_prompt">Prompt de base</string>
+    <string name="settings_base_prompt_hint">Ce que tensai dit d\'abord au modèle, en lecture seule</string>
+    <string name="settings_base_prompt_body">Envoyé en premier dans chaque conversation (version %1$d). Une ligne d\'outil n\'est envoyée que si cet outil est activé, et une conversation sans outils reçoit les deux premières lignes. Sans l\'outil datetime, le jour où la conversation a commencé remplace sa ligne.</string>
 </resources>

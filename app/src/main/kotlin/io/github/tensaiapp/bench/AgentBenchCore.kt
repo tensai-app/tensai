@@ -23,16 +23,46 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** What `am start ... --es bench agent [--ez thinking false]` asks for. */
-data class BenchTrigger(val thinking: Boolean)
+/**
+ * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
+ * [--ez examples true]` or from the debug panel of Settings > This device.
+ *
+ * @param basePrompt the harness's base prompt opens the system message, as in every chat.
+ * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
+ *   are part of the base prompt, so never on without it.
+ */
+data class BenchTrigger(val thinking: Boolean, val basePrompt: Boolean = true, val examples: Boolean = false)
+
+/** Where the last run is, for the debug panel. */
+sealed interface BenchStatus {
+    data object Idle : BenchStatus
+
+    /** [done] prompts of [total], `null` until the list is read. */
+    data class Running(val done: Int, val total: Int?) : BenchStatus
+
+    /** [lines] from [BenchSummary.toDisplayLines]. [stoppedEarly]: the run stopped before the last prompt, the log says why. */
+    data class Finished(val lines: List<String>, val stoppedEarly: Boolean) : BenchStatus
+
+    /** Why the bench did not run. */
+    data class Failed(val message: String) : BenchStatus
+}
 
 /**
  * The bench a launch intent asks for, `null` for none: only `bench=agent`, and only in a debug build ([debug]), so a
- * release build ignores the extra entirely. [thinking] absent is [defaultThinking], the app's own for a new chat.
+ * release build ignores the extra entirely. [thinking] absent is [defaultThinking], the app's own for a new chat;
+ * [basePrompt] absent is on and [examples] absent off, what a chat sends. [examples] without the base prompt is off.
  */
-fun benchTrigger(debug: Boolean, bench: String?, thinking: Boolean?, defaultThinking: Boolean): BenchTrigger? {
+fun benchTrigger(
+    debug: Boolean,
+    bench: String?,
+    thinking: Boolean?,
+    defaultThinking: Boolean,
+    basePrompt: Boolean? = null,
+    examples: Boolean? = null,
+): BenchTrigger? {
     if (!debug || bench != "agent") return null
-    return BenchTrigger(thinking ?: defaultThinking)
+    val base = basePrompt ?: true
+    return BenchTrigger(thinking ?: defaultThinking, base, base && examples == true)
 }
 
 /**
@@ -147,6 +177,8 @@ class RefusingGate : ConfirmationGate {
  * @param stopReason the last reply's [io.github.tensaiapp.engine.StopReason] name, `null` when it reported none.
  * @param prefixCold the tool prefix was not warmed before this prompt: it paid the prefill, left out of the medians.
  * @param stopsRun the queue refused the turn (busy, or the model gone): the prompts after it would only fail the same way.
+ * @param namedInText offered tools a reply that made no call wrote out as if calling them ([toolsNamedInText]): a call
+ *   the few-shot examples taught as text, which no verdict would count otherwise.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -161,6 +193,7 @@ data class BenchResult(
     val error: String? = null,
     val prefixCold: Boolean = false,
     val stopsRun: Boolean = false,
+    val namedInText: List<String> = emptyList(),
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -187,6 +220,7 @@ data class BenchResult(
         put("total_ms", totalMs)
         put("stop", stopReason)
         if (prefixCold) put("prefix_cold", true)
+        if (namedInText.isNotEmpty()) put("named_in_text", JsonArray(namedInText.map { JsonPrimitive(it) }))
         error?.let { put("error", it) }
     }.toString()
 
@@ -198,7 +232,8 @@ data class BenchResult(
 /**
  * The bench's totals. Each rate is over the prompts it can happen to, errors and unavailable tools left out: false
  * calls over the prompts expecting no tool, missing calls over the ones expecting one. `null` when there is no such
- * prompt. The medians leave out errors and a [BenchResult.prefixCold] prompt.
+ * prompt. The medians leave out errors and a [BenchResult.prefixCold] prompt. [namedInText]: prompts with a
+ * [BenchResult.namedInText], whatever their verdict.
  */
 data class BenchSummary(
     val counts: Map<BenchVerdict, Int>,
@@ -206,17 +241,40 @@ data class BenchSummary(
     val missingRate: Double?,
     val medianTtftMs: Long?,
     val medianTotalMs: Long?,
+    val namedInText: Int = 0,
 ) {
-    fun toLogLine(thinking: Boolean): String = buildJsonObject {
+    fun toLogLine(trigger: BenchTrigger): String = buildJsonObject {
         put("event", "summary")
-        put("thinking", thinking)
+        put("thinking", trigger.thinking)
+        put("base_prompt", trigger.basePrompt)
+        put("examples", trigger.examples)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
         put("missing_rate", missingRate)
         put("median_ttft_ms", medianTtftMs)
         put("median_total_ms", medianTotalMs)
+        put("named_in_text", namedInText)
     }.toString()
+
+    /**
+     * The summary as lines for the debug panel, to be read off a screenshot: the run's settings, the counts, the
+     * rates and medians, then the ids of the prompts that went wrong, by verdict.
+     */
+    fun toDisplayLines(trigger: BenchTrigger, model: String, results: List<BenchResult>): List<String> = buildList {
+        fun onOff(on: Boolean) = if (on) "on" else "off"
+        add(model)
+        add("thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}")
+        add("prompts ${counts.values.sum()}: " + BenchVerdict.entries.joinToString(" ") { "${it.storageName} ${counts[it] ?: 0}" })
+        add("false_call_rate ${falseCallRate ?: "-"} · missing_rate ${missingRate ?: "-"}")
+        add("median ttft ${medianTtftMs ?: "-"} ms · median total ${medianTotalMs ?: "-"} ms")
+        results.filter { it.verdict != BenchVerdict.Correct }.groupBy { it.verdict }.forEach { (verdict, wrong) ->
+            add("${verdict.storageName}: " + wrong.joinToString(", ") { it.prompt.id })
+        }
+        results.filter { it.namedInText.isNotEmpty() }.takeIf { it.isNotEmpty() }?.let { named ->
+            add("named_in_text $namedInText: " + named.joinToString(", ") { "${it.prompt.id} (${it.namedInText.joinToString("|")})" })
+        }
+    }
 
     companion object {
         fun of(results: List<BenchResult>): BenchSummary {
@@ -231,6 +289,7 @@ data class BenchSummary(
                 missingRate = rate(withTool.count { it.verdict == BenchVerdict.Missing }, withTool.size),
                 medianTtftMs = median(timed.mapNotNull { it.ttftMs }),
                 medianTotalMs = median(timed.map { it.totalMs }),
+                namedInText = results.count { it.namedInText.isNotEmpty() },
             )
         }
 
@@ -247,8 +306,9 @@ data class BenchSummary(
 /**
  * Runs bench prompts through [runtime], the app's agent loop, on [generator]. Each prompt is a conversation of one
  * user message on [sampling], nothing stored: the request a first send of a new chat builds, minus the saved facts
- * (so a run does not depend on what the user's memory holds).
+ * and the user's instructions (so a run does not depend on what the user set).
  *
+ * @param system the system message every request opens with, the warmed prefix included, `null` for none.
  * @param countTokens tokens of a text under the loaded model's tokenizer, `null` when it cannot be counted.
  */
 class BenchRunner(
@@ -258,9 +318,12 @@ class BenchRunner(
     private val sampling: SamplingConfig,
     private val countTokens: suspend (String) -> Int?,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val system: String? = null,
 ) {
-    /** The request the tool prefix is warmed from: no history, the tools a turn gets. */
-    fun prefixRequest(): DecodeRequest = DecodeRequest(emptyList(), sampling, tools = runtime.definitions())
+    private val systemMessages = listOfNotNull(system?.let { ChatMessage(MessageRole.System, it) })
+
+    /** The request the tool prefix is warmed from: the system message, no history, the tools a turn gets. */
+    fun prefixRequest(): DecodeRequest = DecodeRequest(systemMessages, sampling, tools = runtime.definitions())
 
     /** The names of the tools a prompt offers right now, read as [AgentRuntime.run] reads them. */
     fun availableTools(): Set<String> = runtime.definitions().mapTo(LinkedHashSet()) { it.name }
@@ -268,7 +331,7 @@ class BenchRunner(
     /** Runs [prompt] in a fresh one-message conversation, [prefixCold] when the tool prefix was not warmed before it. */
     suspend fun run(prompt: BenchPrompt, prefixCold: Boolean = false): BenchResult {
         gate.drain()
-        val request = DecodeRequest(listOf(ChatMessage(MessageRole.User, prompt.prompt)), sampling)
+        val request = DecodeRequest(systemMessages + ChatMessage(MessageRole.User, prompt.prompt), sampling)
         val available = availableTools()
         val startedAt = clock()
         var ttftMs: Long? = null
@@ -276,6 +339,7 @@ class BenchRunner(
         var reasoning: String? = null
         val reasonings = mutableListOf<String>()
         val calls = mutableListOf<ToolCall>()
+        val named = LinkedHashSet<String>()
         var tokens = 0
         var stopReason: String? = null
         var error: Throwable? = null
@@ -286,6 +350,7 @@ class BenchRunner(
                 is AgentEvent.ReplyFinished -> {
                     if (replies++ == 0) ttftMs = event.stats?.ttftMs
                     calls += event.calls
+                    if (event.calls.isEmpty()) event.content?.let { named += toolsNamedInText(it, available) }
                     reasoning?.takeIf { it.isNotBlank() }?.let { reasonings += it }
                     tokens += event.stats?.tokensGenerated ?: 0
                     stopReason = event.stats?.stopReason?.name
@@ -310,6 +375,7 @@ class BenchRunner(
             error = error?.let { it.message ?: it::class.simpleName },
             prefixCold = prefixCold,
             stopsRun = error is QueueBusyException,
+            namedInText = named.toList(),
         )
     }
 }
@@ -335,6 +401,7 @@ suspend fun <K> handOverCache(owner: Pair<String, K>?, save: suspend (String, K)
  * [beforeEach] gets the cache back from a chat that took it in between (see [handOverCache]) and answers why the run
  * must stop, `null` to go on. A turn the queue refused ([BenchResult.stopsRun]) stops it too. Either way an `error`
  * line says why, and the results so far are returned. [firstCold]: the tool prefix was not warmed for the first prompt.
+ * [onResult] gets each result as it comes, for a progress line.
  */
 suspend fun runBench(
     prompts: List<BenchPrompt>,
@@ -342,6 +409,7 @@ suspend fun runBench(
     firstCold: Boolean,
     beforeEach: suspend () -> String?,
     log: (String) -> Unit,
+    onResult: (BenchResult) -> Unit = {},
 ): List<BenchResult> {
     val results = mutableListOf<BenchResult>()
     for ((i, prompt) in prompts.withIndex()) {
@@ -352,12 +420,24 @@ suspend fun runBench(
         val result = runner.run(prompt, prefixCold = firstCold && i == 0)
         results += result
         log(result.toLogLine())
+        onResult(result)
         if (result.stopsRun) {
             log(benchErrorLine("the queue refused '${prompt.id}' (${result.error}), run stopped"))
             return results
         }
     }
     return results
+}
+
+/**
+ * The tools of [tools] that [text] writes out as a call instead of making one: in backticks, after "call", before
+ * a `(` or `{`, as a JSON `"name"`, or anywhere for a name no prose holds (one with an underscore). A plain word
+ * ("convert these miles") is not one, so a reply answering in words is not counted.
+ */
+fun toolsNamedInText(text: String, tools: Set<String>): List<String> = tools.filter { name ->
+    val n = Regex.escape(name)
+    Regex("""`$n`|\bcall(?:s|ed|ing)?\s+(?:the\s+)?(?:`)?$n\b|\b$n\s*[({]|"name"\s*:\s*"$n"""", RegexOption.IGNORE_CASE).containsMatchIn(text) ||
+        ('_' in name && Regex("""\b$n\b""").containsMatchIn(text))
 }
 
 /** An `error` line: why the bench does not run, or stopped. */

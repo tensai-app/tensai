@@ -23,6 +23,7 @@ import io.github.tensaiapp.download.DownloadPreferences
 import io.github.tensaiapp.hf.FakeTokenCipher
 import io.github.tensaiapp.hf.HfTokenCheck
 import io.github.tensaiapp.hf.TokenStore
+import io.github.tensaiapp.data.InstructionsSettings
 import io.github.tensaiapp.engine.KvCacheType
 import io.github.tensaiapp.engine.LoadedModelInfo
 import io.github.tensaiapp.runtime.QueueState
@@ -72,6 +73,7 @@ class SettingsViewModelTest {
     private lateinit var backendStore: DataStore<Preferences>
     private lateinit var contextStore: DataStore<Preferences>
     private lateinit var downloadStore: DataStore<Preferences>
+    private lateinit var instructionsStore: DataStore<Preferences>
     private lateinit var tokenDataStore: DataStore<Preferences>
     private lateinit var tokenStore: TokenStore
 
@@ -95,6 +97,7 @@ class SettingsViewModelTest {
         backendStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "backend.preferences_pb") }
         contextStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "context.preferences_pb") }
         downloadStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "downloads.preferences_pb") }
+        instructionsStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "instructions.preferences_pb") }
         tokenDataStore = PreferenceDataStoreFactory.create(scope = storeScope) { File(dir, "token.preferences_pb") }
         tokenStore = TokenStore(tokenDataStore, FakeTokenCipher(), Dispatchers.IO)
         sessionDao = FakeSessionDao()
@@ -119,6 +122,26 @@ class SettingsViewModelTest {
         ThemeRepository(themeStore).setThemeMode(ThemeMode.Light)
 
         assertEquals(ThemeMode.Light, newViewModel().themeMode.first())
+    }
+
+    @Test
+    fun yourInstructionsAreEmptyByDefaultThenWhatWasTypedCappedAndClearedWhenBlank() = runBlocking {
+        val viewModel = newViewModel()
+        assertEquals("", viewModel.globalInstructions.first())
+
+        viewModel.setGlobalInstructions("Answer in metric units.")
+        awaitWrites()
+        assertEquals("Answer in metric units.", viewModel.globalInstructions.first())
+        // Read back by another reader of the same store: what the chats get.
+        assertEquals("Answer in metric units.", InstructionsSettings(instructionsStore).global.first())
+
+        viewModel.setGlobalInstructions("x".repeat(InstructionsSettings.MAX_CHARS + 50))
+        awaitWrites()
+        assertEquals(InstructionsSettings.MAX_CHARS, viewModel.globalInstructions.first().length)
+
+        viewModel.setGlobalInstructions("   ")
+        awaitWrites()
+        assertEquals("", viewModel.globalInstructions.first())
     }
 
     @Test
@@ -399,6 +422,7 @@ class SettingsViewModelTest {
     ) = SettingsViewModel(
         scope = viewModelScope,
         downloadPreferences = DownloadPreferences(downloadStore),
+        instructionsSettings = InstructionsSettings(instructionsStore),
         tokenStore = tokenStore,
         checkToken = checkToken,
         themeRepository = ThemeRepository(themeStore),

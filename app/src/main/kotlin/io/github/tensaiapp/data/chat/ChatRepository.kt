@@ -19,8 +19,11 @@ private const val TITLE_MAX_LENGTH = 40
  * Owns [ConversationEntity] and [MessageEntity] rows — the chat history persisted across process
  * death, and the source [toEngineMessages] converts into the format
  * [io.github.tensaiapp.runtime.InferenceQueue.generate] expects.
+ *
+ * @param now epoch millis a new conversation is stamped with: its day is the base prompt's date, see
+ *   [io.github.tensaiapp.agent.SystemPrompt].
  */
-class ChatRepository(private val dao: ChatDao) {
+class ChatRepository(private val dao: ChatDao, private val now: () -> Long = System::currentTimeMillis) {
 
     /** All conversations, most recently updated first — feeds the drawer's "Recents" list. */
     fun observeConversations(): Flow<List<ConversationEntity>> = dao.observeConversations()
@@ -56,7 +59,7 @@ class ChatRepository(private val dao: ChatDao) {
         toolsEnabled: Boolean = true,
     ): String {
         val id = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
+        val now = now()
         dao.insertConversation(
             ConversationEntity(
                 id = id,

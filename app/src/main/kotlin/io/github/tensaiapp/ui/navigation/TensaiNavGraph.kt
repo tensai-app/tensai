@@ -71,6 +71,8 @@ fun TensaiNavGraph(
 ) {
     // Set by "Open Settings" on the repo screen: Settings opens with the token sheet up, once.
     var openTokenSheet by remember { mutableStateOf(false) }
+    // Set by the chat settings sheet's "Your instructions" row: Settings opens with that sheet up, once.
+    var openInstructionsSheet by remember { mutableStateOf(false) }
     // Set by the onboarding's "Browse Hugging Face": the next Models entry opens on Discover, once.
     var modelsOnDiscover by remember { mutableStateOf(false) }
     // Set by the chat model picker's "Import a GGUF file": the next Models entry opens the file picker, once.
@@ -129,6 +131,10 @@ fun TensaiNavGraph(
                 conversationId = conversationId.takeUnless { it == TensaiDestination.Chat.NEW_CONVERSATION_ID },
                 onNavigateToModels = { navController.navigate(TensaiDestination.Models.route) },
                 onNavigateToSettings = { navController.navigate(TensaiDestination.Settings.route) },
+                onNavigateToGlobalInstructions = {
+                    openInstructionsSheet = true
+                    navController.navigate(TensaiDestination.Settings.route) { launchSingleTop = true }
+                },
                 // returnToChat: the load comes back to this conversation, not to a new chat.
                 // singleTop: two quick picks must not stack two loading screens over the chat.
                 onNavigateToLoad = { modelId ->
@@ -283,6 +289,8 @@ fun TensaiNavGraph(
                 onNavigateToTools = { navController.navigate(TensaiDestination.Tools.route) },
                 openTokenSheet = openTokenSheet,
                 onTokenSheetOpened = { openTokenSheet = false },
+                openInstructionsSheet = openInstructionsSheet,
+                onInstructionsSheetOpened = { openInstructionsSheet = false },
             )
         }
 

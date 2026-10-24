@@ -10,6 +10,7 @@ import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.DecodeStats
+import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
@@ -49,9 +50,11 @@ class AgentBenchTest {
     private class ScriptedGenerator(vararg replies: List<DecodeEvent>) : ReplyGenerator {
         private val queue = ArrayDeque(replies.toList())
         var generations = 0
+        val requests = mutableListOf<DecodeRequest>()
 
         override fun generate(request: DecodeRequest): Flow<DecodeEvent> = flow {
             generations++
+            requests += request
             (queue.removeFirstOrNull() ?: error("no scripted reply left")).forEach { emit(it) }
         }
     }
@@ -63,7 +66,7 @@ class AgentBenchTest {
         DecodeEvent.Done(DecodeStats(tokensGenerated = tokens, tokPerSec = 1f, ttftMs = ttftMs, stopReason = StopReason.Complete)),
     )
 
-    private fun runner(vararg tools: Tool, gate: RefusingGate = RefusingGate(), generator: ReplyGenerator): BenchRunner {
+    private fun runner(vararg tools: Tool, gate: RefusingGate = RefusingGate(), generator: ReplyGenerator, system: String? = null): BenchRunner {
         // Every tier granted: the bench refuses a network call whatever the user granted.
         val registry = ToolRegistry(tools.map(::BenchTool)) { ToolTier.entries.toSet() }
         var now = 0L
@@ -75,6 +78,7 @@ class AgentBenchTest {
             sampling = SamplingConfig(),
             countTokens = { it.length },
             clock = { now += 5; now },
+            system = system,
         )
     }
 
@@ -336,6 +340,102 @@ class AgentBenchTest {
         assertEquals(listOf(BenchVerdict.Error), results.map { it.verdict })
         assertEquals(1, gen.generations)
         assertTrue(lines.last().contains("\"event\":\"error\""))
+    }
+
+    @Test
+    fun theBasePromptAndExamplesTogglesDefaultToWhatAChatSends() {
+        assertEquals(
+            BenchTrigger(thinking = true, basePrompt = true, examples = false),
+            benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true),
+        )
+        assertEquals(
+            BenchTrigger(thinking = false, basePrompt = true, examples = true),
+            benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true, basePrompt = true, examples = true),
+        )
+        // The examples ride in the base prompt: asked for without it, they are off.
+        assertEquals(
+            BenchTrigger(thinking = true, basePrompt = false, examples = false),
+            benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, basePrompt = false, examples = true),
+        )
+    }
+
+    @Test
+    fun theSystemMessageOpensTheWarmedPrefixAndEveryPrompt() = runBlocking {
+        val gen = ScriptedGenerator(reply("blue"))
+        val runner = runner(FakeTool("calculate"), generator = gen, system = "base")
+
+        assertEquals(listOf(MessageRole.System), runner.prefixRequest().messages.map { it.role })
+        assertEquals("base", runner.prefixRequest().messages.single().content)
+        runner.run(prompt("flag-colors"))
+        val sent = gen.requests.single().messages
+        assertEquals(listOf(MessageRole.System, MessageRole.User), sent.map { it.role })
+        assertEquals("base", sent.first().content)
+    }
+
+    @Test
+    fun withoutASystemMessageAPromptIsTheUserMessageAlone() = runBlocking {
+        val gen = ScriptedGenerator(reply("blue"))
+        val runner = runner(FakeTool("calculate"), generator = gen)
+
+        assertTrue(runner.prefixRequest().messages.isEmpty())
+        runner.run(prompt("flag-colors"))
+        assertEquals(listOf(MessageRole.User), gen.requests.single().messages.map { it.role })
+    }
+
+    @Test
+    fun theSummaryNamesTheTogglesInTheLogAndOnScreen() = runBlocking {
+        val gen = ScriptedGenerator(reply("blue"), reply("", calls = listOf(ToolCall("1", "calculate", "{}"))), reply("56"))
+        val runner = runner(FakeTool("calculate"), generator = gen)
+        val results = runBench(listOf(prompt("colors"), prompt("times")), runner, firstCold = false, beforeEach = { null }, log = {})
+        val trigger = BenchTrigger(thinking = false, basePrompt = true, examples = true)
+        val summary = BenchSummary.of(results)
+
+        val line = Json.parseToJsonElement(summary.toLogLine(trigger)).jsonObject
+        assertEquals("true", line.getValue("base_prompt").jsonPrimitive.content)
+        assertEquals("true", line.getValue("examples").jsonPrimitive.content)
+        val shown = summary.toDisplayLines(trigger, "Qwen3-1.7B", results)
+        assertEquals("Qwen3-1.7B", shown.first())
+        assertTrue(shown.contains("thinking off · base prompt on · examples on"))
+        assertTrue(shown.any { it.startsWith("prompts 2: correct 1 false_call 1") })
+        assertTrue("the wrong prompt is named", shown.contains("false_call: times"))
+    }
+
+    @Test
+    fun aToolWrittenOutAsACallIsNamedInTextAPlainWordIsNot() {
+        val tools = setOf("datetime", "calculate", "convert", "set_timer")
+
+        assertEquals(listOf("datetime"), toolsNamedInText("You: call datetime, then answer from its result.", tools))
+        assertEquals(listOf("calculate"), toolsNamedInText("I would use calculate(48291*7364).", tools))
+        assertEquals(listOf("convert"), toolsNamedInText("""{"name": "convert", "arguments": {}}""", tools))
+        assertEquals(listOf("set_timer"), toolsNamedInText("Use set_timer for that.", tools))
+        assertEquals(listOf("calculate"), toolsNamedInText("Try `calculate`.", tools))
+        assertTrue(toolsNamedInText("To convert miles, multiply by 1.609. I can calculate it: 42.2 km.", tools).isEmpty())
+    }
+
+    @Test
+    fun aReplyThatNamesAToolInsteadOfCallingItIsCountedWhateverItsVerdict() = runBlocking {
+        val gen = ScriptedGenerator(reply("call datetime"), reply("blue, white"))
+        val runner = runner(FakeTool("datetime"), generator = gen)
+
+        val results = runBench(listOf(prompt("time", "datetime"), prompt("colors")), runner, firstCold = false, beforeEach = { null }, log = {})
+
+        assertEquals(listOf(listOf("datetime"), emptyList<String>()), results.map { it.namedInText })
+        assertEquals(BenchVerdict.Missing, results.first().verdict)
+        val summary = BenchSummary.of(results)
+        assertEquals(1, summary.namedInText)
+        assertEquals("1", Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject.getValue("named_in_text").jsonPrimitive.content)
+        assertTrue(Json.parseToJsonElement(results.first().toLogLine()).jsonObject.containsKey("named_in_text"))
+        assertTrue(summary.toDisplayLines(BenchTrigger(true), "m", results).contains("named_in_text 1: time (datetime)"))
+    }
+
+    @Test
+    fun eachResultIsReportedAsItComes() = runBlocking {
+        val gen = ScriptedGenerator(reply("a"), reply("b"))
+        val seen = mutableListOf<String>()
+
+        runBench(listOf(prompt("one"), prompt("two")), runner(generator = gen), firstCold = false, beforeEach = { null }, log = {}, onResult = { seen += it.prompt.id })
+
+        assertEquals(listOf("one", "two"), seen)
     }
 
     @Test

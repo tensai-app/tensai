@@ -406,7 +406,7 @@
     <string name="context_runtime_reply">%1$s tok/s · first token %2$s s</string>
     <string name="context_runtime_reply_ttft">First token %1$s s</string>
     <string name="chat_settings_reset">Reset tuning</string>
-    <string name="chat_settings_section_instructions">Instructions</string>
+    <string name="chat_settings_section_instructions">Instructions for this chat</string>
     <string name="chat_settings_prompt_placeholder">How should tensai behave in this chat?</string>
     <!-- %1$d is the system prompt length in characters. -->
     <string name="chat_settings_prompt_chars">%1$d chars</string>
@@ -1037,4 +1037,18 @@
     <string name="tools_test_format">%1$s answered in an unexpected format</string>
     <string name="tools_test_network">Could not reach %1$s</string>
     <string name="tools_key_invalid">This doesn\'t look like an API key</string>
+    <!-- Base prompt and global instructions -->
+    <string name="settings_global_instructions">Your instructions</string>
+    <string name="settings_global_instructions_hint">Applied to every chat</string>
+    <string name="settings_global_instructions_none">None</string>
+    <!-- %1$d is an estimate of the instructions' length in tokens. -->
+    <string name="settings_global_instructions_value">~%1$d tokens</string>
+    <string name="settings_global_instructions_body">Added to every chat, after tensai\'s base prompt and before a chat\'s own instructions.</string>
+    <string name="settings_global_instructions_placeholder">For example: keep answers short and use metric units.</string>
+    <!-- %1$d is the estimated length in tokens, %2$d the cap. -->
+    <string name="settings_global_instructions_tokens">~%1$d / %2$d tokens</string>
+    <string name="settings_base_prompt">Base prompt</string>
+    <string name="settings_base_prompt_hint">What tensai tells the model first, read-only</string>
+    <!-- %1$d is the version of the base prompt. -->
+    <string name="settings_base_prompt_body">Sent first in every chat (version %1$d). A tool line is only sent when that tool is on, and a chat without tools gets the first two lines. Without the datetime tool, the day the chat started replaces its line.</string>
 </resources>

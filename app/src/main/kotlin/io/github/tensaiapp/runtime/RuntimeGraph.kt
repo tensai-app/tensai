@@ -49,6 +49,7 @@ import io.github.tensaiapp.data.BackendRepository
 import io.github.tensaiapp.data.ChangelogRepository
 import io.github.tensaiapp.data.ContextRepository
 import io.github.tensaiapp.data.LanguageRepository
+import io.github.tensaiapp.data.InstructionsSettings
 import io.github.tensaiapp.data.MemorySettings
 import io.github.tensaiapp.data.NotificationPermissionRepository
 import io.github.tensaiapp.data.OnboardingRepository
@@ -370,6 +371,9 @@ object RuntimeGraph {
 
     /** The saved facts as each conversation's prompt block (TEN-189), see [MemoryPrompt]. */
     val memoryPrompt: MemoryPrompt by lazy { MemoryPrompt(memoryDao, enabled = memorySettings::useInChatsNow) }
+
+    /** "Your instructions", added to every chat's system message, see [InstructionsSettings]. */
+    val instructionsSettings: InstructionsSettings by lazy { InstructionsSettings(appContext) }
 
     /** Token counts of the context sheet's fixed parts, shared by every chat screen (TEN-190). */
     val partTokenCache: PartTokenCache by lazy { PartTokenCache() }

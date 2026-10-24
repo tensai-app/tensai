@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.CellTower
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
@@ -94,6 +95,7 @@ import io.github.tensaiapp.data.AppLanguage
 import io.github.tensaiapp.data.BackendPreference
 import io.github.tensaiapp.data.AutoMemoryShare
 import io.github.tensaiapp.data.ContextSetting
+import io.github.tensaiapp.data.InstructionsSettings
 import io.github.tensaiapp.runtime.rememberResumeCount
 import io.github.tensaiapp.ui.components.KanjiGlyph
 import io.github.tensaiapp.ui.screens.models.formatFileSize
@@ -119,6 +121,7 @@ import kotlinx.coroutines.launch
  * @param onNavigateToTools where the "Tools" row goes (TEN-174).
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
+ * @param openInstructionsSheet the same for "Your instructions", from the chat settings sheet.
  */
 @Composable
 fun SettingsScreen(
@@ -131,6 +134,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     openTokenSheet: Boolean = false,
     onTokenSheetOpened: () -> Unit = {},
+    openInstructionsSheet: Boolean = false,
+    onInstructionsSheetOpened: () -> Unit = {},
     viewModel: SettingsViewModel = remember { SettingsViewModel() },
     toolsViewModel: ToolsViewModel = remember { ToolsViewModel() },
 ) {
@@ -147,6 +152,8 @@ fun SettingsScreen(
     val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
     val memoryCount by viewModel.memoryCount.collectAsState(initial = 0)
     val changelogDot by viewModel.changelogDot.collectAsState(initial = false)
+    // Null until the store's first emission: the sheet is seeded from it once, see GlobalInstructionsSheet.
+    val globalInstructions by viewModel.globalInstructions.collectAsState(initial = null)
     val toolGroupsOn by toolsViewModel.groupsOn.collectAsState(initial = ToolGroup.countOn(DefaultTierGrants.granted()))
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -158,6 +165,14 @@ fun SettingsScreen(
         if (openTokenSheet) {
             tokenSheet = true
             onTokenSheetOpened()
+        }
+    }
+    var instructionsSheet by remember { mutableStateOf(false) }
+    var basePromptSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(openInstructionsSheet) {
+        if (openInstructionsSheet) {
+            instructionsSheet = true
+            onInstructionsSheetOpened()
         }
     }
 
@@ -335,6 +350,32 @@ fun SettingsScreen(
                         Chevron()
                     },
                 )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.EditNote,
+                    title = stringResource(R.string.settings_global_instructions),
+                    supporting = stringResource(R.string.settings_global_instructions_hint),
+                    onClick = { if (globalInstructions != null) instructionsSheet = true },
+                    trailing = {
+                        val text = globalInstructions.orEmpty()
+                        ValueText(
+                            if (text.isBlank()) {
+                                stringResource(R.string.settings_global_instructions_none)
+                            } else {
+                                stringResource(R.string.settings_global_instructions_value, InstructionsSettings.estimatedTokens(text))
+                            },
+                        )
+                        Chevron()
+                    },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Description,
+                    title = stringResource(R.string.settings_base_prompt),
+                    supporting = stringResource(R.string.settings_base_prompt_hint),
+                    onClick = { basePromptSheet = true },
+                    trailing = { Chevron() },
+                )
             }
 
             SectionLabel(stringResource(R.string.settings_group_storage))
@@ -488,6 +529,19 @@ fun SettingsScreen(
                 onRemove = viewModel::removeToken,
                 onDismiss = { tokenSheet = false },
             )
+        }
+
+        val currentInstructions = globalInstructions
+        if (instructionsSheet && currentInstructions != null) {
+            GlobalInstructionsSheet(
+                initial = currentInstructions,
+                onChange = viewModel::setGlobalInstructions,
+                onDismiss = { instructionsSheet = false },
+            )
+        }
+
+        if (basePromptSheet) {
+            BasePromptSheet(onDismiss = { basePromptSheet = false })
         }
 
         if (confirmingClear) {

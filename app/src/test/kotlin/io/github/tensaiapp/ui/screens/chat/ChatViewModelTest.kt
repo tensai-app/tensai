@@ -8,7 +8,10 @@ import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolResult
 import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.TierGrants
+import io.github.tensaiapp.agent.BasePrompt
+import io.github.tensaiapp.agent.CalculateTool
 import io.github.tensaiapp.agent.DateTimeTool
+import io.github.tensaiapp.agent.SystemPrompt
 import io.github.tensaiapp.agent.ToolRegistry
 import io.github.tensaiapp.agent.AskUserGate
 import io.github.tensaiapp.agent.AskUserTool
@@ -58,6 +61,10 @@ import io.github.tensaiapp.ui.tools.ToolCallState
 import io.github.tensaiapp.ui.TechnicalJargon
 import java.io.File
 import java.nio.file.Files
+import java.time.Clock
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +125,15 @@ class ChatViewModelTest {
     private val grantedTiers = MutableStateFlow(setOf(ToolTier.Local))
     private val grants = TierGrants { grantedTiers.value }
 
+    /** The user's instructions for every chat, as Settings would store them. */
+    private val globalInstructions = MutableStateFlow("")
+
+    /**
+     * The system message builder of every view model built here. Without the base prompt by default: the tests
+     * written before it compare requests message by message, and the ones about it turn it on.
+     */
+    private var systemPrompts = SystemPrompt(base = false)
+
     /**
      * The job every [ChatViewModel] built here launches under — and the only thing that launches
      * under it. That exclusivity is the whole point of it: see [awaitGeneration].
@@ -138,7 +154,7 @@ class ChatViewModelTest {
         partTokens = PartTokenCache()
         chatTurns = ChatTurns()
         grantedTiers.value = setOf(ToolTier.Local)
-        chatRepository = ChatRepository(chatDao)
+        chatRepository = ChatRepository(chatDao, now = fixedClock::millis)
         modelRepository = ModelRepository(
             context = ContextWrapper(null),
             modelDao = modelDao,
@@ -192,6 +208,8 @@ class ChatViewModelTest {
         partTokens = partTokens,
         toolGrants = grantedTiers,
         chatTurns = chatTurns,
+        globalInstructions = globalInstructions,
+        systemPrompts = systemPrompts,
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -2051,6 +2069,107 @@ class ChatViewModelTest {
         assertNotEquals(prefixKey(real), prefixKey(real.copy(tools = emptyList())))
     }
 
+    /** 2026-10-24 (a Saturday), noon in Paris. */
+    private val fixedClock = Clock.fixed(Instant.parse("2026-10-24T10:00:00Z"), ZoneId.of("Europe/Paris"))
+
+    @Test
+    fun anAgentRequestOpensWithTheBasePromptThenTheGlobalThenTheChatInstructions() = runBlocking {
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        globalInstructions.value = "Use metric units."
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        viewModel.setSystemPrompt("Be brief.")
+        awaitGeneration()
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        val request = engine.lastRequest!!
+        assertTrue("the agent path ran", request.tools.isNotEmpty())
+        val expected = SystemPrompt.assemble(BasePrompt.render(setOf("datetime"), LocalDate.of(2026, 10, 24)), "Use metric units.", "Be brief.")
+        assertEquals(MessageRole.System, request.messages.first().role)
+        assertEquals(expected, request.messages.first().content)
+        val system = request.messages.first().content
+        assertTrue(system.indexOf("call datetime") < system.indexOf("Use metric units."))
+        assertTrue(system.indexOf("Use metric units.") < system.indexOf("Be brief."))
+        assertEquals("one system message, then the user's", listOf(MessageRole.System, MessageRole.User), request.messages.map { it.role })
+    }
+
+    @Test
+    fun aPlainChatGetsTheBasePromptWithoutToolRulesAndTheDayItStarted() = runBlocking {
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        loadFakeModel(supportsTools = false)
+        val viewModel = newViewModel(null)
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        val system = engine.lastRequest!!.messages.first()
+        assertEquals(MessageRole.System, system.role)
+        assertEquals(BasePrompt.render(null, LocalDate.of(2026, 10, 24)), system.content)
+        assertTrue(system.content.contains("started on Saturday, 24 October 2026"))
+        assertFalse(system.content.contains("tool"))
+    }
+
+    @Test
+    fun aConversationKeepsTheDayItStartedOnLaterTurns() = runBlocking {
+        val createdAt = Instant.parse("2026-10-20T08:00:00Z").toEpochMilli()
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        loadFakeModel(supportsTools = false)
+        val id = chatRepository.createConversation(modelId = null)
+        chatDao.patchCreatedAt(id, createdAt)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        assertTrue(engine.lastRequest!!.messages.first().content.contains("started on Tuesday, 20 October 2026"))
+    }
+
+    /** Without `datetime` the base prompt carries a date: the draft's (today) and the row's (its creation) must agree. */
+    @Test
+    fun withADatedBasePromptTheFirstSendFindsTheWarmedPrefixAndBuildsNoOther() = runBlocking {
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(CalculateTool())))
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+
+        viewModel.send("hi")
+        awaitGeneration()
+        warm.cancelAndJoin()
+
+        val warmed = engine.toolPrefixWarmUps.single().first
+        val sent = engine.lastRequest!!
+        assertTrue(warmed.messages.first().content.contains("started on Saturday, 24 October 2026"))
+        assertEquals(warmed.messages.first(), sent.messages.first())
+        assertEquals(prefixKey(warmed), prefixKey(sent))
+        assertEquals("the prefix was resident, nothing of it left to prefill", listOf(PREFIX_TOKENS), engine.residentAtToolDecode)
+    }
+
+    @Test
+    fun editingYourInstructionsWarmsTheNewPrefixUnderAnotherCacheKey() = runBlocking {
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val viewModel = newViewModel(null)
+        val warm = keepWarm(viewModel)
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+
+        globalInstructions.value = "Use metric units."
+        withTimeout(5_000) { while (engine.toolPrefixWarmUps.size < 2) yield() }
+        warm.cancelAndJoin()
+
+        val (before, after) = engine.toolPrefixWarmUps.map { it.first }
+        assertFalse(before.messages.first().content.contains("Use metric units."))
+        assertTrue(after.messages.first().content.endsWith("${SystemPrompt.GLOBAL_LABEL}\nUse metric units."))
+        assertNotEquals(prefixKey(before), prefixKey(after))
+    }
+
     @Test
     fun aSendAfterTheWarmUpFindsTheWholePrefixResidentAndAWarmUpIsNotRepeated() = runBlocking {
         agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
@@ -2377,6 +2496,24 @@ class ChatViewModelTest {
         assertFalse("the conversation's thinking setting, which is the next turn's", enableThinking)
     }
 
+    /** The warm-up prefills what the next prompt will be: its system message has every layer the reply's had. */
+    @Test
+    fun theWarmUpCarriesTheSystemMessageTheReplyWasGeneratedWith() = runBlocking {
+        systemPrompts = SystemPrompt(clock = fixedClock)
+        globalInstructions.value = "Use metric units."
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        val conversation = chatRepository.createConversation(modelId = null, systemPrompt = "be brief", enableThinking = false)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        awaitGeneration()
+
+        val sent = engine.lastRequest!!.messages.first()
+        assertTrue(sent.content.contains("Use metric units.") && sent.content.contains("be brief"))
+        assertEquals(sent, engine.warmUps.single().first.first())
+    }
+
     @Test
     fun aReplyThatEndsWhileTheAppIsInTheBackgroundIsNotWarmedUp() = runBlocking {
         loadFakeModel()
@@ -2584,6 +2721,9 @@ class ChatViewModelTest {
         override suspend fun resetSamplingAndThinking(id: String) = patch(id) { it.copy(samplingJson = null, enableThinking = true) }
 
         /** One atomic column update, like the SQL it stands in for: no suspension point between read and write. */
+        /** A row created earlier than now, which no DAO call does. */
+        fun patchCreatedAt(id: String, createdAt: Long) = patch(id) { it.copy(createdAt = createdAt) }
+
         private fun patch(id: String, change: (ConversationEntity) -> ConversationEntity) {
             val current = conversations[id] ?: return
             conversations[id] = change(current)

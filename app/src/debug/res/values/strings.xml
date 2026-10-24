@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: the agent bench panel of Settings > This device (BenchPanel), never shipped. -->
+<resources>
+    <string name="bench_title">Agent bench (debug)</string>
+    <string name="bench_hint">Runs the bench prompts on the loaded model. Chats are left alone.</string>
+    <string name="bench_thinking">Thinking</string>
+    <string name="bench_examples">Few-shot examples</string>
+    <string name="bench_run">Run agent bench</string>
+    <string name="bench_starting">Starting…</string>
+    <!-- %1$d prompts done out of %2$d. -->
+    <string name="bench_running">Running, %1$d of %2$d prompts</string>
+    <!-- %1$s is the reason, in English, from the bench log. -->
+    <string name="bench_failed">Not run: %1$s</string>
+    <string name="bench_stopped_early">Stopped before the last prompt, see logcat tensai.bench</string>
+</resources>
