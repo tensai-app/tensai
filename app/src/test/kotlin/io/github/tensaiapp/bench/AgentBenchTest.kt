@@ -24,6 +24,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -360,6 +361,16 @@ class AgentBenchTest {
     }
 
     @Test
+    fun theToolGrammarIsOnUnlessTurnedOffAndShownInTheSummary() {
+        assertTrue(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true)!!.toolGrammar)
+        val off = benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, toolGrammar = false)!!
+        assertFalse(off.toolGrammar)
+        val shown = BenchSummary.of(emptyList()).toDisplayLines(off, "m", emptyList())
+        assertTrue(shown.any { it.endsWith("tool grammar off") })
+        assertEquals("false", Json.parseToJsonElement(BenchSummary.of(emptyList()).toLogLine(off)).jsonObject.getValue("tool_grammar").jsonPrimitive.content)
+    }
+
+    @Test
     fun theSystemMessageOpensTheWarmedPrefixAndEveryPrompt() = runBlocking {
         val gen = ScriptedGenerator(reply("blue"))
         val runner = runner(FakeTool("calculate"), generator = gen, system = "base")
@@ -393,9 +404,10 @@ class AgentBenchTest {
         val line = Json.parseToJsonElement(summary.toLogLine(trigger)).jsonObject
         assertEquals("true", line.getValue("base_prompt").jsonPrimitive.content)
         assertEquals("true", line.getValue("examples").jsonPrimitive.content)
+        assertEquals("true", line.getValue("tool_grammar").jsonPrimitive.content)
         val shown = summary.toDisplayLines(trigger, "Qwen3-1.7B", results)
         assertEquals("Qwen3-1.7B", shown.first())
-        assertTrue(shown.contains("thinking off · base prompt on · examples on"))
+        assertTrue(shown.contains("thinking off · base prompt on · examples on · tool grammar on"))
         assertTrue(shown.any { it.startsWith("prompts 2: correct 1 false_call 1") })
         assertTrue("the wrong prompt is named", shown.contains("false_call: times"))
     }

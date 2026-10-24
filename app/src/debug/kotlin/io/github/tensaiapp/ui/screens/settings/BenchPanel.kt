@@ -49,6 +49,7 @@ internal fun BenchPanel() {
     var thinking by rememberSaveable { mutableStateOf(DefaultEnableThinking) }
     var basePrompt by rememberSaveable { mutableStateOf(true) }
     var examples by rememberSaveable { mutableStateOf(false) }
+    var toolGrammar by rememberSaveable { mutableStateOf(true) }
     val running = status is BenchStatus.Running
 
     SectionLabel(stringResource(R.string.bench_title))
@@ -60,11 +61,13 @@ internal fun BenchPanel() {
         // The examples are part of the base prompt: no examples without it.
         BenchToggle(stringResource(R.string.bench_examples), examples && basePrompt, reducedMotion, enabled = basePrompt) { examples = it }
         RowDivider()
+        BenchToggle(stringResource(R.string.bench_tool_grammar), toolGrammar, reducedMotion) { toolGrammar = it }
+        RowDivider()
         SettingsRow(
             icon = Icons.Rounded.PlayArrow,
             title = stringResource(R.string.bench_run),
             supporting = stringResource(R.string.bench_hint),
-            onClick = if (running) null else { { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt), context.assets) } },
+            onClick = if (running) null else { { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar), context.assets) } },
         )
     }
     val lines = when (val current = status) {

@@ -491,6 +491,7 @@ class LlamaKtEngineImpl(
                             repeatPenalty = request.sampling.repeatPenalty,
                             repeatLastN = RepeatPenaltyLastN,
                             stopSequences = request.sampling.stopSequences,
+                            constrainToolCalls = request.sampling.constrainToolCalls,
                         )
                         val callback = TokenCallback { token ->
                             // Only the *first* callback is worth a timestamp: this fires once per

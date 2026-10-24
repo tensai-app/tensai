@@ -5,6 +5,7 @@
     <string name="bench_hint">Runs the bench prompts on the loaded model. Chats are left alone.</string>
     <string name="bench_thinking">Thinking</string>
     <string name="bench_examples">Few-shot examples</string>
+    <string name="bench_tool_grammar">Tool-call grammar</string>
     <string name="bench_run">Run agent bench</string>
     <string name="bench_starting">Starting…</string>
     <!-- %1$d prompts done out of %2$d. -->

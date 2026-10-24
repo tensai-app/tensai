@@ -77,6 +77,12 @@ jobs:
       - name: Completion result test
         run: third_party/llama.kt/scripts/test-completion-result.sh
 
+      # Grammaire des appels d'outils (LKT-48) : la couche chat vendorée et le
+      # parseur GBNF compilés pour l'hôte, avec une copie du template Qwen3.
+      # Pas de modèle ni de backend, une vingtaine de fichiers.
+      - name: Tool-call grammar test
+        run: third_party/llama.kt/scripts/test-tool-grammar.sh
+
       # Ce que le job JVM ne peut pas garantir : que le CMake de llama.kt, les
       # sources cpp/ vendorées, les shaders générés et libOpenCL.so tiennent
       # ensemble, et qu'il en sort un APK.

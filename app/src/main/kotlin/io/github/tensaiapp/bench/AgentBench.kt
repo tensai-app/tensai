@@ -34,7 +34,7 @@ import kotlinx.serialization.json.put
  * [TAG], so how often the model calls a tool it should not, or misses one, is measured rather than guessed.
  *
  * `adb shell am start -n io.github.tensaiapp/.MainActivity --activity-single-top --es bench agent [--ez thinking false]
- * [--ez base_prompt false] [--ez examples true]`, or "Run agent bench" in Settings > This device, which shows
+ * [--ez base_prompt false] [--ez examples true] [--ez tool_grammar false]`, or "Run agent bench" in Settings > This device, which shows
  * [status] (the summary included) on screen.
  *
  * The requests carry the system message a chat would, built by [SystemPrompt] from the toggles of [BenchTrigger]
@@ -53,6 +53,7 @@ object AgentBench {
     const val EXTRA_THINKING = "thinking"
     const val EXTRA_BASE_PROMPT = "base_prompt"
     const val EXTRA_EXAMPLES = "examples"
+    const val EXTRA_TOOL_GRAMMAR = "tool_grammar"
     private const val WarmRetryMs = 500L
 
     private var running: Job? = null
@@ -72,6 +73,7 @@ object AgentBench {
             defaultThinking = DefaultEnableThinking,
             basePrompt = flag(EXTRA_BASE_PROMPT),
             examples = flag(EXTRA_EXAMPLES),
+            toolGrammar = flag(EXTRA_TOOL_GRAMMAR),
         ) ?: return
         // Consumed once: a recreation must not run it again.
         intent?.removeExtra(EXTRA_BENCH)
@@ -122,7 +124,7 @@ object AgentBench {
             runtime = runtime,
             gate = gate,
             generator = ReplyGenerator { queue.generate(it) },
-            sampling = replySampling(null, trigger.thinking, entity.thinkingAvailable),
+            sampling = replySampling(null, trigger.thinking, entity.thinkingAvailable).copy(constrainToolCalls = trigger.toolGrammar),
             countTokens = { text -> queue.countTokens(listOf(text))?.firstOrNull() },
             system = system,
         )
@@ -154,6 +156,7 @@ object AgentBench {
                 put("base_prompt", trigger.basePrompt)
                 put("base_prompt_version", BasePrompt.VERSION)
                 put("examples", trigger.examples)
+                put("tool_grammar", trigger.toolGrammar)
                 put("thinking_supported", entity.thinkingAvailable)
                 put("tools", JsonArray(runner.availableTools().map { JsonPrimitive(it) }))
                 put("prompts", prompts.size)

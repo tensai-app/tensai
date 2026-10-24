@@ -25,13 +25,20 @@ import kotlinx.serialization.json.put
 
 /**
  * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
- * [--ez examples true]` or from the debug panel of Settings > This device.
+ * [--ez examples true] [--ez tool_grammar false]` or from the debug panel of Settings > This device.
  *
  * @param basePrompt the harness's base prompt opens the system message, as in every chat.
  * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
  *   are part of the base prompt, so never on without it.
+ * @param toolGrammar a call the model opens is held to the tools' schemas, as in every chat
+ *   ([io.github.tensaiapp.engine.SamplingConfig.constrainToolCalls]). Off to measure what it changes.
  */
-data class BenchTrigger(val thinking: Boolean, val basePrompt: Boolean = true, val examples: Boolean = false)
+data class BenchTrigger(
+    val thinking: Boolean,
+    val basePrompt: Boolean = true,
+    val examples: Boolean = false,
+    val toolGrammar: Boolean = true,
+)
 
 /** Where the last run is, for the debug panel. */
 sealed interface BenchStatus {
@@ -51,6 +58,7 @@ sealed interface BenchStatus {
  * The bench a launch intent asks for, `null` for none: only `bench=agent`, and only in a debug build ([debug]), so a
  * release build ignores the extra entirely. [thinking] absent is [defaultThinking], the app's own for a new chat;
  * [basePrompt] absent is on and [examples] absent off, what a chat sends. [examples] without the base prompt is off.
+ * [toolGrammar] absent is on, what a chat sends.
  */
 fun benchTrigger(
     debug: Boolean,
@@ -59,10 +67,11 @@ fun benchTrigger(
     defaultThinking: Boolean,
     basePrompt: Boolean? = null,
     examples: Boolean? = null,
+    toolGrammar: Boolean? = null,
 ): BenchTrigger? {
     if (!debug || bench != "agent") return null
     val base = basePrompt ?: true
-    return BenchTrigger(thinking ?: defaultThinking, base, base && examples == true)
+    return BenchTrigger(thinking ?: defaultThinking, base, base && examples == true, toolGrammar ?: true)
 }
 
 /**
@@ -248,6 +257,7 @@ data class BenchSummary(
         put("thinking", trigger.thinking)
         put("base_prompt", trigger.basePrompt)
         put("examples", trigger.examples)
+        put("tool_grammar", trigger.toolGrammar)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
@@ -264,7 +274,10 @@ data class BenchSummary(
     fun toDisplayLines(trigger: BenchTrigger, model: String, results: List<BenchResult>): List<String> = buildList {
         fun onOff(on: Boolean) = if (on) "on" else "off"
         add(model)
-        add("thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}")
+        add(
+            "thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}" +
+                " · tool grammar ${onOff(trigger.toolGrammar)}",
+        )
         add("prompts ${counts.values.sum()}: " + BenchVerdict.entries.joinToString(" ") { "${it.storageName} ${counts[it] ?: 0}" })
         add("false_call_rate ${falseCallRate ?: "-"} · missing_rate ${missingRate ?: "-"}")
         add("median ttft ${medianTtftMs ?: "-"} ms · median total ${medianTotalMs ?: "-"} ms")

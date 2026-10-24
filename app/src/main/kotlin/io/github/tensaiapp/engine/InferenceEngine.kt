@@ -197,6 +197,10 @@ data class ChatMessage(
  *   default) keeps the single, undivided [maxTokens] behaviour. Built with
  *   [ReasoningBudget.splitting] its two caps sum to exactly [maxTokens], so "ignored" above means
  *   "read through the budget instead", not "disagrees with it" (TEN-35).
+ * @param constrainToolCalls once the model opens a tool call, hold it to the offered tools and their
+ *   argument schemas (llama.cpp's lazy grammar, LKT-48); text before the call marker is never
+ *   constrained. Only matters for a request with tools. Off is the unconstrained sampling of before,
+ *   kept for the bench's comparison.
  */
 data class SamplingConfig(
     val temperature: Float = 0.8f,
@@ -208,6 +212,7 @@ data class SamplingConfig(
     val maxTokens: Int = 2048,
     val enableThinking: Boolean = true,
     val reasoningBudget: ReasoningBudget? = null,
+    val constrainToolCalls: Boolean = true,
 )
 
 /**
