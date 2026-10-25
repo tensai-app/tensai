@@ -75,7 +75,7 @@ class AskUserGate {
  */
 class AskUserTool(private val gate: AskUserGate) : Tool {
     override val name = NAME
-    override val description = "Ask the user to pick among options when the request is ambiguous. Prefer this over guessing."
+    override val description = "Asks the user to pick among options when the request is ambiguous."
     override val parametersSchema =
         """{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"multiple":{"type":"boolean"}},"required":["question","options"]}"""
     override val tier = ToolTier.Local

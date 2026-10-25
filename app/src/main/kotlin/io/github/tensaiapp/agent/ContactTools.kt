@@ -255,7 +255,7 @@ internal fun resolveEmail(name: String, all: List<Contact>): Resolved {
  */
 class FindContactTool(private val contacts: ContactsSource, private val inForeground: () -> Boolean) : Tool {
     override val name = "find_contact"
-    override val description = "Finds contacts by name and returns their phone numbers and emails. name: a first name, a full name or part of one."
+    override val description = "Phone numbers and emails of the contacts matching a name or part of one."
     override val parametersSchema = """{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"""
     override val tier = ToolTier.AndroidPermission
     override val waitsForUser = true

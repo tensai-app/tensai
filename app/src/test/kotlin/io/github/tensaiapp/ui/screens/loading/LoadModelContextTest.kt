@@ -10,6 +10,7 @@ import io.github.tensaiapp.data.ContextSetting
 import io.github.tensaiapp.data.models.ModelDao
 import io.github.tensaiapp.data.models.ModelEntity
 import io.github.tensaiapp.data.models.ModelRepository
+import io.github.tensaiapp.engine.BackendHint
 import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.DecodeStats
@@ -238,6 +239,7 @@ class LoadModelContextTest {
             longContextModel("oom-steps"),
             phone(totalRamGb = 8, availableRamMb = 6_000),
             global = ContextSetting.K32,
+            backend = BackendPreference.Gpu,
         )
 
         viewModel.start()
@@ -257,6 +259,7 @@ class LoadModelContextTest {
             longContextModel("oom-never"),
             phone(totalRamGb = 8, availableRamMb = 6_000),
             global = ContextSetting.K8,
+            backend = BackendPreference.Gpu,
         )
 
         viewModel.start()
@@ -274,6 +277,7 @@ class LoadModelContextTest {
             longContextModel("oom-f16"),
             phone(totalRamGb = 8, availableRamMb = 6_000),
             global = ContextSetting.K16,
+            backend = BackendPreference.Gpu,
         )
 
         viewModel.start()
@@ -282,6 +286,36 @@ class LoadModelContextTest {
         assertEquals(listOf(16_384, 16_384), engine.attempts)
         assertEquals(listOf(KvCacheType.F16, KvCacheType.Q8_0), engine.types)
         assertTrue(viewModel.state.value is LoadUiState.Success)
+    }
+
+    /**
+     * TEN-188: on the CPU the engine already loads a quantized cache, so a Q8_0 retry at the same context would be the
+     * load that just failed: an out-of-memory CPU load steps straight down the ladder.
+     */
+    @Test
+    fun anOutOfMemoryCpuLoadStepsDownWithoutTheQ8Retry() = runBlocking {
+        engine.failAbove = 8_192
+        val viewModel = viewModel(
+            longContextModel("oom-cpu"),
+            phone(totalRamGb = 8, availableRamMb = 6_000),
+            global = ContextSetting.K32,
+        )
+
+        viewModel.start()
+        awaitViewModel()
+
+        assertEquals(listOf(32_768, 16_384, 8_192), engine.attempts)
+        assertEquals(listOf(KvCacheType.F16, KvCacheType.F16, KvCacheType.F16), engine.types)
+        assertTrue(viewModel.state.value is LoadUiState.Success)
+    }
+
+    @Test
+    fun autoRunsOnTheCpuOnlyWithoutAGpuBackend() {
+        val noGpu = phone(totalRamGb = 8, availableRamMb = 6_000)
+        assertTrue(runsOnCpu(BackendHint.Auto, noGpu))
+        assertTrue(!runsOnCpu(BackendHint.Auto, noGpu.copy(hasVulkan = true)))
+        assertTrue(!runsOnCpu(BackendHint.Gpu, noGpu))
+        assertTrue(runsOnCpu(BackendHint.Cpu, noGpu.copy(hasVulkan = true)))
     }
 
     /** Only out-of-memory is retried: any other failure is shown at once, after one attempt. */
@@ -310,6 +344,7 @@ class LoadModelContextTest {
             longContextModel("cancel-retry"),
             phone(totalRamGb = 8, availableRamMb = 6_000),
             global = ContextSetting.K16,
+            backend = BackendPreference.Gpu,
         )
 
         viewModel.start()
@@ -332,13 +367,14 @@ class LoadModelContextTest {
         profile: DeviceProfile,
         global: ContextSetting = ContextSetting.Auto,
         autoShare: AutoMemoryShare = AutoMemoryShare.P50,
+        backend: BackendPreference = BackendPreference.Cpu,
     ): LoadModelViewModel {
         runBlocking { modelDao.insert(model) }
         return LoadModelViewModel(
             modelId = model.id,
             modelRepository = modelRepository,
             deviceProfile = { profile },
-            backendPreference = { BackendPreference.Cpu },
+            backendPreference = { backend },
             contextPrefs = { ContextPrefs(global, autoShare) },
             queue = queue,
             scope = scope,

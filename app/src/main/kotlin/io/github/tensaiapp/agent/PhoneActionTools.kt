@@ -167,7 +167,7 @@ const val MaxTimerSeconds = 24 * 60 * 60
 /** Opens Clock with a timer ready, the user starts it. */
 class SetTimerTool(phone: PhoneActions) : IntentTool(phone) {
     override val name = "set_timer"
-    override val description = "Sets a timer in the Clock app (1 s to 24 h)."
+    override val description = "Sets a timer, 1 s to 24 h."
     override val setsDirectly = true
     override val parametersSchema =
         """{"type":"object","properties":{"seconds":{"type":"integer"},"message":{"type":"string"}},"required":["seconds"]}"""
@@ -191,7 +191,7 @@ private val dayNumbers = listOf("sunday", "monday", "tuesday", "wednesday", "thu
 /** Opens Clock with an alarm ready, the user saves it. */
 class SetAlarmTool(phone: PhoneActions) : IntentTool(phone) {
     override val name = "set_alarm"
-    override val description = "Sets an alarm in the Clock app (24 h clock). days: optional, mon..sun."
+    override val description = "Sets an alarm, 24 h clock. days: repeat on mon..sun, only for a repeating alarm."
     override val setsDirectly = true
     override val parametersSchema =
         """{"type":"object","properties":{"hour":{"type":"integer"},"minutes":{"type":"integer"},"message":{"type":"string"},"days":{"type":"array","items":{"type":"string"}}},"required":["hour","minutes"]}"""
@@ -226,7 +226,7 @@ class SetAlarmTool(phone: PhoneActions) : IntentTool(phone) {
 class CreateEventTool(phone: PhoneActions, private val zone: () -> ZoneId = { ZoneId.systemDefault() }) : IntentTool(phone) {
     override val name = "create_event"
     override val description =
-        "Opens Calendar with a new event, the user saves it. start/end: ISO like 2026-10-17T14:00 (local unless offset, end defaults to +1 h). all_day: start is a date, end its last day."
+        "New calendar event for the user to save. start/end like 2026-10-17T14:00, end optional. all_day: dates, end included."
     override val parametersSchema =
         """{"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"location":{"type":"string"},"description":{"type":"string"},"all_day":{"type":"boolean"}},"required":["title","start"]}"""
 
@@ -288,7 +288,7 @@ class CreateEventTool(phone: PhoneActions, private val zone: () -> ZoneId = { Zo
 class DraftSmsTool(phone: PhoneActions, private val contacts: ContactsSource) : IntentTool(phone) {
     override val name = "draft_sms"
     override val description =
-        "Opens the messaging app with a text drafted. The user sends it. to: a contact name or a phone number, optional."
+        "Drafts a text message for the user to send. to: contact name or number, optional."
     override val parametersSchema =
         """{"type":"object","properties":{"body":{"type":"string"},"to":{"type":"string"}},"required":["body"]}"""
     override val waitsForUser = true
@@ -324,7 +324,7 @@ class DraftSmsTool(phone: PhoneActions, private val contacts: ContactsSource) : 
 class DraftEmailTool(phone: PhoneActions, private val contacts: ContactsSource) : IntentTool(phone) {
     override val name = "draft_email"
     override val description =
-        "Opens the mail app with an email drafted. The user sends it. to: a contact name, an address or a comma-separated list."
+        "Drafts an email for the user to send. to: contact names or addresses, comma-separated."
     override val parametersSchema =
         """{"type":"object","properties":{"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}}"""
     override val waitsForUser = true
@@ -428,7 +428,7 @@ fun resolveApp(query: String, apps: List<InstalledApp>): AppMatch {
 /** Launches an installed app by its name. */
 class OpenAppTool(private val phone: PhoneActions) : Tool {
     override val name = "open_app"
-    override val description = "Opens an installed app by its name (as on the home screen)."
+    override val description = "Opens an installed app by name."
     override val parametersSchema = """{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"""
     override val tier = ToolTier.PhoneAction
 

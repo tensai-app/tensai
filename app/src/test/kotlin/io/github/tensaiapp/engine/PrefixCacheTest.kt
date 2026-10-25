@@ -25,6 +25,26 @@ class PrefixCacheTest {
         return file
     }
 
+    private val config = ModelLoadConfig(path = "/m.gguf", modelId = "m", nCtx = 4096)
+
+    /** The identity before TEN-188, which every file written until then is keyed by. */
+    private fun oldIdentity(kv: KvCacheType, backend: String) =
+        listOf(config.modelId, config.path, 10L, 20L, config.nCtx, kv, backend, config.chatTemplate).joinToString("|")
+
+    @Test
+    fun cpuIdentityNeverMatchesAnF16File() {
+        val (kv, tuning) = VulkanTuning.kvForLoad(0, KvCacheType.F16, VulkanLoadTuning.NONE)
+        val identity = PrefixCache.identity(config, 10L, 20L, "CPU: ARM", kv, tuning)
+        assertNotEquals(oldIdentity(KvCacheType.F16, "CPU: ARM"), identity)
+        assertNotEquals(PrefixCache.identity(config, 10L, 20L, "CPU: ARM", KvCacheType.F16, VulkanLoadTuning.NONE), identity)
+    }
+
+    @Test
+    fun gpuIdentityIsUnchanged() {
+        val (kv, tuning) = VulkanTuning.kvForLoad(99, KvCacheType.F16, VulkanTuning.CURRENT)
+        assertEquals(oldIdentity(KvCacheType.F16, "Vulkan0"), PrefixCache.identity(config, 10L, 20L, "Vulkan0", kv, tuning))
+    }
+
     @Test
     fun keyIsStableAndFollowsBothInputs() {
         val c = cache()

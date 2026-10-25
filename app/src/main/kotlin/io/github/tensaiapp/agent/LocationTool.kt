@@ -107,7 +107,7 @@ class LocationTool(
     private val clock: Clock = Clock.systemDefaultZone(),
 ) : Tool {
     override val name = "location"
-    override val description = "Gives the approximate position of the phone (latitude, longitude, about 1 km), only when the user asks where they are. Not for weather: call weather with place \"here\" instead. Takes no argument."
+    override val description = "Approximate position of the phone, only when the user asks where they are. Not for weather: call weather with place \"here\"."
     override val parametersSchema = """{"type":"object","properties":{}}"""
     override val tier = ToolTier.AndroidPermission
     override val waitsForUser = true

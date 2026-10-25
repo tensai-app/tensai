@@ -1,6 +1,7 @@
 package io.github.tensaiapp.engine
 
 import com.tensai.llamakt.LlamaEngine
+import io.github.tensaiapp.BuildConfig
 
 /** Flash attention request passed to llama.cpp. [Auto] leaves the decision to it. */
 enum class FlashAttnMode(val arg: String?) {
@@ -23,17 +24,28 @@ data class VulkanLoadTuning(
     val nThreadsBatch: Int? = null,
     val env: Map<String, String> = emptyMap(),
 ) {
+    /**
+     * What of this tuning shapes the KV cells (flash attention transposes V or not, the cache types), for a
+     * saved prefix's identity. `null` when nothing is forced (a GPU load), so its identity is unchanged.
+     */
+    fun kvLayoutKey(): String? =
+        if (flashAttn == FlashAttnMode.Auto && typeK == null && typeV == null) null else "fa=${flashAttn.name}|k=$typeK|v=$typeV"
+
     companion object {
         val NONE = VulkanLoadTuning()
     }
 }
+
+/** What [VulkanTuning.kvForLoad] settles on: the cache type to load and report, and the tuning to load with. */
+data class LoadKv(val kvCacheType: KvCacheType, val tuning: VulkanLoadTuning)
 
 /**
  * The one place to tune Vulkan loads (TEN-197). Edit [CURRENT] between builds: a Kotlin-only
  * rebuild, no native one.
  *
  * Everything except [VulkanLoadTuning.env] is read on each model load and only applies when the
- * load offloads to the GPU (n_gpu_layers > 0): a CPU load always gets [VulkanLoadTuning.NONE].
+ * load offloads to the GPU (n_gpu_layers > 0): a CPU load gets [VulkanLoadTuning.NONE], except in a debug
+ * build, where the bench panel's [CpuLoadKnobs] apply (TEN-188), and then its KV cache from [kvForLoad].
  *
  * [VulkanLoadTuning.env] is different: `LM_GGML_VK_*` variables are setenv()'d once per process by
  * [applyEnv], called from `TensaiApp.onCreate` and, as a guard, before every other path that can
@@ -85,9 +97,73 @@ object VulkanTuning {
         ),
     )
 
-    /** What a load with [nGpuLayers] layers on the GPU should apply. */
-    fun forLoad(nGpuLayers: Int, tuning: VulkanLoadTuning = CURRENT): VulkanLoadTuning =
-        if (nGpuLayers > 0) tuning else VulkanLoadTuning.NONE
+    /**
+     * What a load with [nGpuLayers] layers on the GPU should apply. A CPU load gets [cpuOverride] (the debug
+     * panel's knobs, `CpuLoadOverride`) only when [debug]: a release never does, whatever it is handed.
+     */
+    fun forLoad(
+        nGpuLayers: Int,
+        tuning: VulkanLoadTuning = CURRENT,
+        cpuOverride: VulkanLoadTuning? = null,
+        debug: Boolean = BuildConfig.DEBUG,
+    ): VulkanLoadTuning = when {
+        nGpuLayers > 0 -> tuning
+        debug && cpuOverride != null -> cpuOverride
+        else -> VulkanLoadTuning.NONE
+    }
+
+    /**
+     * TEN-188: the KV cache a load runs with. On the CPU decode reads the whole cache for every token, and a q8_0
+     * cache (half the bytes, flash attention on, which a quantized V needs) decodes faster past a few hundred tokens
+     * of context. Measured on a Dimensity 900 (Qwen3-1.7B Q4_K_M, 2 threads, decode tok/s at 0/512/1K/2K/4K tokens):
+     * f16 10.2/7.6/6.6/5.2/3.8, q8_0 with flash attention 10.1/8.7/7.9/6.5/4.7; the prefill is 15 to 49% slower.
+     *
+     * So a CPU load ([nGpuLayers] 0) gets q8_0 and flash attention on, and returns that cache type: it is the one
+     * [LoadedModelInfo], the session key and the prefix identity carry, so state saved from an f16 cache is never
+     * read back into this one. Except:
+     *  - a cache type forced by [tuning] (the debug knobs): it wins, flash attention as it says;
+     *  - flash attention forced off by [tuning]: F16, a quantized V could not load without it;
+     *  - [quantizedFits] false (a head dimension the q8_0 block does not divide, see [quantizedKvFits]): F16, flash
+     *    attention left to llama.cpp, which would refuse the context otherwise;
+     *  - [requested] already quantized ([LoadPolicy][io.github.tensaiapp.runtime.LoadPolicy] short of memory): kept,
+     *    with flash attention on.
+     * A GPU load is unchanged.
+     */
+    fun kvForLoad(nGpuLayers: Int, requested: KvCacheType, tuning: VulkanLoadTuning, quantizedFits: Boolean = true): LoadKv {
+        if (nGpuLayers > 0) return LoadKv(requested, tuning)
+        tuning.typeK?.let { forced ->
+            return LoadKv(KvCacheType.entries.firstOrNull { it.name.lowercase() == forced } ?: requested, tuning)
+        }
+        if (tuning.flashAttn == FlashAttnMode.Off || !quantizedFits) return LoadKv(KvCacheType.F16, tuning)
+        val kv = if (requested == KvCacheType.F16) KvCacheType.Q8_0 else requested
+        return LoadKv(kv, tuning.copy(flashAttn = FlashAttnMode.On))
+    }
+
+    /** Elements per block of the quantized cache types (q8_0 and q4_0 alike). */
+    private const val QuantBlock = 32L
+
+    /**
+     * Whether a quantized KV cache can hold this model: llama.cpp refuses a q8_0 cache with flash attention when the
+     * block does not divide a head dimension (`n_embd_head_k % 32`). The GGUF header ([com.tensai.llamakt.GgufMetadata]) gives
+     * the head dimension two ways, both checked: llama.cpp's default `embedding_length / head_count`, and the K+V
+     * elements per token over `2 * block_count * head_count_kv`, which follows `attention.key_length` when the file
+     * sets one (Qwen3: 1024 / 16 = 64, but 128). The second is skipped when it does not divide evenly (shared or
+     * windowed layers). `false` when neither can be read: unknown is not worth a refused load.
+     */
+    fun quantizedKvFits(
+        embeddingLength: Long,
+        headCount: Long,
+        headCountKv: Long,
+        blockCount: Long,
+        kvElementsPerToken: Long,
+    ): Boolean {
+        val dims = buildList {
+            if (embeddingLength > 0 && headCount > 0) add(embeddingLength / headCount)
+            val perHeadPair = 2 * blockCount * headCountKv
+            if (perHeadPair > 0 && kvElementsPerToken > 0 && kvElementsPerToken % perHeadPair == 0L) add(kvElementsPerToken / perHeadPair)
+        }
+        return dims.isNotEmpty() && dims.all { it > 0 && it % QuantBlock == 0L }
+    }
 
     /** "KEY=VALUE" entries for [com.tensai.llamakt.LlamaEngine.setEnv]. */
     fun envEntries(tuning: VulkanLoadTuning = CURRENT): List<String> =

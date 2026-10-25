@@ -69,9 +69,9 @@ class WeatherTool(
 ) : Tool {
     override val name = "weather"
     override val description =
-        "Gives the real weather forecast for a place on one day. Always call it for any weather question, never guess the weather. place: a city name, or \"here\" when the user means where they are or names no city."
+        "Real weather forecast for a place and day. Call it for any weather question, never guess."
     override val parametersSchema =
-        """{"type":"object","properties":{"place":{"type":"string","description":"a city name, or \"here\" for the user's current location (also when no city is named)"},"day":{"type":"string","description":"today, tomorrow, a weekday like friday, or YYYY-MM-DD. Default today"}}}"""
+        """{"type":"object","properties":{"place":{"type":"string","description":"a city, or \"here\" (also when none is named)"},"day":{"type":"string","description":"today, tomorrow, a weekday or YYYY-MM-DD, default today"}}}"""
     override val tier = ToolTier.Network
     // May show the permission dialog (no place: the user's location): no runtime timeout then, the HTTP calls keep theirs.
     override val waitsForUser = true

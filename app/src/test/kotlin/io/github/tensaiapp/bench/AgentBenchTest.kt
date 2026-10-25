@@ -458,4 +458,16 @@ class AgentBenchTest {
         assertEquals(BenchTrigger(thinking = true), benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true))
         assertEquals(BenchTrigger(thinking = false), benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true))
     }
+
+    @Test
+    fun `one bench at a time, whichever starts it`() {
+        assertTrue(BenchGate.tryEnter())
+        try {
+            assertFalse("a second run is refused while the first holds the gate", BenchGate.tryEnter())
+        } finally {
+            BenchGate.leave()
+        }
+        assertTrue(BenchGate.tryEnter())
+        BenchGate.leave()
+    }
 }

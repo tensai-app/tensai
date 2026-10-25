@@ -49,9 +49,9 @@ class WebSearchTool(
     class Setup(val chain: FallbackSearch?, val chosen: String)
 
     override val name = NAME
-    override val description = "Searches the web. Returns titles, links and short snippets. Use web_fetch to read one result."
+    override val description = "Searches the web: titles, links and snippets."
     override val parametersSchema =
-        """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max ${WebToolLimits.MaxLimit}, default ${WebToolLimits.DefaultLimit}"}},"required":["query"]}"""
+        """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max ${WebToolLimits.MaxLimit}"}},"required":["query"]}"""
     override val tier = ToolTier.Network
     override val returnsUntrustedContent = true
 
@@ -127,7 +127,7 @@ class WebFetchTool(
     private val maxChars: Int = WebToolLimits.PageChars,
 ) : Tool {
     override val name = "web_fetch"
-    override val description = "Reads one web page and returns its text. Give a full https URL, for example one from web_search."
+    override val description = "Returns the text of one web page, given its full https URL."
     override val parametersSchema = """{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}"""
     override val tier = ToolTier.Network
     override val returnsUntrustedContent = true

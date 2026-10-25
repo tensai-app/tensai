@@ -306,7 +306,7 @@ class AskUserToolTest {
         assertEquals(ToolTier.Local, tool.tier)
         assertTrue(tool.waitsForUser)
         assertFalse(tool.requiresConfirmation(args()))
-        assertEquals("Ask the user to pick among options when the request is ambiguous. Prefer this over guessing.", tool.description)
+        assertEquals("Asks the user to pick among options when the request is ambiguous.", tool.description)
         assertNull(ToolArgs.check(tool.parametersSchema, args()))
     }
 }

@@ -19,9 +19,9 @@ class WikipediaTool(
     private val defaultLanguage: () -> String = { "en" },
 ) : Tool {
     override val name = "wikipedia"
-    override val description = "Looks a topic up on Wikipedia and returns the summary of the best article with its link. lang is a language code like en or fr."
+    override val description = "Summary and link of the best Wikipedia article on a topic."
     override val parametersSchema =
-        """{"type":"object","properties":{"query":{"type":"string"},"lang":{"type":"string","description":"default en"}},"required":["query"]}"""
+        """{"type":"object","properties":{"query":{"type":"string"},"lang":{"type":"string","description":"language code like en or fr, default en"}},"required":["query"]}"""
     override val tier = ToolTier.Network
     override val returnsUntrustedContent = true
 

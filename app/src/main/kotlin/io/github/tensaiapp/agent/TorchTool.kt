@@ -15,7 +15,7 @@ interface TorchControl {
 /** Turns the flashlight on or off. Reversible and harmless, so no confirmation. */
 class TorchTool(private val torch: TorchControl) : Tool {
     override val name = "torch"
-    override val description = "Turns the phone's flashlight on or off."
+    override val description = "Turns the flashlight on or off."
     override val parametersSchema =
         """{"type":"object","properties":{"state":{"type":"string","enum":["on","off"]}},"required":["state"]}"""
     override val tier = ToolTier.Local

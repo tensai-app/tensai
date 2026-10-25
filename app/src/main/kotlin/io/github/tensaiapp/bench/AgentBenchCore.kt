@@ -40,6 +40,21 @@ data class BenchTrigger(
     val toolGrammar: Boolean = true,
 )
 
+/**
+ * One bench at a time, whichever it is (the agent bench, the debug decode curve) and wherever it is started from (the
+ * launch intent, the panel): they share the engine and the log tag. A run enters before it launches and leaves when it ends.
+ */
+object BenchGate {
+    private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** `false` when another run holds the gate. */
+    fun tryEnter(): Boolean = busy.compareAndSet(false, true)
+
+    fun leave() {
+        busy.set(false)
+    }
+}
+
 /** Where the last run is, for the debug panel. */
 sealed interface BenchStatus {
     data object Idle : BenchStatus

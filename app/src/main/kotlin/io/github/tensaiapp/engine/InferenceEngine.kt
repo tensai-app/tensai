@@ -520,8 +520,9 @@ sealed class DecodeEvent {
  * @param nCtxEffective context window actually in effect for this load.
  * @param backend compute backend actually used (implementation-defined
  *   label, e.g. "CPU", "Vulkan").
- * @param kvCacheType KV-cache precision actually requested for this load — see
- *   [ModelLoadConfig.kvCacheType]. Carried here (rather than only on the request) so a saved
+ * @param kvCacheType KV-cache precision this load actually runs with, which can differ from
+ *   [ModelLoadConfig.kvCacheType]: a CPU load takes q8_0 unless the model cannot (TEN-188,
+ *   `VulkanTuning.kvForLoad`). Carried here (rather than only on the request) so a saved
  *   session's metadata can record exactly what produced it: TEN-34's restore path refuses to load
  *   a session back unless the model, [nCtxEffective] and this all still match, and this is the one
  *   place that triple is available together after a load completes.

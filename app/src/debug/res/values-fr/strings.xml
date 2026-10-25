@@ -11,4 +11,17 @@
     <string name="bench_running">En cours, %1$d prompts sur %2$d</string>
     <string name="bench_failed">Non lancé : %1$s</string>
     <string name="bench_stopped_early">Arrêté avant le dernier prompt, voir logcat tensai.bench</string>
+    <string name="bench_curve_title">Courbe de décodage (debug)</string>
+    <string name="bench_knobs_hint">Les réglages s\'appliquent au prochain chargement CPU : décharger le modèle puis le recharger.</string>
+    <string name="bench_knob_threads">Threads de décodage</string>
+    <string name="bench_knob_flash_attn">Flash attention</string>
+    <string name="bench_knob_fa_forced">Activée : un cache KV q8_0 en a besoin</string>
+    <string name="bench_knob_kv">Cache KV</string>
+    <string name="bench_knob_auto">auto</string>
+    <string name="bench_knob_on">on</string>
+    <string name="bench_knob_off">off</string>
+    <string name="bench_curve_run">Lancer la courbe de décodage</string>
+    <string name="bench_curve_hint">Décode 128 tokens après 0 à 4096 tokens de remplissage, sans outils ni réflexion. Les conversations ne sont pas touchées.</string>
+    <string name="bench_curve_running">En cours, %1$d points sur %2$d</string>
+    <string name="bench_curve_stopped_early">Arrêté avant le dernier point, voir logcat tensai.bench</string>
 </resources>

@@ -72,6 +72,24 @@ internal class PrefixCache(private val dir: File, private val keep: Int = Defaul
     }
 
     companion object {
+        /**
+         * What a prefix state is only valid for, next to the prefix text (see [key]): these shape the KV
+         * cells, so a state computed under other values must never be read back. [kvCacheType] is the cache type
+         * loaded, not the one asked for (see [VulkanTuning.kvForLoad]), and [tuning] counts only when it forces the
+         * layout (every CPU load since TEN-188): a GPU load keeps its files.
+         */
+        fun identity(
+            config: ModelLoadConfig,
+            fileLength: Long,
+            lastModified: Long,
+            backend: String,
+            kvCacheType: KvCacheType,
+            tuning: VulkanLoadTuning,
+        ): String = listOf(
+            config.modelId, config.path, fileLength, lastModified,
+            config.nCtx, kvCacheType, backend, config.chatTemplate,
+        ).plus(listOfNotNull(tuning.kvLayoutKey())).joinToString("|")
+
         const val DefaultKeep = 2
         private const val KeyLength = 32
         private const val Extension = ".kv"

@@ -9,7 +9,7 @@ import org.json.JSONObject
  */
 class CalculateTool : Tool {
     override val name = "calculate"
-    override val description = "Exact math. + - * / ^ % ( ), sqrt abs round floor ceil min max log ln sin cos tan, pi e."
+    override val description = "Exact math: + - * / ^ % ( ) sqrt abs round floor ceil min max log (base 10) ln sin cos tan (radians) pi e"
     override val parametersSchema =
         """{"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]}"""
     override val tier = ToolTier.Local

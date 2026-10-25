@@ -34,7 +34,7 @@ interface ClipboardAccess {
  */
 class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val name = "clipboard"
-    override val description = "Reads (action get) or replaces (action set, with text) the text on the clipboard."
+    override val description = "Reads (get) or replaces (set, with text) the clipboard text."
     override val parametersSchema =
         """{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}"""
     override val tier = ToolTier.Local

@@ -16,7 +16,6 @@ import io.github.tensaiapp.runtime.residentModel
 import io.github.tensaiapp.ui.screens.chat.DefaultEnableThinking
 import io.github.tensaiapp.ui.screens.chat.replySampling
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,8 +55,6 @@ object AgentBench {
     const val EXTRA_TOOL_GRAMMAR = "tool_grammar"
     private const val WarmRetryMs = 500L
 
-    private var running: Job? = null
-
     private val _status = MutableStateFlow<BenchStatus>(BenchStatus.Idle)
 
     /** The last run, for the debug panel: whatever started it. */
@@ -83,13 +80,13 @@ object AgentBench {
     /** Runs [trigger] on the application scope, so leaving the screen does not stop it. Debug builds only, one run at a time. */
     fun start(trigger: BenchTrigger, assets: AssetManager) {
         if (!BuildConfig.DEBUG) return
-        if (running?.isActive == true) {
+        if (!BenchGate.tryEnter()) {
             // Logged only: the panel keeps showing the run that is going.
             Log.e(TAG, benchErrorLine("a bench is already running"))
             return
         }
         _status.value = BenchStatus.Running(done = 0, total = null)
-        running = RuntimeGraph.applicationScope.launch {
+        RuntimeGraph.applicationScope.launch {
             try {
                 run(trigger, assets)
             } catch (e: CancellationException) {
@@ -99,6 +96,7 @@ object AgentBench {
             } finally {
                 // Never left on Running: the panel would wait for good.
                 if (_status.value is BenchStatus.Running) _status.value = BenchStatus.Failed("the run ended without a summary")
+                BenchGate.leave()
             }
         }
     }

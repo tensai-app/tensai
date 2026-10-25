@@ -15,10 +15,9 @@ import org.json.JSONObject
 class DateTimeTool(private val clock: Clock = Clock.systemDefaultZone()) : Tool {
     override val name = "datetime"
     override val description =
-        "Returns the current date, time and time zone of the user's device, or of another place given its IANA timezone. " +
-            "Call it for anything that depends on now."
+        "Current date, time and time zone, here or in another IANA timezone. Call it for anything that depends on now."
     override val parametersSchema =
-        """{"type":"object","properties":{"timezone":{"type":"string","description":"IANA zone, e.g. Asia/Tokyo"}}}"""
+        """{"type":"object","properties":{"timezone":{"type":"string","description":"e.g. Asia/Tokyo"}}}"""
     override val tier = ToolTier.Local
 
     override suspend fun execute(argsJson: String): ToolResult {

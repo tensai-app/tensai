@@ -102,6 +102,29 @@ sealed class LoadUiState {
 }
 
 /**
+ * Whether a load with [backend] runs on the CPU, as the engine resolves it: [BackendHint.Auto] offloads when the
+ * phone has a GPU backend ([DeviceProfile.hasVulkan], [DeviceProfile.hasOpenCl]).
+ */
+internal fun runsOnCpu(backend: BackendHint, profile: DeviceProfile): Boolean = when (backend) {
+    BackendHint.Cpu -> true
+    BackendHint.Gpu -> false
+    BackendHint.Auto -> !profile.hasVulkan && !profile.hasOpenCl
+}
+
+/**
+ * The load to try after [attempt] ran out of memory, `null` below the floor: the same context at Q8_0 if it was F16,
+ * then one [stepDown] rung at a time. Not the Q8_0 rung on the CPU ([cpu]): the engine already loads a quantized cache
+ * there, or an F16 one when the model cannot take another (TEN-188, `VulkanTuning.kvForLoad`), so it would be the very
+ * load that just failed.
+ */
+internal fun nextOomAttempt(attempt: ModelLoadConfig, cpu: Boolean, stepDown: (Int) -> Int?): ModelLoadConfig? =
+    if (attempt.kvCacheType == KvCacheType.F16 && !cpu) {
+        attempt.copy(kvCacheType = KvCacheType.Q8_0)
+    } else {
+        stepDown(attempt.nCtx)?.let { attempt.copy(nCtx = it) }
+    }
+
+/**
  * Orchestrates one [ModelEntity]'s load for the `loading/{modelId}` route (TEN-30): reads the
  * model, runs the compatibility check, derives an adaptive [LoadPolicy] plan, and drives
  * [InferenceQueue.loadModel] — see [LoadUiState] for every state this can be in.
@@ -258,21 +281,16 @@ class LoadModelViewModel(
             }
             try {
                 // Out of memory is the one failure a smaller context can cure, and the estimate that picked
-                // this one is an estimate: so first retry the same context at Q8_0 if it was F16, then step down one
-                // ladder rung at a time at Q8_0, down to the floor, before the user sees a dialog. Safe in this path because a failed [InferenceQueue.loadModel]
+                // this one is an estimate: so retry down [nextOomAttempt]'s rungs, down to the floor, before the user sees a dialog. Safe in this path because a failed [InferenceQueue.loadModel]
                 // leaves the queue as it was, which is what "Retry" and "Retry on CPU" already rely on.
+                val cpu = runsOnCpu(config.backend, profile)
                 var attempt = config
                 while (true) {
                     try {
                         queue.loadModel(attempt)
                         break
                     } catch (e: OutOfMemoryException) {
-                        attempt = if (attempt.kvCacheType == KvCacheType.F16) {
-                            // First the cheaper cache at the context the user asked for, then rungs.
-                            attempt.copy(kvCacheType = KvCacheType.Q8_0)
-                        } else {
-                            attempt.copy(nCtx = LoadPolicy.stepDown(model, attempt.nCtx) ?: throw e)
-                        }
+                        attempt = nextOomAttempt(attempt, cpu) { LoadPolicy.stepDown(model, it) } ?: throw e
                     }
                 }
                 // Stop mirroring the queue first, and wait for it: a late Loading value landing

@@ -13,4 +13,18 @@
     <!-- %1$s is the reason, in English, from the bench log. -->
     <string name="bench_failed">Not run: %1$s</string>
     <string name="bench_stopped_early">Stopped before the last prompt, see logcat tensai.bench</string>
+    <string name="bench_curve_title">Decode curve (debug)</string>
+    <string name="bench_knobs_hint">The knobs apply to the next CPU load: unload the model and load it again.</string>
+    <string name="bench_knob_threads">Decode threads</string>
+    <string name="bench_knob_flash_attn">Flash attention</string>
+    <string name="bench_knob_fa_forced">On: a q8_0 KV cache needs it</string>
+    <string name="bench_knob_kv">KV cache</string>
+    <string name="bench_knob_auto">auto</string>
+    <string name="bench_knob_on">on</string>
+    <string name="bench_knob_off">off</string>
+    <string name="bench_curve_run">Run decode curve</string>
+    <string name="bench_curve_hint">Decodes 128 tokens after 0 to 4096 tokens of filler, no tools, thinking off. Chats are left alone.</string>
+    <!-- %1$d points done out of %2$d. -->
+    <string name="bench_curve_running">Running, %1$d of %2$d points</string>
+    <string name="bench_curve_stopped_early">Stopped before the last point, see logcat tensai.bench</string>
 </resources>

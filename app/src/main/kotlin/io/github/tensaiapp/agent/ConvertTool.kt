@@ -8,7 +8,7 @@ import org.json.JSONObject
 /** Unit conversions (length, mass, volume, speed, data, time, temperature), all three arguments required. */
 class ConvertTool : Tool {
     override val name = "convert"
-    override val description = "Converts a value between units, e.g. 5 mi to km."
+    override val description = "Unit conversion, e.g. 5 mi to km."
     override val parametersSchema =
         """{"type":"object","properties":{"value":{"type":"number"},"from":{"type":"string"},"to":{"type":"string"}},""" +
             """"required":["value","from","to"]}"""
@@ -38,11 +38,10 @@ class ConvertTool : Tool {
 /** A time shown in another IANA time zone. */
 class ConvertTimeTool(private val clock: Clock = Clock.systemDefaultZone()) : Tool {
     override val name = "convert_time"
-    override val description = "Converts a time between time zones, e.g. 14:00 Europe/Paris to America/New_York."
+    override val description = "Time zone conversion, e.g. 14:00 Europe/Paris to America/New_York."
     override val parametersSchema =
         """{"type":"object","properties":{"time":{"type":"string","description":"HH:mm or yyyy-MM-dd HH:mm"},""" +
-            """"from":{"type":"string","description":"IANA zone, e.g. Europe/Paris"},""" +
-            """"to":{"type":"string","description":"IANA zone"}},"required":["time","from","to"]}"""
+            """"from":{"type":"string"},"to":{"type":"string"}},"required":["time","from","to"]}"""
     override val tier = ToolTier.Local
 
     override suspend fun execute(argsJson: String): ToolResult {

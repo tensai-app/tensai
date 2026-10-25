@@ -25,7 +25,7 @@ fun interface DeviceInfoSource {
 /** Battery, storage, RAM, network type, Android version and model. */
 class DeviceInfoTool(private val source: DeviceInfoSource) : Tool {
     override val name = "device_info"
-    override val description = "Battery and charging, free storage and RAM, network type (wifi, cellular, none), Android version and model."
+    override val description = "Battery, charging, free storage and RAM, network type, Android version and phone model."
     override val parametersSchema = """{"type":"object","properties":{}}"""
     override val tier = ToolTier.Local
 

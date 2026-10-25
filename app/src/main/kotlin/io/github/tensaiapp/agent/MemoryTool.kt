@@ -33,7 +33,7 @@ class MemoryTool(
 ) : Tool {
     override val name = "memory"
     override val description =
-        "Long-term memory about the user. action remember (text), list, or forget (id). Recent facts are already in context, list is for older ones. Remember only what the user asks or clearly wants kept."
+        "Long-term memory about the user: remember (text), list, forget (id). Recent facts are already in context. Remember only what the user wants kept."
     override val parametersSchema =
         """{"type":"object","properties":{"action":{"type":"string","enum":["remember","list","forget"]},""" +
             """"text":{"type":"string"},"id":{"type":"integer"}},"required":["action"]}"""

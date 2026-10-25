@@ -38,9 +38,9 @@ class SearchChatsTool(
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
 ) : Tool {
     override val name = "search_chats"
-    override val description = "Searches the user's past conversations for a word or phrase. Returns title, date and a snippet."
+    override val description = "Searches the user's past chats for a word or phrase."
     override val parametersSchema =
-        """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max 10, default 5"}},"required":["query"]}"""
+        """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max 10"}},"required":["query"]}"""
     override val tier = ToolTier.Local
     override val returnsUntrustedContent = true
 

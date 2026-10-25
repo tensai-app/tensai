@@ -168,8 +168,32 @@ class LlamaKtEngineImpl(
 
     override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = onEngineThread {
         val nGpuLayers = resolveNGpuLayers(config.backend)
-        val kvCacheTypeArg = config.kvCacheType.toLibArg()
-        val tuning = VulkanTuning.forLoad(nGpuLayers)
+        val override = VulkanTuning.forLoad(nGpuLayers, cpuOverride = CpuLoadOverride.forLoad(nGpuLayers))
+        if (nGpuLayers == 0 && override != VulkanLoadTuning.NONE) {
+            log(
+                "cpu load override: n_threads=${override.nThreads ?: "auto"} n_threads_batch=${override.nThreadsBatch ?: "auto"} " +
+                    "flash_attn=${override.flashAttn.name.lowercase()} type_k=${override.typeK} type_v=${override.typeV}",
+            )
+        }
+        // A header read, milliseconds: the name below, and whether the model can take a quantized cache.
+        val meta = try {
+            LlamaEngine.readMetadata(config.path)
+        } catch (_: Exception) {
+            null
+        }
+        // TEN-188: a CPU load runs a q8_0 cache unless told otherwise; what it settles on is what the model reports.
+        val quantizedFits = meta != null && VulkanTuning.quantizedKvFits(
+            meta.embeddingLength, meta.headCount, meta.headCountKv, meta.blockCount,
+            meta.kvFullElementsPerToken + meta.kvSwaElementsPerToken,
+        )
+        val (kvCacheType, tuning) = VulkanTuning.kvForLoad(nGpuLayers, config.kvCacheType, override, quantizedFits)
+        if (kvCacheType != config.kvCacheType) {
+            log(
+                "cpu load: kv cache ${kvCacheType.name.lowercase()} instead of ${config.kvCacheType.name.lowercase()}, " +
+                    "flash_attn=${tuning.flashAttn.name.lowercase()}, quantized_fits=$quantizedFits",
+            )
+        }
+        val kvCacheTypeArg = kvCacheType.toLibArg()
         val libProgress = if (config.onProgress == null && config.onStage == null) {
             null
         } else {
@@ -223,32 +247,20 @@ class LlamaKtEngineImpl(
         } catch (_: Exception) {
             "unknown"
         }
-        val meta = try {
-            LlamaEngine.readMetadata(config.path)
-        } catch (_: Exception) {
-            null
-        }
-
         val info = LoadedModelInfo(
             name = config.name?.takeIf { it.isNotBlank() }
                 ?: meta?.name?.takeIf { it.isNotBlank() }
                 ?: File(config.path).name,
             nCtxEffective = config.nCtx,
             backend = backend,
-            kvCacheType = config.kvCacheType,
+            kvCacheType = kvCacheType,
             modelId = config.modelId,
             chatTemplate = config.chatTemplate,
         )
 
         refreshKvUsedCells()
-        // What a prefix state is only valid for, next to the prefix text (see [PrefixCache]): these
-        // shape the KV cells, so a state computed under other values must never be read back.
         val file = File(config.path)
-        val identity = listOf(
-            config.modelId, config.path, file.length(), file.lastModified(),
-            config.nCtx, config.kvCacheType, backend, config.chatTemplate,
-        ).joinToString("|")
-        LoadedModelImpl(info, identity)
+        LoadedModelImpl(info, PrefixCache.identity(config, file.length(), file.lastModified(), backend, kvCacheType, tuning))
     }
 
     override fun kvCacheUsedCells(): Int = kvUsedCells.get()

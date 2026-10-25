@@ -155,11 +155,10 @@ class ReadCalendarTool(
 ) : Tool {
     override val name = "read_calendar"
     override val description =
-        "Lists the events of the user's calendar: title, time, place. day is one day (default today), add to for a range. " +
-            "Forms: today, yesterday, tomorrow, a weekday like friday, or YYYY-MM-DD. At most $CALENDAR_MAX_DAYS days."
+        "Lists the user's calendar events on day, or from day to to (at most $CALENDAR_MAX_DAYS days)."
     override val parametersSchema =
-        """{"type":"object","properties":{"day":{"type":"string","description":"today, yesterday, tomorrow, a weekday like friday, or YYYY-MM-DD. Default today"},""" +
-            """"to":{"type":"string","description":"last day of a range starting at day, included, same forms"}}}"""
+        """{"type":"object","properties":{"day":{"type":"string","description":"today, yesterday, tomorrow, a weekday or YYYY-MM-DD, default today"},""" +
+            """"to":{"type":"string","description":"last day, included, same forms"}}}"""
     override val tier = ToolTier.AndroidPermission
     override val waitsForUser = true
     override val returnsUntrustedContent = true
