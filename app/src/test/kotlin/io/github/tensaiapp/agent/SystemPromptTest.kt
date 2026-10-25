@@ -87,7 +87,7 @@ class SystemPromptTest {
         val all = BasePrompt.render(BasePrompt.ToolsNamed, day)
         assertTrue(all.contains("Call ask_user only when the request is genuinely ambiguous."))
         assertTrue(all.contains("web_search finds pages. Call web_fetch on one when you need a precise fact from it."))
-        assertTrue(all.contains("For the current date or time, call datetime."))
+        assertTrue(all.contains("For the current date or time, call datetime; for another place, pass its IANA timezone."))
 
         assertTrue(BasePrompt.render(setOf(WebSearchTool.NAME), day).lines().contains("web_search finds pages."))
     }

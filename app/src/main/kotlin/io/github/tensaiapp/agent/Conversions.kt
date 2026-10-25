@@ -104,7 +104,7 @@ object UnitConversion {
     }
 }
 
-/** A time in one IANA zone shown in another, for `convert_time` (TEN-175). */
+/** IANA zone lookup and a time in one zone shown in another, for `convert_time` (TEN-175) and `datetime`. */
 object TimeZoneConversion {
 
     private val shown = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")

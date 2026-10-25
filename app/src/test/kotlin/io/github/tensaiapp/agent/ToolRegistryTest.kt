@@ -116,6 +116,37 @@ class ToolRegistryTest {
     }
 
     @Test
+    fun datetimeGivesTheTimeInTheTimezoneAsked() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T20:00:00Z"), ZoneId.of("Europe/Paris"))
+
+        val json = JSONObject(DateTimeTool(clock).execute("""{"timezone":"Asia/Tokyo"}""").text)
+
+        assertEquals("2026-10-17T05:00:00+09:00", json.getString("iso"))
+        assertEquals("2026-10-17", json.getString("date"))
+        assertEquals("05:00", json.getString("time"))
+        assertEquals("Saturday", json.getString("dayOfWeek"))
+        assertEquals("Asia/Tokyo", json.getString("timezone"))
+        assertEquals("+09:00", json.getString("utcOffset"))
+    }
+
+    @Test
+    fun aBlankTimezoneIsTheDeviceOne() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T12:03:22Z"), ZoneId.of("Europe/Paris"))
+        val device = DateTimeTool(clock).execute("{}")
+
+        assertEquals(device, DateTimeTool(clock).execute("""{"timezone":""}"""))
+        assertEquals(device, DateTimeTool(clock).execute("""{"timezone":"  "}"""))
+    }
+
+    @Test
+    fun anUnknownTimezoneIsAToolErrorNamingTheArgument() = runBlocking {
+        val result = DateTimeTool().execute("""{"timezone":"Tokyo"}""")
+
+        assertTrue(result.isError)
+        assertTrue(result.text, result.text.startsWith("timezone: unknown time zone 'Tokyo'"))
+    }
+
+    @Test
     fun datetimeIsALocalToolWithNoRequiredArgument() {
         val tool = DateTimeTool()
 

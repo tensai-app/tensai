@@ -45,7 +45,7 @@ object BasePrompt {
             }
         }
         if (tools != null && "datetime" in tools) {
-            add("For the current date or time, call datetime.")
+            add("For the current date or time, call datetime; for another place, pass its IANA timezone.")
         } else {
             add("This conversation started on ${startedOn.format(dateFormat)}.")
         }
