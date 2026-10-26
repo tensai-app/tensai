@@ -24,4 +24,132 @@
     <string name="bench_curve_hint">Décode 128 tokens après 0 à 4096 tokens de remplissage, sans outils ni réflexion. Les conversations ne sont pas touchées.</string>
     <string name="bench_curve_running">En cours, %1$d points sur %2$d</string>
     <string name="bench_curve_stopped_early">Arrêté avant le dernier point, voir logcat tensai.bench</string>
+    <string name="bench_settings_section">Debug</string>
+    <string name="bench_settings_sub">Appels d\'outils de l\'agent et vitesse de décodage</string>
+    <string name="bench_screen_title">Banc</string>
+    <string name="bench_tab_agent">Agent</string>
+    <string name="bench_eyebrow_agent">Banc agent</string>
+    <string name="bench_eyebrow_saved">Runs enregistrés</string>
+    <string name="bench_new_run">Nouveau run</string>
+    <string name="bench_no_model">Aucun modèle chargé</string>
+    <plurals name="bench_prompts_count">
+        <item quantity="one">%d prompt</item>
+        <item quantity="many">%d prompts</item>
+        <item quantity="other">%d prompts</item>
+    </plurals>
+    <string name="bench_thinking_sub">Raisonnement avant l\'appel</string>
+    <string name="bench_base_prompt">Prompt de base</string>
+    <string name="bench_base_prompt_sub">Règles du harnais et lignes d\'outils</string>
+    <string name="bench_examples_sub">Exemples résolus sous les règles</string>
+    <string name="bench_tool_grammar_sub">Tient un appel aux schémas des outils</string>
+    <string name="bench_greedy">Greedy</string>
+    <string name="bench_greedy_sub">Température 0 pour tout le run, sinon l\'échantillonnage du chat</string>
+    <string name="bench_repetitions">Répétitions</string>
+    <string name="bench_repetitions_sub">Par prompt, pour les taux de réussite</string>
+    <string name="bench_repetitions_less">Moins de répétitions</string>
+    <string name="bench_repetitions_more">Plus de répétitions</string>
+    <plurals name="bench_run_calls">
+        <item quantity="one">Lancer · %d appel</item>
+        <item quantity="many">Lancer · %d appels</item>
+        <item quantity="other">Lancer · %d appels</item>
+    </plurals>
+    <string name="bench_run_off">Lancement impossible : aucun modèle chargé. Charger un modèle, puis revenir ici.</string>
+    <string name="bench_run_plain">Lancer</string>
+    <string name="bench_open_models">Ouvrir les modèles</string>
+    <string name="bench_running_eyebrow">En cours</string>
+    <plurals name="bench_of_prompts">
+        <item quantity="one">sur %d prompt</item>
+        <item quantity="many">sur %d prompts</item>
+        <item quantity="other">sur %d prompts</item>
+    </plurals>
+    <plurals name="bench_of_trials">
+        <item quantity="one">sur %d essai</item>
+        <item quantity="many">sur %d essais</item>
+        <item quantity="other">sur %d essais</item>
+    </plurals>
+    <string name="bench_current">En cours</string>
+    <string name="bench_elapsed">Écoulé</string>
+    <string name="bench_so_far">Jusqu\'ici</string>
+    <string name="bench_stop">Arrêter</string>
+    <plurals name="bench_stop_note">
+        <item quantity="one">Arrêter garde le %d prompt noté comme run partiel.</item>
+        <item quantity="many">Arrêter garde les %d prompts notés comme run partiel.</item>
+        <item quantity="other">Arrêter garde les %d prompts notés comme run partiel.</item>
+    </plurals>
+    <plurals name="bench_stop_note_trials">
+        <item quantity="one">Arrêter garde %d essai noté comme run partiel.</item>
+        <item quantity="many">Arrêter garde les %d essais notés comme run partiel.</item>
+        <item quantity="other">Arrêter garde les %d essais notés comme run partiel.</item>
+    </plurals>
+    <string name="bench_empty_title">Aucun run enregistré</string>
+    <string name="bench_empty_body">Les runs terminés ou arrêtés sont enregistrés ici. Sélectionner 2 à 4 runs pour les comparer.</string>
+    <string name="bench_select">Sélectionner pour comparer</string>
+    <string name="bench_more">Plus</string>
+    <string name="bench_copy_json">Copier le JSON</string>
+    <string name="bench_share_json">Partager le JSON</string>
+    <string name="bench_delete">Supprimer</string>
+    <string name="bench_copied">JSON copié</string>
+    <string name="bench_copy_too_large">Trop gros pour le presse-papiers, passer par Partager le JSON</string>
+    <plurals name="bench_selected">
+        <item quantity="one">%d sélectionné</item>
+        <item quantity="many">%d sélectionnés</item>
+        <item quantity="other">%d sélectionnés</item>
+    </plurals>
+    <string name="bench_clear">Effacer</string>
+    <string name="bench_compare">Comparer</string>
+    <string name="bench_pick_more">2 minimum</string>
+    <string name="bench_max_four">4 maximum</string>
+    <string name="bench_today">Aujourd\'hui · %1$s</string>
+    <string name="bench_yesterday">Hier · %1$s</string>
+    <string name="bench_compare_title">Comparer</string>
+    <string name="bench_run_title">Run</string>
+    <plurals name="bench_runs_count">
+        <item quantity="one">%d run</item>
+        <item quantity="many">%d runs</item>
+        <item quantity="other">%d runs</item>
+    </plurals>
+    <string name="bench_eyebrow_runs">Runs</string>
+    <string name="bench_eyebrow_summary">Résumé</string>
+    <string name="bench_best_hint">gras = meilleur par métrique</string>
+    <string name="bench_eyebrow_prompts">Prompts</string>
+    <string name="bench_filter_all">Tous · %1$d</string>
+    <string name="bench_filter_changed">Changés seulement · %1$d</string>
+    <string name="bench_matrix_legend">≠ verdict différent · OK correct · FALSE appel en trop · MISS appel manquant · WRONG mauvais outil · ERR erreur · N/A indisponible · n/3 taux de réussite</string>
+    <string name="bench_matrix_hint">Toucher une case pour ouvrir ce prompt dans ce run.</string>
+    <string name="bench_row_started">début</string>
+    <string name="bench_row_model">modèle</string>
+    <string name="bench_row_reps">répét.</string>
+    <string name="bench_row_config">config</string>
+    <string name="bench_same_model">%1$s · le même pour tous les runs</string>
+    <string name="bench_models_differ">Les modèles diffèrent entre les runs</string>
+    <string name="bench_metric_correct">des essais</string>
+    <string name="bench_metric_false_call">outil, aucun attendu</string>
+    <string name="bench_metric_missing">aucun appel, un attendu</string>
+    <string name="bench_metric_wrong_tool">autre outil</string>
+    <string name="bench_metric_error">analyse ou exécution</string>
+    <string name="bench_metric_named">nommé, pas appelé</string>
+    <string name="bench_eyebrow_prompt">Prompt</string>
+    <string name="bench_expected">Attendu</string>
+    <string name="bench_rep">Rép. %1$d</string>
+    <string name="bench_eyebrow_result">Résultat</string>
+    <string name="bench_eyebrow_tool_calls">Appels d\'outils</string>
+    <string name="bench_no_calls">Aucun appel d\'outil.</string>
+    <string name="bench_eyebrow_reply">Réponse</string>
+    <plurals name="bench_reasoning_tokens">
+        <item quantity="one">%d token de raisonnement</item>
+        <item quantity="many">%d tokens de raisonnement</item>
+        <item quantity="other">%d tokens de raisonnement</item>
+    </plurals>
+    <plurals name="bench_cut">
+        <item quantity="one">coupé à %d caractère</item>
+        <item quantity="many">coupé à %d caractères</item>
+        <item quantity="other">coupé à %d caractères</item>
+    </plurals>
+    <string name="bench_no_reply">Pas de texte de réponse.</string>
+    <string name="bench_verdict_correct">Correct</string>
+    <string name="bench_verdict_false_call">Appel en trop</string>
+    <string name="bench_verdict_missing">Appel manquant</string>
+    <string name="bench_verdict_wrong_tool">Mauvais outil</string>
+    <string name="bench_verdict_error">Erreur</string>
+    <string name="bench_verdict_unavailable">Indisponible</string>
 </resources>

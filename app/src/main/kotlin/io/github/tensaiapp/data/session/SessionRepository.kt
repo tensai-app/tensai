@@ -233,9 +233,10 @@ class SessionRepository(
      * coroutine that has been cancelled running on as though it had not.
      *
      * No caller can currently reach that: every path in ends on
-     * `RuntimeGraph.applicationScope`, which nothing cancels. TEN-73 fixed the shape rather than a
-     * symptom, and the ticket's own premise ("l'app tuée pendant `MainActivity.onStop`") turned out
-     * to be wrong for the same reason.
+     * `RuntimeGraph.applicationScope`, which nothing cancels, except the debug agent bench's Stop,
+     * which cancels its own job and so makes its saves (the cache handover) `NonCancellable`.
+     * TEN-73 fixed the shape rather than a symptom, and the ticket's own premise ("l'app tuée
+     * pendant `MainActivity.onStop`") turned out to be wrong for the same reason.
      *
      * Write-then-rename otherwise: [saveOnEngine] is asked to write to a temp path first, and the DB
      * row is only written (and the temp file only renamed into place) once that call has actually

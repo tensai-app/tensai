@@ -98,6 +98,7 @@ import io.github.tensaiapp.data.ContextSetting
 import io.github.tensaiapp.data.InstructionsSettings
 import io.github.tensaiapp.runtime.rememberResumeCount
 import io.github.tensaiapp.ui.components.KanjiGlyph
+import io.github.tensaiapp.ui.screens.bench.BenchSettingsSection
 import io.github.tensaiapp.ui.screens.models.formatFileSize
 import io.github.tensaiapp.ui.theme.TensaiMono
 import io.github.tensaiapp.ui.theme.TensaiShapes
@@ -119,6 +120,7 @@ import kotlinx.coroutines.launch
  * @param onNavigateToDevice where the "This device" row goes.
  * @param onNavigateToMemory where the "Memory" row goes.
  * @param onNavigateToTools where the "Tools" row goes (TEN-174).
+ * @param onNavigateToBench where the DEBUG section's "Bench" row goes, a debug build's only (TEN-187).
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  * @param openInstructionsSheet the same for "Your instructions", from the chat settings sheet.
@@ -132,6 +134,7 @@ fun SettingsScreen(
     onNavigateToMemory: () -> Unit,
     onNavigateToTools: () -> Unit,
     modifier: Modifier = Modifier,
+    onNavigateToBench: () -> Unit = {},
     openTokenSheet: Boolean = false,
     onTokenSheetOpened: () -> Unit = {},
     openInstructionsSheet: Boolean = false,
@@ -429,6 +432,9 @@ fun SettingsScreen(
                     },
                 )
             }
+
+            // Debug builds only: the release stub draws nothing.
+            BenchSettingsSection(onOpen = onNavigateToBench)
 
             Footer()
         }

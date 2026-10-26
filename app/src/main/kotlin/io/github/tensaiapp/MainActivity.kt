@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
         // Only a fresh launch: after process death the saved intent would replay an old tap.
         if (savedInstanceState == null) {
             LoadRequests.offer(intent)
-            AgentBench.offer(intent, assets)
+            AgentBench.offer(intent, this)
         }
 
         lifecycleScope.launch {
@@ -153,7 +153,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         LoadRequests.offer(intent)
-        AgentBench.offer(intent, assets)
+        AgentBench.offer(intent, this)
     }
 
     /** See [AppForegroundTracker] — the other half of [onStop]'s report. */

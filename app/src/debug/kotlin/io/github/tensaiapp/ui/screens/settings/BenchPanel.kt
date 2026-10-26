@@ -40,6 +40,7 @@ import io.github.tensaiapp.engine.FlashAttnMode
 import io.github.tensaiapp.engine.KvKnob
 import io.github.tensaiapp.ui.components.TensaiChip
 import io.github.tensaiapp.ui.components.rememberReducedMotion
+import io.github.tensaiapp.ui.screens.bench.KeepScreenOn
 import io.github.tensaiapp.ui.screens.chat.DefaultEnableThinking
 import io.github.tensaiapp.ui.screens.chat.SwitchVisual
 import io.github.tensaiapp.ui.theme.TensaiMono
@@ -49,6 +50,7 @@ import io.github.tensaiapp.ui.theme.TensaiMono
  * runs [AgentBench] with the toggles of a [BenchTrigger], reachable by taps where the launch intent is not.
  * The run lives on the application scope, so this screen can be left and come back to; its progress and
  * summary are [AgentBench.status], drawn here in mono to be read off a screenshot. The log lines on `tensai.bench` are the same as from the intent.
+ * A run started here is saved like one from Settings > Bench (TEN-187), which is the main entry now.
  *
  * Under it, the decode curve (TEN-188): the [CpuLoadOverride] knobs, which the next CPU load takes, and
  * [DecodeCurveBench], its table drawn the same way.
@@ -66,6 +68,7 @@ internal fun BenchPanel() {
     var toolGrammar by rememberSaveable { mutableStateOf(true) }
     // One bench at a time: they share the engine and the log tag.
     val running = status is BenchStatus.Running || curveStatus is BenchStatus.Running
+    KeepScreenOn(running)
 
     SectionLabel(stringResource(R.string.bench_title))
     SectionCard {
@@ -82,7 +85,7 @@ internal fun BenchPanel() {
             icon = Icons.Rounded.PlayArrow,
             title = stringResource(R.string.bench_run),
             supporting = stringResource(R.string.bench_hint),
-            onClick = if (running) null else { { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar), context.assets) } },
+            onClick = if (running) null else { { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar), context) } },
         )
     }
     StatusLines(status, runningText = { done, total -> stringResource(R.string.bench_running, done, total) }, stoppedEarly = R.string.bench_stopped_early)

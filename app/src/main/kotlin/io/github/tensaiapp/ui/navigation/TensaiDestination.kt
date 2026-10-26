@@ -19,6 +19,9 @@ sealed class TensaiDestination(val route: String) {
     data object Changelog : TensaiDestination("settings/changelog")
     data object Server : TensaiDestination("server")
 
+    /** Settings > Bench, debug builds only: a release registers no screen for it, see `benchGraph`. */
+    data object Bench : TensaiDestination("bench")
+
     data object Chat : TensaiDestination("chat/{conversationId}") {
         const val ARG_CONVERSATION_ID = "conversationId"
 

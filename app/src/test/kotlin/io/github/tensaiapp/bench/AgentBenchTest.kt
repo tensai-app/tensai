@@ -556,12 +556,80 @@ class AgentBenchTest {
     }
 
     @Test
+    fun theResultKeepsTheTurnsReplyAndReasoningForTheBenchScreen() = runBlocking {
+        val gen = ScriptedGenerator(
+            reply("", reasoning = "the user wants the time", calls = listOf(ToolCall("c1", "datetime", "{}"))),
+            reply("It is ten.", reasoning = "the tool said 10:00"),
+            reply("Paris"),
+        )
+        val bench = runner(FakeTool("datetime"), generator = gen)
+
+        val called = bench.run(prompt("time", "datetime"))
+        val plain = bench.run(prompt("capital"))
+
+        assertEquals("It is ten.", called.reply)
+        assertEquals("the user wants the time\n\nthe tool said 10:00", called.reasoning)
+        assertEquals("Paris", plain.reply)
+        assertNull(plain.reasoning)
+        // Never in the log: the screen keeps it, logcat does not.
+        assertFalse(called.toLogLine().contains("It is ten."))
+    }
+
+    @Test
+    fun eachPromptRunsItsRepetitionsInARowAndOnlyTheFirstTrialIsCold() = runBlocking {
+        val gen = ScriptedGenerator(*Array(6) { reply("r$it") })
+        val lines = mutableListOf<String>()
+        val started = mutableListOf<Pair<String, Int>>()
+
+        val results = runBench(
+            listOf(prompt("one"), prompt("two")),
+            runner(generator = gen),
+            firstCold = true,
+            beforeEach = { null },
+            log = { lines += it },
+            repetitions = 3,
+            onStart = { p, rep -> started += p.id to rep },
+        )
+
+        assertEquals(listOf("one", "one", "one", "two", "two", "two"), results.map { it.prompt.id })
+        assertEquals(listOf(1, 2, 3, 1, 2, 3), results.map { it.repetition })
+        assertEquals(listOf(true, false, false, false, false, false), results.map { it.prefixCold })
+        assertEquals(results.map { it.prompt.id to it.repetition }, started)
+        assertFalse(lines[0].contains("\"rep\""))
+        assertTrue(lines[1].contains("\"rep\":2"))
+        assertEquals(6, BenchSummary.of(results).counts.values.sum())
+    }
+
+    @Test
+    fun greedyIsTemperatureZeroOverTheChatsSamplingAndOffKeepsItWhole() {
+        val chat = SamplingConfig(temperature = 0.8f, topK = 40, maxTokens = 2048)
+
+        val greedy = BenchTrigger(thinking = true, toolGrammar = false, greedy = true).sampling(chat)
+        val asToday = BenchTrigger(thinking = true).sampling(chat)
+
+        assertEquals(chat.copy(temperature = 0f, constrainToolCalls = false), greedy)
+        assertEquals(chat, asToday)
+        assertTrue(BenchSummary.of(emptyList()).toLogLine(BenchTrigger(true, greedy = true)).contains("\"greedy\":true"))
+        assertFalse(BenchSummary.of(emptyList()).toLogLine(BenchTrigger(true)).contains("greedy"))
+    }
+
+    @Test
+    fun repetitionsAreOneToFive() {
+        assertEquals(1, BenchTrigger(thinking = true).repetitions)
+        assertEquals(5, BenchTrigger(thinking = true, repetitions = 5).repetitions)
+        assertTrue(runCatching { BenchTrigger(thinking = true, repetitions = 0) }.isFailure)
+        assertTrue(runCatching { BenchTrigger(thinking = true, repetitions = 6) }.isFailure)
+    }
+
+    @Test
     fun onlyADebugBuildHonoursTheTrigger() {
         assertNull(benchTrigger(debug = false, bench = "agent", thinking = false, defaultThinking = true))
         assertNull(benchTrigger(debug = true, bench = null, thinking = null, defaultThinking = true))
         assertNull(benchTrigger(debug = true, bench = "other", thinking = null, defaultThinking = true))
         assertEquals(BenchTrigger(thinking = true), benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true))
         assertEquals(BenchTrigger(thinking = false), benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true))
+        assertEquals(BenchTrigger(thinking = true, greedy = true), benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, greedy = true))
+        assertFalse(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, greedy = false)!!.greedy)
     }
 
     @Test

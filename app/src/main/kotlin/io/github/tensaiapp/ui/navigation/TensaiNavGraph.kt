@@ -15,6 +15,7 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import io.github.tensaiapp.ui.screens.ServerScreen
+import io.github.tensaiapp.ui.screens.bench.benchGraph
 import io.github.tensaiapp.ui.screens.chat.ChatScreen
 import io.github.tensaiapp.ui.screens.chats.ChatsScreen
 import io.github.tensaiapp.ui.screens.chat.ContextRingState
@@ -287,6 +288,7 @@ fun TensaiNavGraph(
                 onNavigateToDevice = { navController.navigate(TensaiDestination.Device.route) },
                 onNavigateToMemory = { navController.navigate(TensaiDestination.Memory.route) },
                 onNavigateToTools = { navController.navigate(TensaiDestination.Tools.route) },
+                onNavigateToBench = { navController.navigate(TensaiDestination.Bench.route) { launchSingleTop = true } },
                 openTokenSheet = openTokenSheet,
                 onTokenSheetOpened = { openTokenSheet = false },
                 openInstructionsSheet = openInstructionsSheet,
@@ -331,5 +333,8 @@ fun TensaiNavGraph(
         composable(TensaiDestination.Server.route) {
             ServerScreen()
         }
+
+        // Debug builds only: the release source set's benchGraph adds nothing.
+        benchGraph(navController)
     }
 }
