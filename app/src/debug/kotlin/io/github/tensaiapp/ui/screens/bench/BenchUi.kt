@@ -422,6 +422,14 @@ internal suspend fun copyJson(context: Context, encode: () -> String) {
     Toast.makeText(context, if (copied) R.string.bench_copied else R.string.bench_copy_too_large, Toast.LENGTH_SHORT).show()
 }
 
+/** Puts what [write] returns on the clipboard, written off the main thread: a decode run as text (TEN-190). */
+internal suspend fun copyText(context: Context, write: () -> String) {
+    val text = withContext(Dispatchers.Default) { write() }
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("tensai bench", text))
+    Toast.makeText(context, R.string.decode_copied, Toast.LENGTH_SHORT).show()
+}
+
 /**
  * Opens the share sheet on what [encode] writes, as a file, `cache/bench-share/[name].json` through the debug build's
  * FileProvider: a run can be far over what an intent extra carries. Encoded and written off the main thread. Files of

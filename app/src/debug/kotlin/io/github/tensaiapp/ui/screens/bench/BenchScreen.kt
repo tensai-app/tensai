@@ -3,12 +3,14 @@ package io.github.tensaiapp.ui.screens.bench
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckBox
 import androidx.compose.material.icons.rounded.CheckBoxOutlineBlank
@@ -31,6 +34,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.SmartToy
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -73,13 +77,14 @@ import androidx.compose.ui.unit.sp
 import io.github.tensaiapp.R
 import io.github.tensaiapp.bench.AgentBench
 import io.github.tensaiapp.bench.AgentBenchProgress
+import io.github.tensaiapp.bench.BenchGate
 import io.github.tensaiapp.bench.BenchRun
 import io.github.tensaiapp.bench.BenchRunJson
 import io.github.tensaiapp.bench.BenchRunStore
 import io.github.tensaiapp.bench.BenchStatus
 import io.github.tensaiapp.bench.BenchTrigger
 import io.github.tensaiapp.bench.BenchVerdict
-import io.github.tensaiapp.bench.DecodeCurveBench
+import io.github.tensaiapp.bench.DecodeBench
 import io.github.tensaiapp.bench.backendName
 import io.github.tensaiapp.bench.RunTotals
 import io.github.tensaiapp.runtime.RuntimeGraph
@@ -90,6 +95,8 @@ import io.github.tensaiapp.ui.components.TensaiButtonVariant
 import io.github.tensaiapp.ui.components.TensaiProgressBar
 import io.github.tensaiapp.ui.components.rememberReducedMotion
 import io.github.tensaiapp.ui.screens.chat.DefaultEnableThinking
+import io.github.tensaiapp.ui.screens.chat.ModelPickerSheet
+import io.github.tensaiapp.ui.screens.chat.pickerBusy
 import io.github.tensaiapp.ui.screens.chat.SwitchVisual
 import io.github.tensaiapp.ui.screens.settings.RowDivider
 import io.github.tensaiapp.ui.theme.TensaiMono
@@ -101,75 +108,159 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The tabs of the bench screen. Decode comes with TEN-190: until then the row holds Agent alone. */
-internal enum class BenchTab { Agent }
+/** The tabs of the bench screen: the agent bench (TEN-187) and the decode curve (TEN-190). */
+internal enum class BenchTab { Agent, Decode }
 
 /**
- * Settings > Bench (TEN-187), debug builds only: the shared top bar and tab row, then the Agent tab. A new run card
- * (the [BenchTrigger] toggles and repetitions) or, while [AgentBench] runs, its progress; under it the saved runs of
- * [BenchRunStore], with selection for a comparison. The screen stays on while a run goes.
+ * Settings > Bench (TEN-187), debug builds only: the shared top bar and tab row, then the Agent tab or the Decode tab
+ * ([DecodeTab]). The Agent tab: a new run card (the [BenchTrigger] toggles and repetitions) or, while [AgentBench]
+ * runs, its progress; under it the saved runs of [BenchRunStore], with selection for a comparison. The screen stays on
+ * while a run of either goes.
+ *
+ * Both tabs' model rows open the chat's model picker ([ModelPickerSheet]), so a model is loaded or switched without
+ * leaving the bench; not while a bench or a reload runs.
  *
  * @param onCompare opens the given runs side by side, one run for its own detail.
- * @param onOpenModels where "Open models" goes when no model is loaded.
+ * @param onOpenDecodeRun opens a decode run's result, [onCompareDecode] two decode runs side by side.
+ * @param onLoadModel loads a model the picker picked: the load screen, which comes back here.
+ * @param onManage / [onDiscover] / [onImport] the picker's shortcuts to the Models screen.
  */
 @Composable
-internal fun BenchScreen(onBack: () -> Unit, onCompare: (List<String>) -> Unit, onOpenModels: () -> Unit) {
+internal fun BenchScreen(
+    onBack: () -> Unit,
+    onCompare: (List<String>) -> Unit,
+    onOpenDecodeRun: (String) -> Unit,
+    onCompareDecode: (List<String>) -> Unit,
+    onLoadModel: (String) -> Unit,
+    onManage: () -> Unit,
+    onDiscover: () -> Unit,
+    onImport: () -> Unit,
+) {
+    var tab by rememberSaveable { mutableStateOf(BenchTab.Agent) }
+    val agentRunning = AgentBench.progress.collectAsState().value != null
+    val decodeRunning = DecodeBench.progress.collectAsState().value != null
+    // The gate is taken before a run's progress shows: it, not the progress, says the engine is spoken for.
+    val gateBusy by BenchGate.busy.collectAsState()
+    KeepScreenOn(agentRunning || decodeRunning)
+    var pickerOpen by rememberSaveable { mutableStateOf(false) }
+    val onPickModel = if (gateBusy) null else { { pickerOpen = true } }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        BenchTopBar(title = stringResource(R.string.bench_screen_title), onBack = onBack)
+        BenchTabRow(tab) { tab = it }
+        Box(modifier = Modifier.weight(1f)) {
+            when (tab) {
+                BenchTab.Agent -> AgentTab(onCompare, onPickModel)
+                BenchTab.Decode -> DecodeTab(onOpenDecodeRun, onCompareDecode, onPickModel)
+            }
+        }
+    }
+
+    if (pickerOpen) {
+        val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
+        fun closeThen(action: () -> Unit) {
+            pickerOpen = false
+            action()
+        }
+        ModelPickerSheet(
+            loadedModelId = queueState.residentModel?.modelId,
+            busy = pickerBusy(queueState),
+            onPick = { id -> closeThen { onLoadModel(id) } },
+            onManage = { closeThen(onManage) },
+            onDiscover = { closeThen(onDiscover) },
+            onImport = { closeThen(onImport) },
+            onDismiss = { pickerOpen = false },
+        )
+    }
+}
+
+/**
+ * The model row of both tabs' first card: the memory icon, [content] (the model, or "No model loaded" and "Choose a
+ * model"), a chevron. Opens the picker on a tap; [onPick] `null` (a bench running) leaves it a plain row.
+ */
+@Composable
+internal fun ModelRow(onPick: (() -> Unit)?, content: @Composable RowScope.() -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = onPick != null, role = Role.Button, onClick = { onPick?.invoke() })
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Icon(Icons.Rounded.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+        content()
+        if (onPick != null) {
+            Icon(
+                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.bench_choose_model),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+/** Under "No model loaded": what a tap on the row does, in primary. */
+@Composable
+internal fun ChooseModelHint() {
+    Text(stringResource(R.string.bench_choose_model), fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+}
+
+/** The Agent tab: the new run card or the run going on, then the saved runs. */
+@Composable
+private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit)?) {
     val context = LocalContext.current
     val store = remember { BenchRunStore.of(context) }
     val runs by store.runs.collectAsState()
     val progress by AgentBench.progress.collectAsState()
     val status by AgentBench.status.collectAsState()
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { store.refresh() } }
-    KeepScreenOn(progress != null)
 
     var selected by rememberSaveable { mutableStateOf(listOf<String>()) }
     // Only runs still there count: one deleted is no longer selected.
     val liveSelected = remember(selected, runs) { selected.filter { id -> runs.orEmpty().any { it.id == id } } }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        BenchTopBar(title = stringResource(R.string.bench_screen_title), onBack = onBack)
-        BenchTabRow(BenchTab.Agent)
-        Box(modifier = Modifier.weight(1f)) {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                item(key = "new") {
-                    Eyebrow(stringResource(R.string.bench_eyebrow_agent))
-                    val current = progress
-                    if (current != null) RunningCard(current) else NewRunCard(status, onOpenModels)
-                }
-                item(key = "saved") {
-                    Eyebrow(stringResource(R.string.bench_eyebrow_saved), trailing = runs?.size?.toString())
-                }
-                val list = runs
-                if (list != null && list.isEmpty()) {
-                    item(key = "empty") { EmptyRuns() }
-                }
-                items(list.orEmpty(), key = { it.id }) { run ->
-                    SavedRunCard(
-                        run = run,
-                        selected = run.id in liveSelected,
-                        onToggle = { selected = if (run.id in liveSelected) liveSelected - run.id else liveSelected + run.id },
-                        onOpen = { onCompare(listOf(run.id)) },
-                        onDelete = { store.delete(run.id) },
-                    )
-                }
-                item(key = "foot") { Spacer(Modifier.heightIn(min = if (liveSelected.isEmpty()) 24.dp else 96.dp)) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            item(key = "new") {
+                Eyebrow(stringResource(R.string.bench_eyebrow_agent))
+                val current = progress
+                if (current != null) RunningCard(current) else NewRunCard(status, onPickModel)
             }
-            if (liveSelected.isNotEmpty()) {
-                SelectionBar(
-                    count = liveSelected.size,
-                    onClear = { selected = emptyList() },
-                    // Oldest first: (a) is the earlier run, what the later ones are compared against.
-                    onCompare = { onCompare(runs.orEmpty().filter { it.id in liveSelected }.sortedBy { it.startedAtMs }.map { it.id }) },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+            item(key = "saved") {
+                Eyebrow(stringResource(R.string.bench_eyebrow_saved), trailing = runs?.size?.toString())
+            }
+            val list = runs
+            if (list != null && list.isEmpty()) {
+                item(key = "empty") { EmptyRuns() }
+            }
+            items(list.orEmpty(), key = { it.id }) { run ->
+                SavedRunCard(
+                    run = run,
+                    selected = run.id in liveSelected,
+                    onToggle = { selected = if (run.id in liveSelected) liveSelected - run.id else liveSelected + run.id },
+                    onOpen = { onCompare(listOf(run.id)) },
+                    onDelete = { store.delete(run.id) },
                 )
             }
+            item(key = "foot") { Spacer(Modifier.heightIn(min = if (liveSelected.isEmpty()) 24.dp else 96.dp)) }
+        }
+        if (liveSelected.isNotEmpty()) {
+            SelectionBar(
+                count = liveSelected.size,
+                onClear = { selected = emptyList() },
+                // Oldest first: (a) is the earlier run, what the later ones are compared against.
+                onCompare = { onCompare(runs.orEmpty().filter { it.id in liveSelected }.sortedBy { it.startedAtMs }.map { it.id }) },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }
 
-/** The tab row under the shared top bar. One tab today: drawn as the row TEN-190 adds Decode to. */
+/** The tab row under the shared top bar. */
 @Composable
-private fun BenchTabRow(selected: BenchTab) {
+private fun BenchTabRow(selected: BenchTab, onSelect: (BenchTab) -> Unit) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -177,6 +268,7 @@ private fun BenchTabRow(selected: BenchTab) {
         BenchTab.entries.forEach { tab ->
             val on = tab == selected
             Surface(
+                onClick = { onSelect(tab) },
                 shape = CircleShape,
                 color = if (on) MaterialTheme.tensaiTints.primary16 else MaterialTheme.colorScheme.background,
                 contentColor = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -186,8 +278,12 @@ private fun BenchTabRow(selected: BenchTab) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.heightIn(min = 34.dp).padding(horizontal = 14.dp, vertical = 7.dp),
                 ) {
-                    Icon(Icons.Rounded.SmartToy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Text(text = stringResource(R.string.bench_tab_agent), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(if (tab == BenchTab.Agent) Icons.Rounded.SmartToy else Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text(
+                        text = stringResource(if (tab == BenchTab.Agent) R.string.bench_tab_agent else R.string.bench_tab_decode),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }
@@ -222,15 +318,15 @@ private object LastRunSettings {
 
 /** The run settings, the repetitions and Run. Off with a reason when no model is loaded; the last failure under it. */
 @Composable
-private fun NewRunCard(status: BenchStatus, onOpenModels: () -> Unit) {
+private fun NewRunCard(status: BenchStatus, onPickModel: (() -> Unit)?) {
     val context = LocalContext.current
     val reducedMotion = rememberReducedMotion()
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
     val models by RuntimeGraph.modelRepository.models.collectAsState(initial = emptyList())
     val resident = queueState.residentModel
     val entity = resident?.let { info -> models.firstOrNull { it.id == info.modelId } }
-    // One bench at a time (BenchGate): the decode curve of This device holds the engine too.
-    val curve by DecodeCurveBench.status.collectAsState()
+    // One bench at a time: whatever holds the gate (the decode curve, its reload, this bench) holds the engine.
+    val gateBusy by BenchGate.busy.collectAsState()
     val promptCount by produceState<Int?>(null) {
         value = withContext(Dispatchers.IO) { runCatching { AgentBench.prompts(context).size }.getOrNull() }
     }
@@ -243,16 +339,12 @@ private fun NewRunCard(status: BenchStatus, onOpenModels: () -> Unit) {
     var repetitions by LastRunSettings.repetitions
 
     BenchCard {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-        ) {
-            Icon(Icons.Rounded.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+        ModelRow(onPickModel) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.bench_new_run), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 if (resident == null) {
                     Text(stringResource(R.string.bench_no_model), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.error)
+                    if (onPickModel != null) ChooseModelHint()
                 } else {
                     Text(
                         text = listOfNotNull(listOfNotNull(entity?.shownName ?: resident.name, entity?.quantLabel?.takeIf { it.isNotBlank() }).joinToString(" "), backendName(resident.backend)).joinToString(" · "),
@@ -298,18 +390,10 @@ private fun NewRunCard(status: BenchStatus, onOpenModels: () -> Unit) {
                 text = calls?.let { pluralStringResource(R.plurals.bench_run_calls, it, it) } ?: stringResource(R.string.bench_run_plain),
                 onClick = { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy), context) },
                 icon = Icons.Rounded.PlayArrow,
-                enabled = resident != null && promptCount != null && status !is BenchStatus.Running && curve !is BenchStatus.Running,
+                enabled = resident != null && promptCount != null && !gateBusy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (resident == null) {
-                Text(stringResource(R.string.bench_run_off), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TensaiButton(
-                    text = stringResource(R.string.bench_open_models),
-                    onClick = onOpenModels,
-                    variant = TensaiButtonVariant.Text,
-                    size = TensaiButtonSize.Sm,
-                )
-            } else if (status is BenchStatus.Failed) {
+            if (resident != null && status is BenchStatus.Failed) {
                 Text(stringResource(R.string.bench_failed, status.message), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.error)
             }
         }

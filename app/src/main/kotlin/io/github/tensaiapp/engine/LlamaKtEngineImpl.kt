@@ -241,6 +241,8 @@ class LlamaKtEngineImpl(
         } catch (e: Exception) {
             throw ModelLoadException("Unexpected error while loading model at ${config.path}: ${e.message}", e)
         }
+        // Debug builds: the knobs describe the resident model from here, not before a load that could fail.
+        CpuLoadOverride.loaded()
 
         val backend = try {
             llamaEngine.activeBackend()
@@ -616,6 +618,9 @@ class LlamaKtEngineImpl(
                                     ),
                                 )
                             }
+                            // Same rule as the chat result: reset by the engine's next call.
+                            val timings = runCatching { llamaEngine.lastPerf() }.getOrNull()
+                                ?.let { DecodeTimings(it.promptTokens, it.promptMs, it.evalTokens, it.evalMs) }
                             val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1)
                             val ttftMs = if (firstTokenAtMs > 0L) firstTokenAtMs - startMs else 0L
                             val tokPerSec = generationTokPerSec(tokensPredicted, elapsedMs, ttftMs)
@@ -633,7 +638,7 @@ class LlamaKtEngineImpl(
                             // its collector no terminal event), and it is why this is `trySend` and
                             // not `send`. Not dead code: it is the one place a completed decode
                             // reports.
-                            trySend(DecodeEvent.Done(DecodeStats(tokensPredicted, tokPerSec, ttftMs, stopReason)))
+                            trySend(DecodeEvent.Done(DecodeStats(tokensPredicted, tokPerSec, ttftMs, stopReason, timings)))
                         }
                     }
                 } catch (e: CancellationException) {

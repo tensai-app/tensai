@@ -13,20 +13,12 @@
     <!-- %1$s is the reason, in English, from the bench log. -->
     <string name="bench_failed">Not run: %1$s</string>
     <string name="bench_stopped_early">Stopped before the last prompt, see logcat tensai.bench</string>
-    <string name="bench_curve_title">Decode curve (debug)</string>
-    <string name="bench_knobs_hint">The knobs apply to the next CPU load: unload the model and load it again.</string>
     <string name="bench_knob_threads">Decode threads</string>
     <string name="bench_knob_flash_attn">Flash attention</string>
-    <string name="bench_knob_fa_forced">On: a q8_0 KV cache needs it</string>
     <string name="bench_knob_kv">KV cache</string>
     <string name="bench_knob_auto">auto</string>
     <string name="bench_knob_on">on</string>
     <string name="bench_knob_off">off</string>
-    <string name="bench_curve_run">Run decode curve</string>
-    <string name="bench_curve_hint">Decodes 128 tokens after 0 to 4096 tokens of filler, no tools, thinking off. Chats are left alone.</string>
-    <!-- %1$d points done out of %2$d. -->
-    <string name="bench_curve_running">Running, %1$d of %2$d points</string>
-    <string name="bench_curve_stopped_early">Stopped before the last point, see logcat tensai.bench</string>
     <!-- Settings > Bench (TEN-187): the bench screen, Compare and the prompt detail. -->
     <string name="bench_settings_section">Debug</string>
     <string name="bench_settings_sub">Agent tool calls and decode speed</string>
@@ -56,9 +48,8 @@
         <item quantity="one">Run · %d call</item>
         <item quantity="other">Run · %d calls</item>
     </plurals>
-    <string name="bench_run_off">Run is off: no model loaded. Load a model, then come back.</string>
+    <string name="bench_choose_model">Choose a model</string>
     <string name="bench_run_plain">Run</string>
-    <string name="bench_open_models">Open models</string>
     <string name="bench_running_eyebrow">Running</string>
     <plurals name="bench_of_prompts">
         <item quantity="one">of %d prompt</item>
@@ -151,4 +142,92 @@
     <string name="bench_verdict_wrong_tool">Wrong tool</string>
     <string name="bench_verdict_error">Error</string>
     <string name="bench_verdict_unavailable">Unavailable</string>
+    <!-- Settings > Bench > Decode (TEN-190): the decode curve, a run's result and the comparison of two. -->
+    <string name="bench_tab_decode">Decode</string>
+    <string name="decode_eyebrow_loaded">Loaded model</string>
+    <string name="decode_eyebrow_settings">Settings</string>
+    <!-- %1$s is the backend of the load, Vulkan. -->
+    <string name="decode_gpu_note">These settings apply to CPU loads; the loaded model runs on %1$s.</string>
+    <string name="decode_fa_locked">Locked to on: a q8_0 KV cache needs flash attention.</string>
+    <string name="decode_knob_points">Context points</string>
+    <string name="decode_knob_points_hint">tokens already in context</string>
+    <string name="decode_knob_tokens">Tokens per point</string>
+    <!-- %1$s is the point, 4k; %2$d the context it needs; %3$d the context the model was loaded with. -->
+    <string name="decode_point_needs">%1$s needs n_ctx %2$d · loaded n_ctx %3$d</string>
+    <string name="decode_reload_title">Settings apply on reload</string>
+    <string name="decode_reload">Reload model with these settings</string>
+    <string name="decode_reloading">Reloading the model…</string>
+    <string name="decode_reload_failed">Reload failed: %1$s.</string>
+    <!-- After "Reload failed: ". -->
+    <string name="decode_reload_oom">not enough memory</string>
+    <string name="decode_reload_wont_fit">the model no longer fits this phone</string>
+    <string name="decode_reload_file_missing">the model file is gone</string>
+    <string name="decode_reload_not_found">the model was removed</string>
+    <string name="decode_reload_unreadable">the file could not be read</string>
+    <string name="decode_reload_unsupported">this build cannot run the model</string>
+    <string name="decode_reload_busy">the engine was busy, try again</string>
+    <string name="decode_reload_unknown">an unexpected error, see logcat</string>
+    <string name="decode_reload_no_model">No model is loaded.</string>
+    <!-- %1$d is the estimate in minutes. -->
+    <string name="decode_run">Run decode curve · about %1$d min</string>
+    <string name="decode_run_loaded">Run with loaded settings · about %1$d min</string>
+    <!-- %1$d points times %2$d tokens. -->
+    <string name="decode_run_points">%1$d × %2$d tokens</string>
+    <string name="decode_waiting_title">Waiting for the prompt cache to finish</string>
+    <string name="decode_waiting_body">A background task runs once right after a reload. The curve starts on its own when it\'s done.</string>
+    <!-- %1$d minutes. -->
+    <string name="decode_left">about %1$d min left</string>
+    <!-- %1$d tokens. -->
+    <string name="decode_warmup">warm-up · %1$d tokens</string>
+    <!-- %1$s is the point, 2k. -->
+    <string name="decode_prefill">%1$s · prefill</string>
+    <!-- %1$s is the point, %2$d tokens decoded of %3$d. -->
+    <string name="decode_decoding">%1$s · decoding %2$d / %3$d</string>
+    <string name="decode_then">Then decodes %1$d tokens.</string>
+    <!-- %1$s is seconds, 67.6. -->
+    <string name="decode_prefill_done">Prefill done in %1$s s.</string>
+    <string name="decode_tps">%1$s tok/s</string>
+    <string name="decode_cancel">Cancel</string>
+    <string name="decode_cancel_note">Finished points are kept as a partial run.</string>
+    <string name="decode_eyebrow_points">Points</string>
+    <!-- %1$d points measured of %2$d. -->
+    <string name="decode_partial">partial %1$d/%2$d</string>
+    <!-- %1$s is the context span, 0 → 2k. -->
+    <string name="decode_headline_sub">tok/s · %1$s</string>
+    <string name="decode_empty_body">Finished and cancelled runs are saved here. Select 2 to compare.</string>
+    <!-- %1$d runs selected, at most 2. -->
+    <string name="decode_selected">%1$d of 2 selected</string>
+    <string name="decode_run_default_name">Decode run</string>
+    <string name="decode_auto_saved">Auto-saved</string>
+    <string name="decode_rename">Rename</string>
+    <string name="decode_rename_title">Rename run</string>
+    <string name="decode_rename_body">Shown in the saved runs and in the copied text.</string>
+    <string name="decode_rename_cancel">Cancel</string>
+    <string name="decode_rename_save">Save</string>
+    <!-- %1$s is the change, 49%; %2$s and %3$s the context lengths, 0 and 2k. -->
+    <string name="decode_takeaway_drop">Decode drops %1$s from %2$s to %3$s context.</string>
+    <string name="decode_takeaway_rise">Decode rises %1$s from %2$s to %3$s context.</string>
+    <!-- %1$s and %2$s are the context lengths. -->
+    <string name="decode_takeaway_flat">Decode holds steady from %1$s to %2$s context.</string>
+    <string name="decode_takeaway_one">One point measured: no curve yet.</string>
+    <string name="decode_chart_decode">Decode</string>
+    <string name="decode_chart_prefill">Prefill</string>
+    <string name="decode_chart_x">context tokens →</string>
+    <string name="decode_copy_text">Copy as text</string>
+    <string name="decode_copied">Copied</string>
+    <string name="decode_compare_title">Compare runs</string>
+    <string name="decode_same_model">same model</string>
+    <!-- %1$s is what changed, fa off; %2$s and %3$s the decode and prefill changes; %4$s the context, 2k. -->
+    <string name="decode_compare_takeaway">%1$s: decode %2$s, prefill %3$s at %4$s.</string>
+    <string name="decode_compare_takeaway_decode">%1$s: decode %2$s at %3$s.</string>
+    <!-- %1$s lists what the runs share: model, threads and KV cache. -->
+    <string name="decode_same">same %1$s</string>
+    <string name="decode_same_part_model">model</string>
+    <string name="decode_same_part_threads">threads</string>
+    <string name="decode_same_part_fa">flash attention</string>
+    <string name="decode_same_part_kv">KV cache</string>
+    <string name="decode_and">" and "</string>
+    <string name="decode_eyebrow_decode_tps">Decode tok/s</string>
+    <string name="decode_eyebrow_prefill_tps">Prefill tok/s</string>
+    <string name="decode_noise_note" formatted="false">Within ±2% counts as noise. Higher is faster for both.</string>
 </resources>

@@ -353,7 +353,7 @@ class BenchRunTest {
             val store = BenchRunStore(dir) { warnings += it }
             store.save(run(1, trial("a", BenchVerdict.Correct)))
             store.save(run(3, trial("a", BenchVerdict.Missing)))
-            File(dir, "broken.json").writeText("{not json")
+            File(dir, "run-2.json").writeText("{not json")
 
             val reread = BenchRunStore(dir) { warnings += it }.apply { refresh() }
 
@@ -361,7 +361,7 @@ class BenchRunTest {
             assertEquals(1, warnings.size)
             reread.delete("run-1")
             assertEquals(listOf("run-3"), reread.runs.value!!.map { it.id })
-            assertEquals(setOf("run-3.json", "broken.json"), dir.list()!!.toSet())
+            assertEquals(setOf("run-3.json", "run-2.json"), dir.list()!!.toSet())
         } finally {
             dir.deleteRecursively()
         }

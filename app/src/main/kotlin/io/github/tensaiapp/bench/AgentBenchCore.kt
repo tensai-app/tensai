@@ -66,13 +66,16 @@ data class BenchTrigger(
  * launch intent, the panel): they share the engine and the log tag. A run enters before it launches and leaves when it ends.
  */
 object BenchGate {
-    private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val _busy = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** Whether a run (or the decode tab's reload) holds the gate, for the screens to lock what would compete with it. */
+    val busy: kotlinx.coroutines.flow.StateFlow<Boolean> = _busy
 
     /** `false` when another run holds the gate. */
-    fun tryEnter(): Boolean = busy.compareAndSet(false, true)
+    fun tryEnter(): Boolean = _busy.compareAndSet(false, true)
 
     fun leave() {
-        busy.set(false)
+        _busy.value = false
     }
 }
 

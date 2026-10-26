@@ -972,6 +972,12 @@ class InferenceQueue(private val engine: InferenceEngine) {
     }
 
     /**
+     * Whether a [warmUp] or [warmToolPrefix] is running, for a caller that would rather wait for it than
+     * cancel it (the debug decode bench, TEN-190). A plain read, like [currentKvTokenCount].
+     */
+    fun isWarmingUp(): Boolean = activeWarmUp != null
+
+    /**
      * Runs [block] under [mutex] once no [warmUp] is running, cancelling one first and waiting for it
      * to stop. The lock is released while waiting: the warm-up's own cleanup takes it,
      * and joining under it would be a deadlock. Looping rather than "cancel, then lock" because a

@@ -429,12 +429,27 @@ data class DecodeRequest(
  * @param ttftMs time to first token, in milliseconds (prefill time, roughly).
  * @param stopReason why generation ended — see [StopReason]. Lets the UI tell a finished reply
  *   apart from one cut off at the budget, which otherwise look identical (TEN-60).
+ * @param timings the engine's own timing of the decode, `null` when it has none. Only the debug
+ *   decode bench reads it (TEN-190).
  */
 data class DecodeStats(
     val tokensGenerated: Int,
     val tokPerSec: Float,
     val ttftMs: Long,
     val stopReason: StopReason = StopReason.Complete,
+    val timings: DecodeTimings? = null,
+)
+
+/**
+ * llama.cpp's timing of one decode (`llama_perf_context`): [promptTokens] decoded as the prompt (those
+ * served from the KV cache not counted) in [promptMs], then [evalTokens] single-token decodes in
+ * [evalMs], one less than the tokens sampled. Native clocks, no Kotlin overhead in them.
+ */
+data class DecodeTimings(
+    val promptTokens: Int,
+    val promptMs: Double,
+    val evalTokens: Int,
+    val evalMs: Double,
 )
 
 /**

@@ -335,6 +335,17 @@ fun TensaiNavGraph(
         }
 
         // Debug builds only: the release source set's benchGraph adds nothing.
-        benchGraph(navController)
+        benchGraph(
+            navController,
+            // The bench's model picker, with the chat picker's shortcuts.
+            onDiscover = {
+                modelsOnDiscover = true
+                navController.navigate(TensaiDestination.Models.route)
+            },
+            onImport = {
+                modelsOnImport = true
+                navController.navigate(TensaiDestination.Models.route)
+            },
+        )
     }
 }

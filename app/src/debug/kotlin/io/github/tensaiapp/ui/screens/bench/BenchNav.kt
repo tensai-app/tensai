@@ -20,19 +20,44 @@ import io.github.tensaiapp.ui.theme.tensaiColors
 private object BenchRoutes {
     const val Compare = "bench/compare/{runs}"
     const val Prompt = "bench/prompt/{run}/{key}?prompt={prompt}"
+    const val DecodeRun = "bench/decode/{run}"
+    const val DecodeCompare = "bench/decode-compare/{runs}"
 
     fun compare(runIds: List<String>) = "bench/compare/" + runIds.joinToString(",")
 
     fun prompt(runId: String, promptId: String, key: String) = "bench/prompt/$runId/$key?prompt=${Uri.encode(promptId)}"
+
+    fun decodeRun(runId: String) = "bench/decode/$runId"
+
+    fun decodeCompare(runIds: List<String>) = "bench/decode-compare/" + runIds.joinToString(",")
 }
 
-/** Debug builds only (the release source set adds nothing): the bench screen, Compare and the prompt detail (TEN-187). */
-fun NavGraphBuilder.benchGraph(navController: NavHostController) {
+/**
+ * Debug builds only (the release source set adds nothing): the bench screen, Compare and the prompt detail (TEN-187),
+ * a decode run's result and the comparison of two (TEN-190). [onDiscover] and [onImport] open the Models screen on
+ * its Discover tab or its import, as the chat's model picker does.
+ */
+fun NavGraphBuilder.benchGraph(navController: NavHostController, onDiscover: () -> Unit, onImport: () -> Unit) {
     composable(TensaiDestination.Bench.route) {
         BenchScreen(
             onBack = { navController.popBackStack() },
             onCompare = { navController.navigate(BenchRoutes.compare(it)) { launchSingleTop = true } },
-            onOpenModels = { navController.navigate(TensaiDestination.Models.route) { launchSingleTop = true } },
+            onOpenDecodeRun = { navController.navigate(BenchRoutes.decodeRun(it)) { launchSingleTop = true } },
+            onCompareDecode = { navController.navigate(BenchRoutes.decodeCompare(it)) { launchSingleTop = true } },
+            // returnToChat: the load pops back to where it was opened from, here the bench.
+            onLoadModel = { navController.navigate(TensaiDestination.Loading.route(it, returnToChat = true)) { launchSingleTop = true } },
+            onManage = { navController.navigate(TensaiDestination.Models.route) { launchSingleTop = true } },
+            onDiscover = onDiscover,
+            onImport = onImport,
+        )
+    }
+    composable(BenchRoutes.DecodeRun) { entry ->
+        DecodeRunScreen(runId = entry.arguments?.getString("run").orEmpty(), onBack = { navController.popBackStack() })
+    }
+    composable(BenchRoutes.DecodeCompare) { entry ->
+        DecodeCompareScreen(
+            runIds = entry.arguments?.getString("runs").orEmpty().split(',').filter { it.isNotBlank() },
+            onBack = { navController.popBackStack() },
         )
     }
     composable(BenchRoutes.Compare) { entry ->

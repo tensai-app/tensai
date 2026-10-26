@@ -60,8 +60,8 @@ sealed class TensaiDestination(val route: String) {
         const val ARG_MODEL_ID = "modelId"
 
         /**
-         * Optional: the load was started from a chat that is still on the stack. Success then pops
-         * back to that conversation instead of landing on a new chat.
+         * Optional: the load was started from a chat that is still on the stack (or from the debug
+         * bench screen). Success then pops back to it instead of landing on a new chat.
          */
         const val ARG_RETURN_TO_CHAT = "returnToChat"
 

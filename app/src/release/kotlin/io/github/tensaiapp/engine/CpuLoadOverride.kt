@@ -4,4 +4,6 @@ package io.github.tensaiapp.engine
 object CpuLoadOverride {
     @Suppress("UNUSED_PARAMETER")
     fun forLoad(nGpuLayers: Int): VulkanLoadTuning? = null
+
+    fun loaded() = Unit
 }

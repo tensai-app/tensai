@@ -23,6 +23,9 @@ data class CpuLoadKnobs(
     /** What the load asks for: on with a quantized KV, whatever [flashAttn] says. */
     val effectiveFlashAttn: FlashAttnMode get() = if (kv == KvKnob.Q8_0) FlashAttnMode.On else flashAttn
 
+    /** [kv] picked: a quantized cache turns flash attention on, and leaving it later keeps it on. */
+    fun withKv(kv: KvKnob?): CpuLoadKnobs = copy(kv = kv, flashAttn = if (kv == KvKnob.Q8_0) FlashAttnMode.On else flashAttn)
+
     /**
      * The load tuning, [VulkanLoadTuning.NONE] for the default knobs. [batchThreads] is the prefill's count when
      * nothing is forced (`ThreadPolicy`'s, 0 when unknown): with an explicit `n_threads` llama.kt would otherwise use

@@ -60,4 +60,13 @@ class CpuLoadKnobsTest {
         assertNotEquals(null, faOff)
         assertNotEquals(q8, faOff)
     }
+
+    @Test
+    fun `picking q8_0 turns flash attention on and keeps it on after`() {
+        val q8 = CpuLoadKnobs(flashAttn = FlashAttnMode.Off).withKv(KvKnob.Q8_0)
+        assertEquals(FlashAttnMode.On, q8.flashAttn)
+        assertEquals(KvKnob.Q8_0, q8.kv)
+        assertEquals(CpuLoadKnobs(flashAttn = FlashAttnMode.On, kv = KvKnob.F16), q8.withKv(KvKnob.F16))
+        assertEquals(CpuLoadKnobs(flashAttn = FlashAttnMode.Off, kv = KvKnob.F16), CpuLoadKnobs(flashAttn = FlashAttnMode.Off).withKv(KvKnob.F16))
+    }
 }

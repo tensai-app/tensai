@@ -6,7 +6,7 @@ import androidx.navigation.NavHostController
 
 /** The bench screens are debug-only (see the debug source set): a release graph has none of them. */
 @Suppress("UNUSED_PARAMETER", "UnusedReceiverParameter")
-fun NavGraphBuilder.benchGraph(navController: NavHostController) = Unit
+fun NavGraphBuilder.benchGraph(navController: NavHostController, onDiscover: () -> Unit, onImport: () -> Unit) = Unit
 
 /** No DEBUG section in a release's Settings. */
 @Suppress("UNUSED_PARAMETER")

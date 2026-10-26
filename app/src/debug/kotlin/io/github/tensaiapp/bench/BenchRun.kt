@@ -206,17 +206,17 @@ data class BenchTrial(
 data class BenchCall(val name: String, val args: String)
 
 /**
- * Runs [run] (a [runBench] that adds each result to [results] as it comes and returns why it stopped early, `null`
- * for none), then hands what it graded and why it ended to [finish], under [NonCancellable], however it ended: at the
+ * Runs [run] (a [runBench], or the decode curve, that adds each result to [results] as it comes and returns why it
+ * stopped early, `null` for none), then hands what it graded and why it ended to [finish], under [NonCancellable], however it ended: at the
  * end, on Stop ([stopRequested]: [BenchRun.StoppedByUser]), or on a throw ([BenchRun.ThrewPrefix] and the message,
  * not rethrown: the trials before it are worth keeping). Any other cancellation is still finished, as "cancelled",
  * then rethrown. Returns the reason [finish] got.
  */
-internal suspend fun runThenSave(
-    results: List<BenchResult>,
+internal suspend fun <T> runThenSave(
+    results: List<T>,
     stopRequested: () -> Boolean,
     run: suspend () -> String?,
-    finish: (List<BenchResult>, String?) -> Unit,
+    finish: (List<T>, String?) -> Unit,
 ): String? {
     var reason: String?
     var cancelled: CancellationException? = null

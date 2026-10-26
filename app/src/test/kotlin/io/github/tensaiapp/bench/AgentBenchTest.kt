@@ -643,4 +643,16 @@ class AgentBenchTest {
         assertTrue(BenchGate.tryEnter())
         BenchGate.leave()
     }
+
+    @Test
+    fun `the gate's busy state follows whoever holds it`() {
+        assertFalse(BenchGate.busy.value)
+        assertTrue(BenchGate.tryEnter())
+        try {
+            assertTrue("the screens lock what competes for the engine", BenchGate.busy.value)
+        } finally {
+            BenchGate.leave()
+        }
+        assertFalse(BenchGate.busy.value)
+    }
 }
