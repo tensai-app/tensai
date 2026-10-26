@@ -259,6 +259,8 @@
     <string name="chats_long_click_label">Sélectionner</string>
     <string name="chats_state_selected">Sélectionnée</string>
     <string name="chats_state_not_selected">Non sélectionnée</string>
+    <string name="chats_deleted">Discussion supprimée</string>
+    <string name="chats_undo">Annuler</string>
     <string name="top_bar_open_menu">Ouvrir le menu</string>
 
     <!-- Chat input pill. -->

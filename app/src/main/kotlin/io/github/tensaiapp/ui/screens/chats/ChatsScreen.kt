@@ -1,5 +1,6 @@
 package io.github.tensaiapp.ui.screens.chats
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -9,6 +10,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,21 +31,27 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,13 +61,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -68,9 +84,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import io.github.tensaiapp.R
 import io.github.tensaiapp.data.chat.ChatRepository
 import io.github.tensaiapp.data.chat.ConversationEntity
@@ -80,6 +99,7 @@ import io.github.tensaiapp.runtime.ActiveSessionTracker
 import io.github.tensaiapp.runtime.ChatTurns
 import io.github.tensaiapp.runtime.InferenceQueue
 import io.github.tensaiapp.runtime.RuntimeGraph
+import io.github.tensaiapp.ui.components.SwipeToDelete
 import io.github.tensaiapp.ui.components.TensaiButton
 import io.github.tensaiapp.ui.components.TensaiButtonVariant
 import io.github.tensaiapp.ui.components.TensaiDialog
@@ -95,9 +115,12 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 
+private const val TAG = "tensai.chats"
+
 /**
  * The Chats page (TEN-165): every conversation, grouped by date, searchable, with a multi-select
- * mode to delete several at once. Reached from the drawer's "Chats" and "All chats" rows.
+ * mode to delete several at once and a swipe to delete one, with undo (TEN-193). Reached from the
+ * drawer's "Chats" and "All chats" rows.
  *
  * Draws its own top bar: the normal one (back, title, "New chat") turns into the selection one in
  * place, which the shell's static detail chrome cannot do. [TensaiShell] gives this route no chrome.
@@ -125,8 +148,37 @@ fun ChatsScreen(
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var confirmingDelete by remember { mutableStateOf(false) }
 
+    val scope = RuntimeGraph.applicationScope
+    val haptics = LocalHapticFeedback.current
+
+    // Swipe delete (TEN-193): the row goes at once, the delete itself waits for the undo bar's
+    // window. Application scope for the delete, as for the selection one.
+    var snackbarHeight by remember { mutableIntStateOf(0) }
+    val pageScope = rememberCoroutineScope()
+    val deletes = remember {
+        PendingChatDeletes(pageScope) { id ->
+            Log.i(TAG, "swipe delete: commit")
+            scope.launch { deleteChats(listOf(id), chatRepository, sessionRepository) }
+        }
+    }
+    // Leaving the app does not wait for the timeout.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) deletes.flush() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val deletedMessage = stringResource(R.string.chats_deleted)
+    val undoLabel = stringResource(R.string.chats_undo)
+    // About 5 s, longer when the accessibility settings ask for it (what SnackbarHost does for its
+    // own durations).
+    val undoTimeout = LocalAccessibilityManager.current
+        ?.calculateRecommendedTimeoutMillis(5_000L, containsIcons = false, containsText = true, containsControls = true)
+        ?: 5_000L
+
     val untitledLabel = stringResource(R.string.drawer_new_chat)
-    val all = conversations
+    val hidden = deletes.hidden
+    val all = remember(conversations, hidden) { conversations?.filterNot { it.id in hidden } }
     val visible = remember(all, query, untitledLabel) { all?.let { filterChats(it, query, untitledLabel) }.orEmpty() }
     val visibleIds = remember(visible) { visible.map { it.id } }
 
@@ -144,98 +196,123 @@ fun ChatsScreen(
 
     BackHandler(enabled = selecting) { exitSelection() }
 
-    val scope = RuntimeGraph.applicationScope
-    val haptics = LocalHapticFeedback.current
-
-    Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
-                Text(
-                    text = if (selecting) {
-                        pluralStringResource(R.plurals.chats_selected_count, liveSelected.size, liveSelected.size)
-                    } else {
-                        stringResource(R.string.nav_chats)
-                    },
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            navigationIcon = {
-                if (selecting) {
-                    IconButton(onClick = ::exitSelection) {
-                        Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.chats_exit_selection))
-                    }
-                } else {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
-            },
-            actions = {
-                if (selecting) {
-                    val everySelected = allSelected(liveSelected, visibleIds)
-                    TextButton(onClick = { selected = toggleSelectAll(liveSelected, visibleIds) }) {
-                        Text(
-                            text = stringResource(if (everySelected) R.string.chats_select_none else R.string.chats_select_all),
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    IconButton(onClick = { if (liveSelected.isNotEmpty()) confirmingDelete = true }) {
-                        Icon(
-                            Icons.Rounded.Delete,
-                            contentDescription = stringResource(R.string.chats_delete),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else {
-                    IconButton(onClick = onNewChat) {
-                        Icon(painterResource(R.drawable.ic_edit_square), contentDescription = stringResource(R.string.drawer_new_chat))
-                    }
-                }
-            },
-            // The shell's Scaffold already pads for the status bar.
-            windowInsets = WindowInsets(0),
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-
-        when {
-            all == null -> Unit // initial Room query hasn't emitted yet.
-            all.isEmpty() -> EmptyChats(onNewChat = onNewChat)
-            else -> {
-                SearchField(query = query, onQueryChange = { query = it })
-                if (visible.isEmpty()) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopAppBar(
+                title = {
                     Text(
-                        text = stringResource(R.string.chats_no_match, query.trim()),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, top = 64.dp, end = 16.dp),
-                    )
-                } else {
-                    val now = remember(visible) { Instant.now() }
-                    val zone = remember { ZoneId.systemDefault() }
-                    ChatList(
-                        sections = remember(visible, now) { groupChats(visible, now, zone) },
-                        now = now,
-                        zone = zone,
-                        modelNames = modelNames,
-                        selecting = selecting,
-                        selected = liveSelected,
-                        untitledLabel = untitledLabel,
-                        onClick = { id ->
-                            if (selecting) selected = toggleSelected(liveSelected, id) else onOpenConversation(id)
+                        text = if (selecting) {
+                            pluralStringResource(R.plurals.chats_selected_count, liveSelected.size, liveSelected.size)
+                        } else {
+                            stringResource(R.string.nav_chats)
                         },
-                        onLongClick = { id ->
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            selecting = true
-                            selected = liveSelected + id
-                        },
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                },
+                navigationIcon = {
+                    if (selecting) {
+                        IconButton(onClick = ::exitSelection) {
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.chats_exit_selection))
+                        }
+                    } else {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        }
+                    }
+                },
+                actions = {
+                    if (selecting) {
+                        val everySelected = allSelected(liveSelected, visibleIds)
+                        TextButton(onClick = { selected = toggleSelectAll(liveSelected, visibleIds) }) {
+                            Text(
+                                text = stringResource(if (everySelected) R.string.chats_select_none else R.string.chats_select_all),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        IconButton(onClick = { if (liveSelected.isNotEmpty()) confirmingDelete = true }) {
+                            Icon(
+                                Icons.Rounded.Delete,
+                                contentDescription = stringResource(R.string.chats_delete),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    } else {
+                        IconButton(onClick = onNewChat) {
+                            Icon(painterResource(R.drawable.ic_edit_square), contentDescription = stringResource(R.string.drawer_new_chat))
+                        }
+                    }
+                },
+                // The shell's Scaffold already pads for the status bar.
+                windowInsets = WindowInsets(0),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            )
+
+            when {
+                all == null -> Unit // initial Room query hasn't emitted yet.
+                all.isEmpty() -> EmptyChats(onNewChat = onNewChat)
+                else -> {
+                    SearchField(query = query, onQueryChange = { query = it })
+                    if (visible.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.chats_no_match, query.trim()),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, top = 64.dp, end = 16.dp),
+                        )
+                    } else {
+                        val now = remember(visible) { Instant.now() }
+                        val zone = remember { ZoneId.systemDefault() }
+                        ChatList(
+                            sections = remember(visible, now) { groupChats(visible, now, zone) },
+                            now = now,
+                            zone = zone,
+                            modelNames = modelNames,
+                            selecting = selecting,
+                            selected = liveSelected,
+                            untitledLabel = untitledLabel,
+                            onClick = { id ->
+                                if (selecting) selected = toggleSelected(liveSelected, id) else onOpenConversation(id)
+                            },
+                            onLongClick = { id ->
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                selecting = true
+                                selected = liveSelected + id
+                            },
+                            onDelete = { id ->
+                                Log.i(TAG, "swipe delete: undo window open, $undoTimeout ms")
+                                deletes.delete(id, undoTimeout)
+                            },
+                            bottomPadding = if (deletes.undoable != null) with(LocalDensity.current) { snackbarHeight.toDp() } else 0.dp,
+                        )
+                    }
                 }
             }
+        }
+
+        // Drawn straight from the pending state rather than through a SnackbarHost: what is shown and
+        // what Undo acts on can then never disagree.
+        if (deletes.undoable != null) {
+            Snackbar(
+                action = {
+                    TextButton(
+                        onClick = {
+                            Log.i(TAG, "swipe delete: undo")
+                            deletes.undo()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = SnackbarDefaults.actionColor),
+                    ) { Text(undoLabel) }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(12.dp)
+                    .onSizeChanged { snackbarHeight = it.height }
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            ) { Text(deletedMessage) }
         }
     }
 
@@ -361,8 +438,11 @@ private fun ChatList(
     untitledLabel: String,
     onClick: (String) -> Unit,
     onLongClick: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    bottomPadding: Dp,
 ) {
     val tints = MaterialTheme.tensaiTints
+    val deleteLabel = stringResource(R.string.chats_delete)
     val locale = LocalConfiguration.current.locales[0]
     val context = LocalContext.current
     val formats = remember(locale, context) { WhenFormats(context, locale) }
@@ -370,7 +450,8 @@ private fun ChatList(
     // Headers and rows are separate keyed items (a section can be long). A row draws its own slice
     // of the card: the first and last round their outer corners, and each row after the first sits
     // 1dp up so its top border covers the one above, which is what makes the hairline between rows.
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    // [bottomPadding] keeps the last rows clear of the undo snackbar while it shows.
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPadding)) {
         sections.forEach { section ->
             item(key = "group:${section.group}") {
                 Text(
@@ -393,22 +474,32 @@ private fun ChatList(
                     bottomEnd = if (index == section.chats.lastIndex) radius else 0.dp,
                 )
                 val whenText = remember(chat.updatedAt, now, formats) { formats.format(chat.updatedAt, now, zone) }
-                ChatRow(
-                    chat = chat,
-                    whenText = whenText,
-                    model = modelLabel(chat.modelId, modelNames),
-                    selecting = selecting,
-                    selected = chat.id in selected,
-                    untitledLabel = untitledLabel,
-                    onClick = { onClick(chat.id) },
-                    onLongClick = { onLongClick(chat.id) },
+                // The card's slice (clip, border) stays put; only the row slides, over the underlay.
+                SwipeToDelete(
+                    label = deleteLabel,
+                    onDelete = { onDelete(chat.id) },
+                    enabled = !selecting,
                     modifier = Modifier
                         .padding(horizontal = 16.dp)
                         .offset(y = if (index == 0) 0.dp else (-1).dp)
                         .clip(shape)
-                        .background(MaterialTheme.colorScheme.surface)
                         .border(1.dp, tints.outline, shape),
-                )
+                ) {
+                    ChatRow(
+                        chat = chat,
+                        whenText = whenText,
+                        model = modelLabel(chat.modelId, modelNames),
+                        selecting = selecting,
+                        selected = chat.id in selected,
+                        untitledLabel = untitledLabel,
+                        deleteLabel = deleteLabel,
+                        onClick = { onClick(chat.id) },
+                        onLongClick = { onLongClick(chat.id) },
+                        onDelete = { onDelete(chat.id) },
+                        // Opaque, so the underlay only shows while swiping.
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface),
+                    )
+                }
             }
         }
         item(key = "end") { Box(modifier = Modifier.height(24.dp)) }
@@ -424,8 +515,10 @@ private fun ChatRow(
     selecting: Boolean,
     selected: Boolean,
     untitledLabel: String,
+    deleteLabel: String,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -446,6 +539,9 @@ private fun ChatRow(
                 if (selecting) {
                     this.selected = selected
                     stateDescription = stateText
+                } else {
+                    // The swipe's equivalent, through the same undo window.
+                    customActions = listOf(CustomAccessibilityAction(deleteLabel) { onDelete(); true })
                 }
             }
             .padding(horizontal = 16.dp, vertical = 12.dp),

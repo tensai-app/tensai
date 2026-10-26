@@ -328,6 +328,8 @@
     <string name="chats_long_click_label">Select</string>
     <string name="chats_state_selected">Selected</string>
     <string name="chats_state_not_selected">Not selected</string>
+    <string name="chats_deleted">Chat deleted</string>
+    <string name="chats_undo">Undo</string>
     <string name="top_bar_open_menu">Open menu</string>
 
     <!-- Chat input pill. -->
