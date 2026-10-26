@@ -5,6 +5,7 @@ import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ConfirmationGate
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.Tool
+import io.github.tensaiapp.agent.ToolCallStatus
 import io.github.tensaiapp.agent.ConversationTrust
 import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.ChatMessage
@@ -240,6 +241,8 @@ class RefusingGate : ConfirmationGate {
  * @param reply the text of the turn's replies, tool calls left out, `null` when none wrote any. Kept for the bench
  *   screen, never logged.
  * @param reasoning the reasoning the engine split out of the turn's replies, `null` for none. Same as [reply].
+ * @param callErrors what the model was told for each of [calls] that ended in [ToolCallStatus.Error], by call id: a
+ *   call the verdict counts as made, whose result gave the model nothing to answer from. Logged on its call.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -259,6 +262,7 @@ data class BenchResult(
     val repetition: Int = 1,
     val reply: String? = null,
     val reasoning: String? = null,
+    val callErrors: Map<String, String> = emptyMap(),
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -273,6 +277,7 @@ data class BenchResult(
                     add(buildJsonObject {
                         put("name", call.name)
                         put("args", call.argumentsJson.let { if (it.length > MaxArgsChars) it.take(MaxArgsChars) + "..." else it })
+                        callErrors[call.id]?.let { put("error", if (it.length > MaxArgsChars) it.take(MaxArgsChars) + "..." else it) }
                     })
                 }
             },
@@ -300,7 +305,7 @@ data class BenchResult(
  * The bench's totals. Each rate is over the prompts it can happen to, errors and unavailable tools left out: false
  * calls over the prompts expecting no tool, missing calls over the ones expecting one. `null` when there is no such
  * prompt. The medians leave out errors and a [BenchResult.prefixCold] prompt. [namedInText]: prompts with a
- * [BenchResult.namedInText], whatever their verdict.
+ * [BenchResult.namedInText], [toolErrors]: prompts with a [BenchResult.callErrors], whatever their verdict.
  */
 data class BenchSummary(
     val counts: Map<BenchVerdict, Int>,
@@ -309,6 +314,7 @@ data class BenchSummary(
     val medianTtftMs: Long?,
     val medianTotalMs: Long?,
     val namedInText: Int = 0,
+    val toolErrors: Int = 0,
 ) {
     fun toLogLine(trigger: BenchTrigger): String = buildJsonObject {
         put("event", "summary")
@@ -325,6 +331,7 @@ data class BenchSummary(
         put("median_ttft_ms", medianTtftMs)
         put("median_total_ms", medianTotalMs)
         put("named_in_text", namedInText)
+        put("tool_errors", toolErrors)
     }.toString()
 
     /**
@@ -348,6 +355,9 @@ data class BenchSummary(
         results.filter { it.namedInText.isNotEmpty() }.takeIf { it.isNotEmpty() }?.let { named ->
             add("named_in_text $namedInText: " + named.joinToString(", ") { "${it.prompt.id} (${it.namedInText.joinToString("|")})" })
         }
+        results.filter { it.callErrors.isNotEmpty() }.takeIf { it.isNotEmpty() }?.let { failed ->
+            add("tool_errors $toolErrors: " + failed.joinToString(", ") { r -> "${r.prompt.id} (${r.calls.filter { it.id in r.callErrors }.joinToString("|") { it.name }})" })
+        }
     }
 
     companion object {
@@ -364,6 +374,7 @@ data class BenchSummary(
                 medianTtftMs = median(timed.mapNotNull { it.ttftMs }),
                 medianTotalMs = median(timed.map { it.totalMs }),
                 namedInText = results.count { it.namedInText.isNotEmpty() },
+                toolErrors = results.count { it.callErrors.isNotEmpty() },
             )
         }
 
@@ -423,6 +434,7 @@ class BenchRunner(
         val named = LinkedHashSet<String>()
         var opened = emptyList<String>()
         val truncatedCalls = mutableListOf<String>()
+        val callErrors = LinkedHashMap<String, String>()
         var tokens = 0
         var stopReason: String? = null
         var error: Throwable? = null
@@ -447,6 +459,7 @@ class BenchRunner(
                     tokens += event.stats?.tokensGenerated ?: 0
                     stopReason = event.stats?.stopReason?.name
                 }
+                is AgentEvent.ToolCallFinished -> if (event.outcome.status == ToolCallStatus.Error) callErrors[event.outcome.call.id] = event.outcome.output
                 is AgentEvent.Error -> error = event.cause
                 else -> Unit
             }
@@ -472,6 +485,7 @@ class BenchRunner(
             repetition = repetition,
             reply = replyTexts.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
             reasoning = reasonings.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
+            callErrors = callErrors,
         )
     }
 

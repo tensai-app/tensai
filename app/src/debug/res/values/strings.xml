@@ -122,6 +122,7 @@
     <string name="bench_metric_wrong_tool">other tool</string>
     <string name="bench_metric_error">parse or runtime</string>
     <string name="bench_metric_named">named, not called</string>
+    <string name="bench_metric_tool_errors">call, result an error</string>
     <string name="bench_eyebrow_prompt">Prompt</string>
     <string name="bench_expected">Expected</string>
     <!-- %1$d is the repetition, from 1. -->

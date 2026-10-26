@@ -3,6 +3,7 @@ package io.github.tensaiapp.bench
 import io.github.tensaiapp.engine.ReasoningBudget
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.ToolCall
+import io.github.tensaiapp.ui.screens.bench.resultNotes
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
@@ -214,6 +215,22 @@ class BenchRunTest {
         assertEquals(200L, totals.ttftP50Ms)
         assertEquals(2_000L, totals.totalP50Ms)
         assertEquals(0.6, totals.value(SummaryMetric.Correct)!!, 1e-9)
+    }
+
+    @Test
+    fun aCallWhoseResultWasAnErrorIsSavedCountedAndNoted() {
+        val failed = result("t", BenchVerdict.Correct, expected = setOf("datetime")).copy(
+            calls = listOf(ToolCall("c1", "datetime", """{"timezone":"auto"}"""), ToolCall("c2", "datetime", "{}")),
+            callErrors = mapOf("c1" to "timezone: unknown time zone 'auto'"),
+        )
+        val trial = BenchTrial.of(failed)
+
+        assertEquals(listOf("timezone: unknown time zone 'auto'", null), trial.calls.map { it.error })
+        assertEquals(trial, BenchRunJson.decode(BenchRunJson.encode(run(1L, trial))).results.single())
+        val totals = RunTotals.of(listOf(trial, trial("a", BenchVerdict.Correct)))
+        assertEquals(1, totals.toolErrors)
+        assertEquals(1, totals.countOf(SummaryMetric.ToolErrors))
+        assertTrue(resultNotes(trial).contains("datetime returned an error: timezone: unknown time zone 'auto'"))
     }
 
     @Test

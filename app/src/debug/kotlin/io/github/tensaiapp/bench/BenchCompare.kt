@@ -3,7 +3,8 @@ package io.github.tensaiapp.bench
 /**
  * A run's totals over its trials (a trial is one repetition of one prompt), for the saved run cards and the Compare
  * summary. As in [BenchSummary], the medians leave out errors and a [BenchTrial.prefixCold] trial. [namedInText]:
- * trials with a [BenchTrial.namedInText], whatever their verdict.
+ * trials with a [BenchTrial.namedInText], [toolErrors]: trials with a call whose result was an error
+ * ([BenchCall.error]), whatever their verdict.
  */
 data class RunTotals(
     val trials: Int,
@@ -11,6 +12,7 @@ data class RunTotals(
     val namedInText: Int,
     val ttftP50Ms: Long?,
     val totalP50Ms: Long?,
+    val toolErrors: Int = 0,
 ) {
     fun count(verdict: BenchVerdict): Int = counts[verdict] ?: 0
 
@@ -24,6 +26,7 @@ data class RunTotals(
     /** How many trials [metric] counts, 0 for a median. */
     fun countOf(metric: SummaryMetric): Int = when (metric) {
         SummaryMetric.NamedInText -> namedInText
+        SummaryMetric.ToolErrors -> toolErrors
         SummaryMetric.TtftP50, SummaryMetric.TotalP50 -> 0
         else -> count(metric.verdict!!)
     }
@@ -37,6 +40,7 @@ data class RunTotals(
                 namedInText = trials.count { it.namedInText.isNotEmpty() },
                 ttftP50Ms = BenchSummary.median(timed.mapNotNull { it.ttftMs }),
                 totalP50Ms = BenchSummary.median(timed.map { it.totalMs }),
+                toolErrors = trials.count { trial -> trial.calls.any { it.error != null } },
             )
         }
     }
@@ -50,6 +54,7 @@ enum class SummaryMetric(val verdict: BenchVerdict?, val higherIsBetter: Boolean
     WrongTool(BenchVerdict.WrongTool),
     Error(BenchVerdict.Error),
     NamedInText(null),
+    ToolErrors(null),
     TtftP50(null),
     TotalP50(null),
 }

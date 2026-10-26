@@ -124,6 +124,7 @@
     <string name="bench_metric_wrong_tool">autre outil</string>
     <string name="bench_metric_error">analyse ou exécution</string>
     <string name="bench_metric_named">nommé, pas appelé</string>
+    <string name="bench_metric_tool_errors">appel, résultat en erreur</string>
     <string name="bench_eyebrow_prompt">Prompt</string>
     <string name="bench_expected">Attendu</string>
     <string name="bench_rep">Rép. %1$d</string>

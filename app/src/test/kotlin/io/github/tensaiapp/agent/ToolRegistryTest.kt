@@ -3,6 +3,7 @@ package io.github.tensaiapp.agent
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
+import java.util.TimeZone
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -139,11 +140,92 @@ class ToolRegistryTest {
     }
 
     @Test
+    fun aTimezoneNamingNoPlaceIsTheDeviceOne() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T12:03:22Z"), ZoneId.of("Europe/Paris"))
+        val device = DateTimeTool(clock).execute("{}")
+
+        listOf(
+            "auto", "Auto", "System", " local ", "device", "current", "default", "here", "now", "user", "mine",
+            "my timezone", "local time", "Local Timezone", "system_default", "the user's timezone", "current time zone",
+        ).forEach { zone ->
+            assertEquals(zone, device, DateTimeTool(clock).execute(JSONObject().put("timezone", zone).toString()))
+        }
+    }
+
+    @Test
+    fun aRealZoneOrAnOffsetIsNotAPlaceholder() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T12:03:22Z"), ZoneId.of("Europe/Paris"))
+
+        mapOf(
+            "UTC" to "UTC", "Etc/UTC" to "Etc/UTC", "GMT+2" to "GMT+02:00", "US/Pacific" to "US/Pacific",
+            "America/Los_Angeles" to "America/Los_Angeles", "+09:00" to "+09:00",
+        ).forEach { (zone, id) ->
+            val result = DateTimeTool(clock).execute(JSONObject().put("timezone", zone).toString())
+            assertFalse(zone, result.isError)
+            assertEquals(zone, id, JSONObject(result.text).getString("timezone"))
+        }
+        val nonAscii = DateTimeTool(clock).execute("""{"timezone":"東京"}""")
+        assertTrue(nonAscii.text, nonAscii.text.startsWith("timezone: unknown time zone '東京'"))
+    }
+
+    @Test
+    fun aZoneOtherThanTheDevicesAlsoCarriesTheDeviceTime() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T22:03:22Z"), ZoneId.of("Europe/Paris"))
+
+        val utc = JSONObject(DateTimeTool(clock).execute("""{"timezone":"UTC"}""").text)
+
+        assertEquals("22:03:22", utc.getString("time"))
+        assertEquals("UTC", utc.getString("timezone"))
+        assertEquals("2026-10-17T00:03:22", utc.getString("deviceTime"))
+        assertEquals("Europe/Paris", utc.getString("deviceTimezone"))
+        val tokyo = JSONObject(DateTimeTool(clock).execute("""{"timezone":"Asia/Tokyo"}""").text)
+        assertEquals("07:03:22", tokyo.getString("time"))
+        assertEquals("2026-10-17T00:03:22", tokyo.getString("deviceTime"))
+        val onTheMinute = Clock.fixed(Instant.parse("2026-10-16T22:03:00Z"), ZoneId.of("Europe/Paris"))
+        assertEquals("2026-10-17T00:03:00", JSONObject(DateTimeTool(onTheMinute).execute("""{"timezone":"UTC"}""").text).getString("deviceTime"))
+    }
+
+    @Test
+    fun theDevicesOwnZoneCarriesNoDeviceFields() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T12:03:22Z"), ZoneId.of("Europe/Paris"))
+
+        listOf("{}", """{"timezone":"Europe/Paris"}""", """{"timezone":"Europe/Berlin"}""").forEach { args ->
+            val json = JSONObject(DateTimeTool(clock).execute(args).text)
+            assertFalse(args, json.has("deviceTime"))
+            assertFalse(args, json.has("deviceTimezone"))
+        }
+        // London is on UTC in winter: the same wall time, nothing to add.
+        val london = Clock.fixed(Instant.parse("2026-12-16T12:03:22Z"), ZoneId.of("Europe/London"))
+        assertFalse(JSONObject(DateTimeTool(london).execute("""{"timezone":"UTC"}""").text).has("deviceTime"))
+    }
+
+    @Test
+    fun withoutAClockTheDeviceZoneIsReadAtEachCall() = runBlocking {
+        val before = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"))
+            val tool = DateTimeTool()
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Paris"))
+
+            assertEquals("Europe/Paris", JSONObject(tool.execute("{}").text).getString("timezone"))
+        } finally {
+            TimeZone.setDefault(before)
+        }
+    }
+
+    @Test
+    fun theSchemaSaysToOmitTheTimezoneForTheLocalTime() {
+        assertTrue(DateTimeTool().parametersSchema.contains("Omit for the user's local time."))
+    }
+
+    @Test
     fun anUnknownTimezoneIsAToolErrorNamingTheArgument() = runBlocking {
         val result = DateTimeTool().execute("""{"timezone":"Tokyo"}""")
 
         assertTrue(result.isError)
         assertTrue(result.text, result.text.startsWith("timezone: unknown time zone 'Tokyo'"))
+        val placeLike = DateTimeTool().execute("""{"timezone":"my office"}""")
+        assertTrue(placeLike.text, placeLike.text.startsWith("timezone: unknown time zone 'my office'"))
     }
 
     @Test

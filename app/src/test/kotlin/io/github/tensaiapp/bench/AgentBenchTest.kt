@@ -1,6 +1,7 @@
 package io.github.tensaiapp.bench
 
 import io.github.tensaiapp.agent.AgentRuntime
+import io.github.tensaiapp.agent.DateTimeTool
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolRegistry
@@ -543,6 +544,27 @@ class AgentBenchTest {
         assertEquals("1", Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject.getValue("named_in_text").jsonPrimitive.content)
         assertTrue(Json.parseToJsonElement(results.first().toLogLine()).jsonObject.containsKey("named_in_text"))
         assertTrue(summary.toDisplayLines(BenchTrigger(true), "m", results).contains("named_in_text 1: time (datetime)"))
+    }
+
+    @Test
+    fun aCallWhoseResultIsAnErrorIsLoggedAndCountedTheVerdictUnchanged() = runBlocking {
+        val bad = ToolCall("c1", "datetime", """{"timezone":"Mars/Olympus"}""")
+        val good = ToolCall("c2", "datetime", "{}")
+        val gen = ScriptedGenerator(reply("", calls = listOf(bad)), reply("I could not tell."), reply("", calls = listOf(good)), reply("It is noon."))
+        val runner = runner(DateTimeTool(), generator = gen)
+
+        val results = runBench(listOf(prompt("time", "datetime"), prompt("time_ok", "datetime")), runner, firstCold = false, beforeEach = { null }, log = {})
+
+        assertEquals(listOf(BenchVerdict.Correct, BenchVerdict.Correct), results.map { it.verdict })
+        assertEquals(results.first().calls.map { it.id }.toSet(), results.first().callErrors.keys)
+        assertTrue(results.last().callErrors.isEmpty())
+        val call = Json.parseToJsonElement(results.first().toLogLine()).jsonObject.getValue("calls").jsonArray.single().jsonObject
+        assertTrue(call.getValue("error").jsonPrimitive.content, call.getValue("error").jsonPrimitive.content.startsWith("timezone: unknown time zone 'Mars/Olympus'"))
+        assertFalse(Json.parseToJsonElement(results.last().toLogLine()).jsonObject.getValue("calls").jsonArray.single().jsonObject.containsKey("error"))
+        val summary = BenchSummary.of(results)
+        assertEquals(1, summary.toolErrors)
+        assertEquals("1", Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject.getValue("tool_errors").jsonPrimitive.content)
+        assertTrue(summary.toDisplayLines(BenchTrigger(true), "m", results).contains("tool_errors 1: time (datetime)"))
     }
 
     @Test

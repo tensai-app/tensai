@@ -179,7 +179,7 @@ private fun RepTabs(trials: List<BenchTrial>, selected: Int, onSelect: (Int) -> 
     )
 }
 
-/** The verdict in full, the timings, and a line per note: wrong tool, truncated or named calls, refusals, the error. */
+/** The verdict in full, the timings, and a line per note: wrong tool, truncated or named calls, tool errors, refusals, the error. */
 @Composable
 private fun ResultCard(trial: BenchTrial) {
     BenchCard {
@@ -206,6 +206,7 @@ internal fun resultNotes(trial: BenchTrial): List<String> = buildList {
     }
     if (trial.truncatedCalls.isNotEmpty()) add("truncated call: " + trial.truncatedCalls.joinToString(", "))
     if (trial.namedInText.isNotEmpty()) add("named in text: " + trial.namedInText.joinToString(", "))
+    trial.calls.forEach { call -> call.error?.let { add("${call.name} returned an error: $it") } }
     if (trial.refused.isNotEmpty()) add("refused: " + trial.refused.joinToString(", "))
     trial.error?.let { add("error: $it") }
     trial.stop?.let { add("stop: $it · ${trial.tokens} tokens") }

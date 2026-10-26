@@ -267,6 +267,7 @@ private fun SummaryMetric.labels(): Pair<String, String> = when (this) {
     SummaryMetric.WrongTool -> "wrong_tool" to stringResource(R.string.bench_metric_wrong_tool)
     SummaryMetric.Error -> "error" to stringResource(R.string.bench_metric_error)
     SummaryMetric.NamedInText -> "named_in_text" to stringResource(R.string.bench_metric_named)
+    SummaryMetric.ToolErrors -> "tool_errors" to stringResource(R.string.bench_metric_tool_errors)
     SummaryMetric.TtftP50 -> "ttft p50" to "ms"
     SummaryMetric.TotalP50 -> "total p50" to "ms"
 }

@@ -181,7 +181,7 @@ data class BenchTrial(
                 expected = result.prompt.expected.toList(),
                 rep = result.repetition,
                 verdict = result.verdict.storageName,
-                calls = result.calls.map { BenchCall(it.name, it.argumentsJson) },
+                calls = result.calls.map { BenchCall(it.name, it.argumentsJson, result.callErrors[it.id]) },
                 refused = result.refused,
                 truncatedCalls = result.truncatedCalls,
                 namedInText = result.namedInText,
@@ -201,9 +201,12 @@ data class BenchTrial(
     }
 }
 
-/** A tool call as the model wrote it: [args] is its arguments' text, kept even when it is not valid JSON. */
+/**
+ * A tool call as the model wrote it: [args] is its arguments' text, kept even when it is not valid JSON. [error] is what
+ * the model was told when the call ended in an error ([BenchResult.callErrors]), `null` otherwise.
+ */
 @Serializable
-data class BenchCall(val name: String, val args: String)
+data class BenchCall(val name: String, val args: String, val error: String? = null)
 
 /**
  * Runs [run] (a [runBench], or the decode curve, that adds each result to [results] as it comes and returns why it
@@ -291,6 +294,7 @@ object BenchRunJson {
         put("trials", trials)
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("named_in_text", namedInText)
+        put("tool_errors", toolErrors)
         put("ttft_p50_ms", ttftP50Ms)
         put("total_p50_ms", totalP50Ms)
     }
