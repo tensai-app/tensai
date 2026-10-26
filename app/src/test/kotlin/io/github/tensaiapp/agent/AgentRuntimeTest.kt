@@ -127,6 +127,57 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun aCreativeAskRunsWithNoToolsAndAnEmptySetForTheSystemMessage() = runBlocking {
+        val tool = FakeTool("web_search")
+        // A saved fact that mentions searching does not make the user's own words a research ask.
+        val block = MemoryContext.render(listOf(MemoryFactEntity(id = 1, text = "Likes to search the web", createdAt = 0)))
+        val ask = DecodeRequest(MemoryContext.prepend(listOf(ChatMessage(MessageRole.User, "Write a long story about a lighthouse keeper.")), block))
+        val gen = ScriptedGenerator(reply("Once upon a time"))
+        var named: Set<String>? = null
+
+        val events = runtime(tool).run(ask, gen) { names -> named = names; "base" }.toList()
+
+        assertTrue(gen.requests.single().tools.isEmpty())
+        assertEquals(emptySet<String>(), named)
+        assertEquals("base", gen.requests.single().messages.first().content)
+        assertEquals(0, tool.runs)
+        assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun aCreativeAskAfterAnAssistantReplyKeepsItsTools() = runBlocking {
+        val history = listOf(
+            ChatMessage(MessageRole.User, "hi"),
+            ChatMessage(MessageRole.Assistant, "Hello!"),
+            ChatMessage(MessageRole.User, "Write a long story about a lighthouse keeper."),
+        )
+        val gen = ScriptedGenerator(reply("Once upon a time"))
+        var named: Set<String>? = null
+
+        runtime(FakeTool("web_search")).run(DecodeRequest(history), gen) { names ->
+            named = names
+            "base"
+        }.toList()
+
+        assertEquals(listOf("web_search"), gen.requests.single().tools.map { it.name })
+        assertEquals(setOf("web_search"), named)
+    }
+
+    @Test
+    fun aNonCreativeAskKeepsItsTools() = runBlocking {
+        val gen = ScriptedGenerator(reply("hello"))
+        var named: Set<String>? = null
+
+        runtime(FakeTool("web_search")).run(DecodeRequest(listOf(ChatMessage(MessageRole.User, "Write an email to Bob."))), gen) { names ->
+            named = names
+            "base"
+        }.toList()
+
+        assertEquals(listOf("web_search"), gen.requests.single().tools.map { it.name })
+        assertEquals(setOf("web_search"), named)
+    }
+
+    @Test
     fun withoutASystemBuilderTheRequestsOwnMessagesGoAsTheyAre() = runBlocking {
         val gen = ScriptedGenerator(reply("hello"))
         val built = DecodeRequest(listOf(ChatMessage(MessageRole.System, "mine"), ChatMessage(MessageRole.User, "go")))
@@ -240,6 +291,78 @@ class AgentRuntimeTest {
         // The parsed answer, not the streamed text that still carries the call markup.
         assertEquals("final", last.content)
         assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun twoFailedCallsInARowForceTheNextReplyToAnswer() = runBlocking {
+        val failing = FakeTool(body = { ToolResult.error("Error: no app") })
+        val refused = FakeTool("ask", confirmWhen = { true })
+        val gen = ScriptedGenerator(
+            reply(calls = listOf(call("1"))),
+            reply(calls = listOf(call("2", name = "ask"))),
+            reply("the story", calls = listOf(call("3"))),
+        )
+
+        val events = runtime(failing, refused, gate = { _, _ -> false }).run(userTurn, gen).toList()
+
+        assertEquals(listOf(ToolCallStatus.Error, ToolCallStatus.Refused), events.outcomes().map { it.status })
+        assertEquals(listOf(ToolChoice.Auto, ToolChoice.Auto, ToolChoice.None), gen.requests.map { it.toolChoice })
+        val last = events.filterIsInstance<AgentEvent.ReplyFinished>().last()
+        assertTrue(last.droppedCalls)
+        assertEquals("the story", last.content)
+        assertEquals(1, failing.runs)
+        assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun anOkCallStartsTheFailureCountAgain() = runBlocking {
+        var n = 0
+        val tool = FakeTool(body = { if (++n == 2) ToolResult.ok("fine") else ToolResult.error("Error: no") })
+        val gen = ScriptedGenerator(
+            reply(calls = listOf(call("1"))),
+            reply(calls = listOf(call("2"))),
+            reply(calls = listOf(call("3"))),
+            reply(calls = listOf(call("4"))),
+            reply("done"),
+        )
+
+        val events = runtime(tool).run(userTurn, gen).toList()
+
+        assertEquals(
+            listOf(ToolCallStatus.Error, ToolCallStatus.Ok, ToolCallStatus.Error, ToolCallStatus.Error),
+            events.outcomes().map { it.status },
+        )
+        // Error, ok, error: one in a row, the fourth reply may call. The second error in a row forces the fifth.
+        assertEquals(List(4) { ToolChoice.Auto } + ToolChoice.None, gen.requests.map { it.toolChoice })
+    }
+
+    @Test
+    fun aTimeoutCountsAsAFailedCall() = runBlocking {
+        val slow = FakeTool("slow", body = { awaitCancellation() })
+        val failing = FakeTool(body = { ToolResult.error("Error: no") })
+        val gen = ScriptedGenerator(
+            reply(calls = listOf(call("1", name = "slow"))),
+            reply(calls = listOf(call("2"))),
+            reply("answer"),
+        )
+
+        val events = runtime(slow, failing, timeoutMs = { if (it.name == "slow") 10L else 5_000L }).run(userTurn, gen).toList()
+
+        assertEquals(listOf(ToolCallStatus.Timeout, ToolCallStatus.Error), events.outcomes().map { it.status })
+        assertEquals(listOf(ToolChoice.Auto, ToolChoice.Auto, ToolChoice.None), gen.requests.map { it.toolChoice })
+    }
+
+    @Test
+    fun theCountFollowsTheOrderOfTheCallsInOneReply() = runBlocking {
+        for ((script, choice) in listOf("eeo" to ToolChoice.Auto, "oee" to ToolChoice.None)) {
+            val tool = FakeTool(body = { if (it.contains("o")) ToolResult.ok("fine") else ToolResult.error("Error: no") })
+            val calls = script.mapIndexed { i, c -> call("$i", args = """{"text":"$c"}""") }
+            val gen = ScriptedGenerator(reply(calls = calls), reply("answer"))
+
+            runtime(tool).run(userTurn, gen).toList()
+
+            assertEquals(script, choice, gen.requests[1].toolChoice)
+        }
     }
 
     @Test

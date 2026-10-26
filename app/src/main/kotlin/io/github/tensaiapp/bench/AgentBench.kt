@@ -37,7 +37,7 @@ import kotlinx.serialization.json.put
  * [status] (the summary included) on screen.
  *
  * The requests carry the system message a chat would, built by [SystemPrompt] from the toggles of [BenchTrigger]
- * (base prompt, few-shot examples), without the user's instructions.
+ * (base prompt, few-shot examples) and the tools the turn offers, without the user's instructions.
  *
  * Nothing is stored: each prompt is a one-message conversation in memory, after the tool prefix is warmed so the
  * first one does not pay for it. The conversation the KV cache held is saved first and the cache no longer named
@@ -116,8 +116,8 @@ object AgentBench {
         val registry = ToolRegistry(RuntimeGraph.toolRegistry.registered().map(::BenchTool), RuntimeGraph.toolSettings)
         val runtime = RuntimeGraph.agentRuntimeOn(registry, gate)
         if (!runtime.hasTools()) return fail("no tool is granted")
-        val system = SystemPrompt(base = trigger.basePrompt, examples = trigger.examples)
-            .build(tools = runtime.definitions().mapTo(HashSet()) { it.name }, startedAt = null, global = null, chat = null)
+        val systemPrompt = SystemPrompt(base = trigger.basePrompt, examples = trigger.examples)
+        val system = { tools: Set<String> -> systemPrompt.build(tools = tools, startedAt = null, global = null, chat = null) }
         val runner = BenchRunner(
             runtime = runtime,
             gate = gate,

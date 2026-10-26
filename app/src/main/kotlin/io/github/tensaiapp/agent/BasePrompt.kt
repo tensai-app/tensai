@@ -21,7 +21,7 @@ import java.util.Locale
  */
 object BasePrompt {
     /** Bumped with every change of the text, so a measurement can say which one it ran. */
-    const val VERSION = 1
+    const val VERSION = 2
 
     /** The tools a line of the prompt names: with all of them offered, every rule is there (what Settings shows). */
     val ToolsNamed = setOf(AskUserTool.NAME, WebSearchTool.NAME, "web_fetch", "datetime")
@@ -38,6 +38,7 @@ object BasePrompt {
         add("Reply in the language of the user's last message.")
         if (!tools.isNullOrEmpty()) {
             add("Answer directly when you can. Call a tool only when the answer needs one.")
+            add("Write stories, poems, letters and other texts yourself, with no tool.")
             add("Never invent a tool result. If a tool fails, say so.")
             if (AskUserTool.NAME in tools) add("Call ask_user only when the request is genuinely ambiguous.")
             if (WebSearchTool.NAME in tools) {

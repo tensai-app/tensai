@@ -11,6 +11,7 @@ import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.DecodeStats
 import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.ReasoningBudget
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
@@ -67,7 +68,13 @@ class AgentBenchTest {
         DecodeEvent.Done(DecodeStats(tokensGenerated = tokens, tokPerSec = 1f, ttftMs = ttftMs, stopReason = StopReason.Complete)),
     )
 
-    private fun runner(vararg tools: Tool, gate: RefusingGate = RefusingGate(), generator: ReplyGenerator, system: String? = null): BenchRunner {
+    private fun runner(
+        vararg tools: Tool,
+        gate: RefusingGate = RefusingGate(),
+        generator: ReplyGenerator,
+        system: ((Set<String>) -> String?)? = null,
+        sampling: SamplingConfig = SamplingConfig(),
+    ): BenchRunner {
         // Every tier granted: the bench refuses a network call whatever the user granted.
         val registry = ToolRegistry(tools.map(::BenchTool)) { ToolTier.entries.toSet() }
         var now = 0L
@@ -76,7 +83,7 @@ class AgentBenchTest {
             runtime = AgentRuntime(registry, gate, waitForQueue = { false }),
             gate = gate,
             generator = generator,
-            sampling = SamplingConfig(),
+            sampling = sampling,
             countTokens = { it.length },
             clock = { now += 5; now },
             system = system,
@@ -86,11 +93,18 @@ class AgentBenchTest {
     private fun prompt(id: String, vararg expected: String) = BenchPrompt(id, "question $id", expected.toSet())
 
     @Test
-    fun theRepoListParsesWithHalfThePromptsExpectingNoTool() {
+    fun theRepoListParsesWithHalfTheShortPromptsExpectingNoToolAndCappedLongFormAsks() {
         val prompts = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText())
+        val (longForm, short) = prompts.partition { it.maxTokens != null }
 
-        assertTrue("about 20 prompts, got ${prompts.size}", prompts.size in 18..24)
-        assertEquals(prompts.size / 2, prompts.count { it.expected.isEmpty() })
+        assertTrue("about 20 short prompts, got ${short.size}", short.size in 18..24)
+        assertEquals(short.size / 2, short.count { it.expected.isEmpty() })
+        assertTrue("a few long-form asks, got ${longForm.size}", longForm.size in 3..6)
+        assertTrue(longForm.all { it.expected.isEmpty() })
+        assertEquals(
+            "Write a long story about a lighthouse keeper and a storm, at least 900 words.",
+            prompts.single { it.id == "story-lighthouse" }.prompt,
+        )
         assertEquals("Name two colors of the French flag, one line.", prompts.single { it.id == "flag-colors" }.prompt)
         assertEquals(setOf("datetime", "convert_time"), prompts.single { it.id == "time-tokyo" }.expected)
         assertEquals(setOf("set_timer"), prompts.single { it.id == "timer-ten-minutes" }.expected)
@@ -106,6 +120,83 @@ class AgentBenchTest {
         )
 
         assertEquals(listOf(emptySet(), setOf("calculate"), setOf("datetime", "convert_time")), prompts.map { it.expected })
+    }
+
+    @Test
+    fun maxTokensIsOptional() {
+        val prompts = parseBenchPrompts(
+            """{"version":1,"prompts":[
+                {"id":"a","prompt":"p","expected":"none","max_tokens":96},
+                {"id":"b","prompt":"p","expected":"none"}]}""",
+        )
+
+        assertEquals(listOf(96, null), prompts.map { it.maxTokens })
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun aMaxTokensOfZeroIsRefused() {
+        parseBenchPrompts("""{"prompts":[{"id":"a","prompt":"p","expected":"none","max_tokens":0}]}""")
+    }
+
+    @Test
+    fun maxTokensCapsEveryReplyOfThePromptAndOnlyThatPrompt() = runBlocking {
+        val sampling = SamplingConfig(maxTokens = 2048, reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))
+        val gen = ScriptedGenerator(
+            reply("", calls = listOf(ToolCall("c1", "datetime", "{}"))),
+            reply("Once upon a time"),
+            reply("Paris"),
+        )
+        val bench = runner(FakeTool("datetime"), generator = gen, sampling = sampling)
+
+        val capped = bench.run(BenchPrompt("story", "Answer at length.", emptySet(), maxTokens = 96))
+        bench.run(BenchPrompt("capital", "Capital of France?", emptySet()))
+
+        assertEquals(BenchVerdict.FalseCall, capped.verdict)
+        // The reasoning keeps the run's 1024, the answer is held to 96: the sum stays the decode's cap.
+        val answerOnly = ReasoningBudget(1024, 96, "</think>")
+        assertEquals(listOf(1120, 1120, 2048), gen.requests.map { it.sampling.maxTokens })
+        assertEquals(listOf(answerOnly, answerOnly, sampling.reasoningBudget), gen.requests.map { it.sampling.reasoningBudget })
+    }
+
+    @Test
+    fun withoutThinkingTheCapIsTheWholeReply() = runBlocking {
+        val gen = ScriptedGenerator(reply("The keeper climbed the stairs as the wind"))
+        runner(FakeTool("datetime"), generator = gen).run(BenchPrompt("story", "Answer at length.", emptySet(), maxTokens = 8))
+
+        assertEquals(8, gen.requests.single().sampling.maxTokens)
+        assertNull(gen.requests.single().sampling.reasoningBudget)
+    }
+
+    @Test
+    fun aCallTheCapCutShortIsCountedAndLogged() = runBlocking {
+        // The engine drops a half-written call from the finished turn; the stream's parse had opened it.
+        val cut = listOf(
+            DecodeEvent.Parsed("", null, listOf("web_search")),
+            DecodeEvent.ToolTurn("", null, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = true),
+            DecodeEvent.Done(DecodeStats(tokensGenerated = 96, tokPerSec = 1f, ttftMs = 1L, stopReason = StopReason.TokenBudget)),
+        )
+        val gen = ScriptedGenerator(cut)
+        val result = runner(FakeTool("web_search", tier = ToolTier.Network), generator = gen)
+            .run(BenchPrompt("story", "Answer at length.", emptySet(), maxTokens = 96))
+
+        assertEquals(BenchVerdict.FalseCall, result.verdict)
+        assertTrue(result.calls.isEmpty())
+        val line = Json.parseToJsonElement(result.toLogLine()).jsonObject
+        assertEquals(listOf("web_search"), line.getValue("truncated_calls").jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
+    fun aHalfWrittenNameThePromptDoesNotOfferIsNotACall() = runBlocking {
+        val cut = listOf(
+            DecodeEvent.Parsed("", null, listOf("web_se")),
+            DecodeEvent.ToolTurn("", null, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = true),
+            DecodeEvent.Done(DecodeStats(tokensGenerated = 96, tokPerSec = 1f, ttftMs = 1L, stopReason = StopReason.TokenBudget)),
+        )
+        val result = runner(FakeTool("web_search", tier = ToolTier.Network), generator = ScriptedGenerator(cut))
+            .run(BenchPrompt("story", "Answer at length.", emptySet(), maxTokens = 96))
+
+        assertEquals(BenchVerdict.Correct, result.verdict)
+        assertTrue(result.truncatedCalls.isEmpty())
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -373,14 +464,28 @@ class AgentBenchTest {
     @Test
     fun theSystemMessageOpensTheWarmedPrefixAndEveryPrompt() = runBlocking {
         val gen = ScriptedGenerator(reply("blue"))
-        val runner = runner(FakeTool("calculate"), generator = gen, system = "base")
+        val runner = runner(FakeTool("calculate"), generator = gen, system = { "base for ${it.sorted().joinToString()}" })
 
         assertEquals(listOf(MessageRole.System), runner.prefixRequest().messages.map { it.role })
-        assertEquals("base", runner.prefixRequest().messages.single().content)
+        assertEquals("base for calculate", runner.prefixRequest().messages.single().content)
         runner.run(prompt("flag-colors"))
         val sent = gen.requests.single().messages
         assertEquals(listOf(MessageRole.System, MessageRole.User), sent.map { it.role })
-        assertEquals("base", sent.first().content)
+        assertEquals("base for calculate", sent.first().content)
+    }
+
+    @Test
+    fun aCreativePromptGetsTheNoToolsSystemMessageAsInAChatAndThePrefixKeepsTheTools() = runBlocking {
+        val gen = ScriptedGenerator(reply("Once upon a time"))
+        val runner = runner(FakeTool("web_search", tier = ToolTier.Network), generator = gen, system = { if (it.isEmpty()) "plain" else "tools" })
+
+        val result = runner.run(BenchPrompt("story-lighthouse", "Write a long story about a lighthouse keeper and a storm, at least 900 words.", emptySet()))
+
+        assertEquals("tools", runner.prefixRequest().messages.single().content)
+        val sent = gen.requests.single()
+        assertTrue(sent.tools.isEmpty())
+        assertEquals("plain", sent.messages.first().content)
+        assertEquals(BenchVerdict.Correct, result.verdict)
     }
 
     @Test

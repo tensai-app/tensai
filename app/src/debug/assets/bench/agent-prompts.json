@@ -52,6 +52,30 @@
       "expected": "none"
     },
     {
+      "id": "story-lighthouse",
+      "prompt": "Write a long story about a lighthouse keeper and a storm, at least 900 words.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "poem-grandmother",
+      "prompt": "Can you write me a poem about my grandmother's garden in summer? Four or five stanzas.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "letter-friend",
+      "prompt": "Write a letter to my friend Sam, who just moved to Canada, telling him I miss our Sunday walks.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "essay-remote-work",
+      "prompt": "Write a short essay on the pros and cons of working from home, about 500 words.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
       "id": "time-now",
       "prompt": "What time is it right now?",
       "expected": "datetime"

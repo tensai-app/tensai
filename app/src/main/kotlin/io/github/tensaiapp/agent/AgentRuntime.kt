@@ -1,5 +1,6 @@
 package io.github.tensaiapp.agent
 
+import io.github.tensaiapp.data.memory.MemoryContext
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
@@ -54,6 +55,10 @@ fun interface ConfirmationGate {
  * - at most [MaxToolCallsPerTurn] calls per turn. Past it the model gets one more generation with
  *   [ToolChoice.None] (tools stay in the prompt, so the KV prefix is reused) and any call it still
  *   makes is dropped;
+ * - after [MaxFailedCallsInARow] calls in a row that failed ([ToolCallStatus.Error], [ToolCallStatus.Refused] or
+ *   [ToolCallStatus.Timeout]),
+ *   the same: one generation with [ToolChoice.None], so a small model answers instead of chaining calls
+ *   that go nowhere. An ok call starts the count again;
  * - a tool runs at most its tier's [ToolTier.timeoutMs] (none for a [Tool.waitsForUser]), a result at most [ResultTokenBudget] tokens;
  * - cancelling the collector (Stop) cancels the running tool and ends the loop. The calls that did
  *   not finish get no event: whoever records the turn closes them with [ToolCallOutcome.stopped] (a
@@ -118,10 +123,18 @@ class AgentRuntime(
      * [system], when given, builds the system message from the names of those same tools and replaces the
      * request's own: the base prompt names a tool only when the turn offers it, even when a grant changed
      * between the request being built and the turn starting.
+     *
+     * The first turn of a conversation (no assistant message yet, a regenerate of it included) whose user message
+     * asks for creative writing ([CreativeRequest]) gets no tools at all, and [system] the empty set: the model writes,
+     * as on the plain path, instead of searching first. Only the first: without tools the prompt differs from token 0,
+     * so later in a chat the whole history would be prefilled again, for this turn and for the next. On the first turn
+     * that prompt is short, and there is no earlier call in it for the model to copy.
      */
     fun run(request: DecodeRequest, generator: ReplyGenerator, system: ((Set<String>) -> String?)? = null): Flow<AgentEvent> = flow {
         emit(AgentEvent.TurnStarted)
-        val tools = registry.active()
+        val firstTurn = request.messages.none { it.role == MessageRole.Assistant }
+        val asked = request.messages.lastOrNull { it.role == MessageRole.User }?.let { MemoryContext.withoutBlock(it.content) }
+        val tools = if (firstTurn && asked != null && CreativeRequest.matches(asked)) emptyList() else registry.active()
         val definitions = tools.map { ToolDefinition(it.name, it.description, it.parametersSchema) }
         val turnId = UUID.randomUUID().toString().take(8)
         val usedIds = HashSet<String>()
@@ -133,11 +146,12 @@ class AgentRuntime(
         }
         val history = messages.toMutableList()
         var callsMade = 0
+        var failedInARow = 0
         var index = 0
         // What the gate reads (web_fetch, memory remember): the whole history, then each message the turn adds to it.
         var trust = request.messages.fold(ConversationTrust(), ::trustWith)
         while (true) {
-            val forced = callsMade >= MaxToolCallsPerTurn
+            val forced = callsMade >= MaxToolCallsPerTurn || failedInARow >= MaxFailedCallsInARow
             emit(AgentEvent.ReplyStarted(index))
             val generation = request.copy(
                 messages = history.toList(),
@@ -175,6 +189,11 @@ class AgentRuntime(
             for ((i, call) in calls.withIndex()) {
                 val outcome = executeCall(call, tools, trust, overLimit = callsMade + i >= MaxToolCallsPerTurn)
                 emit(AgentEvent.ToolCallFinished(outcome))
+                when (outcome.status) {
+                    ToolCallStatus.Error, ToolCallStatus.Refused, ToolCallStatus.Timeout -> failedInARow++
+                    ToolCallStatus.Ok -> failedInARow = 0
+                    else -> Unit
+                }
                 val result = ChatMessage(MessageRole.Tool, outcome.output, toolCallId = call.id)
                 history += result
                 // Every result counts, an error or a refusal as much as an ok: the stored history the chat rebuilds
@@ -339,6 +358,9 @@ class AgentRuntime(
     companion object {
         /** Calls per turn, then the model has to answer. */
         const val MaxToolCallsPerTurn = 5
+
+        /** Failed calls in a row, then the model has to answer. */
+        const val MaxFailedCallsInARow = 2
 
         /** Tokens of one tool result the model sees. */
         const val ResultTokenBudget = 512

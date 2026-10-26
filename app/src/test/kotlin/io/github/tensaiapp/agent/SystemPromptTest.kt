@@ -74,12 +74,14 @@ class SystemPromptTest {
         assertTrue(text.contains("Reply in the language of the user's last message."))
         assertTrue(text.contains("This conversation started on Saturday, 24 October 2026."))
         assertFalse(text.contains("tool"))
+        assertFalse(text.contains("stories"))
     }
 
     @Test
     fun aToolLineIsOnlyThereWhenItsToolIsOffered() {
         val bare = BasePrompt.render(setOf("calculate"), day)
         assertTrue(bare.contains("Never invent a tool result."))
+        assertTrue(bare.contains("Write stories, poems, letters and other texts yourself, with no tool."))
         assertFalse(bare.contains("ask_user"))
         assertFalse(bare.contains("web_search"))
         assertFalse(bare.contains("call datetime"))

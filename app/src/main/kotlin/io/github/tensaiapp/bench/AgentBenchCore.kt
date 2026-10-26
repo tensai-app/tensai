@@ -10,6 +10,7 @@ import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.ReasoningBudget
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.QueueBusyException
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -93,12 +95,16 @@ fun benchTrigger(
  * One prompt of the bench list.
  *
  * @param expected the tools any of which is a correct call, empty when the right answer calls none.
+ * @param maxTokens each reply of the turn answers in at most this many tokens, reasoning left to the run's own cap,
+ *   `null` for the run's own cap: a long-form ask is judged on its calls, not on the text, so it costs seconds instead
+ *   of minutes.
  */
-data class BenchPrompt(val id: String, val prompt: String, val expected: Set<String>)
+data class BenchPrompt(val id: String, val prompt: String, val expected: Set<String>, val maxTokens: Int? = null)
 
 /**
- * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected"}]}`, `expected` being `"none"`, a tool
- * name or an array of tool names. Throws on a malformed file: a bench run on half a list would compare nothing.
+ * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?}]}`, `expected` being
+ * `"none"`, a tool name or an array of tool names, `max_tokens` a positive count. Throws on a malformed file: a bench
+ * run on half a list would compare nothing.
  */
 fun parseBenchPrompts(json: String): List<BenchPrompt> {
     val prompts = Json.parseToJsonElement(json).jsonObject.getValue("prompts").jsonArray.map { element ->
@@ -108,7 +114,9 @@ fun parseBenchPrompts(json: String): List<BenchPrompt> {
             else -> value.jsonPrimitive.content.let { if (it == NoTool) emptySet() else setOf(it) }
         }
         require(NoTool !in expected) { "'$NoTool' cannot be one of several expected tools" }
-        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected)
+        val maxTokens = entry["max_tokens"]?.jsonPrimitive?.int
+        require(maxTokens == null || maxTokens > 0) { "max_tokens must be positive, got $maxTokens" }
+        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens)
     }
     val duplicate = prompts.groupBy { it.id }.filterValues { it.size > 1 }.keys
     require(duplicate.isEmpty()) { "duplicate prompt ids: $duplicate" }
@@ -203,6 +211,8 @@ class RefusingGate : ConfirmationGate {
  * @param stopsRun the queue refused the turn (busy, or the model gone): the prompts after it would only fail the same way.
  * @param namedInText offered tools a reply that made no call wrote out as if calling them ([toolsNamedInText]): a call
  *   the few-shot examples taught as text, which no verdict would count otherwise.
+ * @param truncatedCalls offered tools a reply cut by the token cap had opened a call to: the engine drops a half-written
+ *   call, the verdict counts it as made.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -218,6 +228,7 @@ data class BenchResult(
     val prefixCold: Boolean = false,
     val stopsRun: Boolean = false,
     val namedInText: List<String> = emptyList(),
+    val truncatedCalls: List<String> = emptyList(),
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -245,6 +256,7 @@ data class BenchResult(
         put("stop", stopReason)
         if (prefixCold) put("prefix_cold", true)
         if (namedInText.isNotEmpty()) put("named_in_text", JsonArray(namedInText.map { JsonPrimitive(it) }))
+        if (truncatedCalls.isNotEmpty()) put("truncated_calls", JsonArray(truncatedCalls.map { JsonPrimitive(it) }))
         error?.let { put("error", it) }
     }.toString()
 
@@ -336,7 +348,8 @@ data class BenchSummary(
  * user message on [sampling], nothing stored: the request a first send of a new chat builds, minus the saved facts
  * and the user's instructions (so a run does not depend on what the user set).
  *
- * @param system the system message every request opens with, the warmed prefix included, `null` for none.
+ * @param system the system message of a request offering the tools it is given (by name), handed to [AgentRuntime.run]
+ *   as a chat does: a prompt the runtime runs with no tools gets the no-tools text. `null` for none.
  * @param countTokens tokens of a text under the loaded model's tokenizer, `null` when it cannot be counted.
  */
 class BenchRunner(
@@ -346,12 +359,14 @@ class BenchRunner(
     private val sampling: SamplingConfig,
     private val countTokens: suspend (String) -> Int?,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val system: String? = null,
+    private val system: ((Set<String>) -> String?)? = null,
 ) {
-    private val systemMessages = listOfNotNull(system?.let { ChatMessage(MessageRole.System, it) })
-
-    /** The request the tool prefix is warmed from: the system message, no history, the tools a turn gets. */
-    fun prefixRequest(): DecodeRequest = DecodeRequest(systemMessages, sampling, tools = runtime.definitions())
+    /** The request the tool prefix is warmed from: the system message of the tools a turn gets, no history, those tools. */
+    fun prefixRequest(): DecodeRequest = DecodeRequest(
+        listOfNotNull(system?.invoke(availableTools())?.let { ChatMessage(MessageRole.System, it) }),
+        sampling,
+        tools = runtime.definitions(),
+    )
 
     /** The names of the tools a prompt offers right now, read as [AgentRuntime.run] reads them. */
     fun availableTools(): Set<String> = runtime.definitions().mapTo(LinkedHashSet()) { it.name }
@@ -359,7 +374,7 @@ class BenchRunner(
     /** Runs [prompt] in a fresh one-message conversation, [prefixCold] when the tool prefix was not warmed before it. */
     suspend fun run(prompt: BenchPrompt, prefixCold: Boolean = false): BenchResult {
         gate.drain()
-        val request = DecodeRequest(systemMessages + ChatMessage(MessageRole.User, prompt.prompt), sampling)
+        val request = DecodeRequest(listOf(ChatMessage(MessageRole.User, prompt.prompt)), prompt.maxTokens?.let(::capped) ?: sampling)
         val available = availableTools()
         val startedAt = clock()
         var ttftMs: Long? = null
@@ -368,16 +383,26 @@ class BenchRunner(
         val reasonings = mutableListOf<String>()
         val calls = mutableListOf<ToolCall>()
         val named = LinkedHashSet<String>()
+        var opened = emptyList<String>()
+        val truncatedCalls = mutableListOf<String>()
         var tokens = 0
         var stopReason: String? = null
         var error: Throwable? = null
-        runtime.run(request, generator).collect { event ->
+        runtime.run(request, generator, system).collect { event ->
             when (event) {
-                is AgentEvent.ReplyStarted -> reasoning = null
-                is AgentEvent.Parsed -> reasoning = event.reasoning
+                is AgentEvent.ReplyStarted -> {
+                    reasoning = null
+                    opened = emptyList()
+                }
+                is AgentEvent.Parsed -> {
+                    reasoning = event.reasoning
+                    opened = event.toolCalls
+                }
                 is AgentEvent.ReplyFinished -> {
                     if (replies++ == 0) ttftMs = event.stats?.ttftMs
                     calls += event.calls
+                    // The last name may be cut short: only a tool the prompt offered counts.
+                    if (event.truncated && event.calls.isEmpty()) truncatedCalls += opened.filter { it in available }
                     if (event.calls.isEmpty()) event.content?.let { named += toolsNamedInText(it, available) }
                     reasoning?.takeIf { it.isNotBlank() }?.let { reasonings += it }
                     tokens += event.stats?.tokensGenerated ?: 0
@@ -394,7 +419,7 @@ class BenchRunner(
             prompt = prompt,
             calls = calls,
             refused = gate.drain().map { it.name },
-            verdict = BenchVerdict.of(prompt.expected, calls.map { it.name }, available, failed = error != null),
+            verdict = BenchVerdict.of(prompt.expected, calls.map { it.name } + truncatedCalls, available, failed = error != null),
             tokens = tokens,
             reasoningTokens = reasoningTokens,
             ttftMs = ttftMs,
@@ -404,6 +429,19 @@ class BenchRunner(
             prefixCold = prefixCold,
             stopsRun = error is QueueBusyException,
             namedInText = named.toList(),
+            truncatedCalls = truncatedCalls,
+        )
+    }
+
+    /**
+     * [sampling] with its answer held to [maxTokens]. The reasoning keeps the run's own cap, so the model decides on a
+     * call as it would in a chat: the total is then that cap plus [maxTokens], the sum the engine holds a decode to.
+     */
+    private fun capped(maxTokens: Int): SamplingConfig = when (val budget = sampling.reasoningBudget) {
+        null -> sampling.copy(maxTokens = maxTokens)
+        else -> sampling.copy(
+            maxTokens = budget.reasoningMaxTokens + maxTokens,
+            reasoningBudget = ReasoningBudget(budget.reasoningMaxTokens, maxTokens, budget.endMarker),
         )
     }
 }
