@@ -31,7 +31,6 @@ import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.Input
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.DropdownMenu
@@ -64,7 +63,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -281,11 +279,12 @@ private fun DecodeHome(runs: List<DecodeRun>, onPickModel: (() -> Unit)?) {
         }
         val knobsOn = cpu && !reloading
         KnobRow(stringResource(R.string.bench_knob_threads), "n_threads", enabled = knobsOn) {
-            PillSegments(
+            BenchSegmented(
                 options = CpuLoadKnobs.DecodeThreadChoices.map { SegmentOption(it?.toString() ?: stringResource(R.string.bench_knob_auto)) },
                 selected = CpuLoadKnobs.DecodeThreadChoices.indexOf(knobs.decodeThreads),
                 onSelect = { CpuLoadOverride.set(knobs.copy(decodeThreads = CpuLoadKnobs.DecodeThreadChoices[it])) },
                 enabled = knobsOn,
+                mono = true,
             )
         }
         RowDivider()
@@ -298,7 +297,7 @@ private fun DecodeHome(runs: List<DecodeRun>, onPickModel: (() -> Unit)?) {
             enabled = knobsOn,
             note = if (faLocked) stringResource(R.string.decode_fa_locked) else null,
         ) {
-            PillSegments(
+            BenchSegmented(
                 options = modes.map { mode ->
                     SegmentOption(
                         label = stringResource(
@@ -315,16 +314,18 @@ private fun DecodeHome(runs: List<DecodeRun>, onPickModel: (() -> Unit)?) {
                 selected = modes.indexOf(knobs.effectiveFlashAttn),
                 onSelect = { CpuLoadOverride.set(knobs.copy(flashAttn = modes[it])) },
                 enabled = knobsOn,
+                mono = true,
             )
         }
         RowDivider()
         val kvChoices = listOf(null) + KvKnob.entries
         KnobRow(stringResource(R.string.bench_knob_kv), "type_k · type_v", enabled = knobsOn) {
-            PillSegments(
+            BenchSegmented(
                 options = kvChoices.map { SegmentOption(it?.arg ?: stringResource(R.string.bench_knob_auto)) },
                 selected = kvChoices.indexOf(knobs.kv),
                 onSelect = { CpuLoadOverride.set(knobs.withKv(kvChoices[it])) },
                 enabled = knobsOn,
+                mono = true,
             )
         }
         RowDivider()
@@ -348,10 +349,11 @@ private fun DecodeHome(runs: List<DecodeRun>, onPickModel: (() -> Unit)?) {
         }
         RowDivider()
         KnobRow(stringResource(R.string.decode_knob_tokens), null) {
-            PillSegments(
+            BenchSegmented(
                 options = DecodeCurve.EvalTokenChoices.map { SegmentOption(it.toString()) },
                 selected = DecodeCurve.EvalTokenChoices.indexOf(tokens),
                 onSelect = { tokens = DecodeCurve.EvalTokenChoices[it] },
+                mono = true,
             )
         }
     }
@@ -469,38 +471,6 @@ private fun KnobRow(title: String, hint: String?, enabled: Boolean = true, monoH
         }
         control()
         if (note != null) Text(note, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** One option of [PillSegments]: its mono [label], whether it can be picked, an optional leading icon. */
-private data class SegmentOption(val label: String, val enabled: Boolean = true, val icon: ImageVector? = null)
-
-/** A row of mono pill segments, the [selected] one in the surface color with primary text, as Compare's control. */
-@Composable
-private fun PillSegments(options: List<SegmentOption>, selected: Int, onSelect: (Int) -> Unit, enabled: Boolean = true) {
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            options.forEachIndexed { i, option ->
-                val on = i == selected
-                Surface(
-                    onClick = { onSelect(i) },
-                    enabled = enabled && option.enabled,
-                    shape = CircleShape,
-                    color = if (on) MaterialTheme.colorScheme.surface else Color.Transparent,
-                    contentColor = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f).alpha(if (option.enabled) 1f else 0.38f),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
-                        modifier = Modifier.heightIn(min = 32.dp).padding(horizontal = 4.dp, vertical = 6.dp),
-                    ) {
-                        option.icon?.let { Icon(it, contentDescription = null, modifier = Modifier.size(13.dp)) }
-                        Text(option.label, fontFamily = TensaiMono, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -646,12 +616,20 @@ private fun elapsedClock(ms: Long): String {
 private fun PointStepper(points: List<Int>, progress: DecodeProgress) {
     val tints = MaterialTheme.tensaiTints
     val success = MaterialTheme.tensaiColors.success
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    // Top-aligned, the lines dropped by half a circle less half their width: through the circles' centers, whatever
+    // the labels under them measure.
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
         points.forEachIndexed { i, ctx ->
             val done = progress.done.any { it.ctx == ctx }
             val current = ctx == progress.current && !done
             if (i > 0) {
-                Box(Modifier.weight(1f).height(2.dp).background(if (done || current) success else tints.outline))
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .padding(top = (StepSize - StepLine) / 2)
+                        .height(StepLine)
+                        .background(if (done || current) success else tints.outline),
+                )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Surface(
@@ -671,7 +649,7 @@ private fun PointStepper(points: List<Int>, progress: DecodeProgress) {
                         done -> null
                         else -> BorderStroke(1.dp, tints.outlineStrong)
                     },
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier.size(StepSize),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         when {
@@ -690,6 +668,9 @@ private fun PointStepper(points: List<Int>, progress: DecodeProgress) {
         }
     }
 }
+
+private val StepSize = 30.dp
+private val StepLine = 2.dp
 
 /** The point being measured: its phase, the live rate, a bar, and what comes next or what the prefill took. */
 @Composable

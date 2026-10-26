@@ -26,7 +26,6 @@
     <string name="bench_tab_agent">Agent</string>
     <string name="bench_eyebrow_agent">Agent bench</string>
     <string name="bench_eyebrow_saved">Saved runs</string>
-    <string name="bench_new_run">New run</string>
     <string name="bench_no_model">No model loaded</string>
     <plurals name="bench_prompts_count">
         <item quantity="one">%d prompt</item>
@@ -45,11 +44,16 @@
     <string name="bench_repetitions_more">More repetitions</string>
     <!-- %d is prompts times repetitions. -->
     <plurals name="bench_run_calls">
-        <item quantity="one">Run · %d call</item>
-        <item quantity="other">Run · %d calls</item>
+        <item quantity="one">Run agent bench · %d call</item>
+        <item quantity="other">Run agent bench · %d calls</item>
+    </plurals>
+    <!-- %1$d prompts times %2$d repetitions. -->
+    <plurals name="bench_run_breakdown">
+        <item quantity="one">%1$d prompt × %2$d</item>
+        <item quantity="other">%1$d prompts × %2$d</item>
     </plurals>
     <string name="bench_choose_model">Choose a model</string>
-    <string name="bench_run_plain">Run</string>
+    <string name="bench_run_plain">Run agent bench</string>
     <string name="bench_running_eyebrow">Running</string>
     <plurals name="bench_of_prompts">
         <item quantity="one">of %d prompt</item>

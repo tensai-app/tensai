@@ -172,11 +172,10 @@ internal fun BenchPromptScreen(runId: String, promptId: String, runKey: String, 
 /** One pill per repetition: "Rep 1" and its verdict's icon and code. */
 @Composable
 private fun RepTabs(trials: List<BenchTrial>, selected: Int, onSelect: (Int) -> Unit) {
-    Segmented(
-        options = trials.map { stringResource(R.string.bench_rep, it.rep) + " · " + it.benchVerdict.short },
+    BenchSegmented(
+        options = trials.map { SegmentOption(stringResource(R.string.bench_rep, it.rep) + " · " + it.benchVerdict.short, icon = verdictStyle(it.benchVerdict).icon) },
         selected = selected,
         onSelect = onSelect,
-        icons = trials.map { verdictStyle(it.benchVerdict).icon },
     )
 }
 

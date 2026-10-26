@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -113,8 +116,9 @@ internal enum class BenchTab { Agent, Decode }
 
 /**
  * Settings > Bench (TEN-187), debug builds only: the shared top bar and tab row, then the Agent tab or the Decode tab
- * ([DecodeTab]). The Agent tab: a new run card (the [BenchTrigger] toggles and repetitions) or, while [AgentBench]
- * runs, its progress; under it the saved runs of [BenchRunStore], with selection for a comparison. The screen stays on
+ * ([DecodeTab]). The Agent tab, laid out like Decode (TEN-194): the loaded model, the settings (the [BenchTrigger]
+ * toggles and repetitions) and Run or, while [AgentBench] runs, its progress; under it the saved runs of
+ * [BenchRunStore] in one card, with selection for a comparison. The screen stays on
  * while a run of either goes.
  *
  * Both tabs' model rows open the chat's model picker ([ModelPickerSheet]), so a model is loaded or switched without
@@ -207,7 +211,7 @@ internal fun ChooseModelHint() {
     Text(stringResource(R.string.bench_choose_model), fontSize = 12.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
 }
 
-/** The Agent tab: the new run card or the run going on, then the saved runs. */
+/** The Agent tab: the loaded model, settings and Run, or the run going on; then the saved runs. */
 @Composable
 private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit)?) {
     val context = LocalContext.current
@@ -224,9 +228,13 @@ private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item(key = "new") {
-                Eyebrow(stringResource(R.string.bench_eyebrow_agent))
                 val current = progress
-                if (current != null) RunningCard(current) else NewRunCard(status, onPickModel)
+                if (current != null) {
+                    Eyebrow(stringResource(R.string.bench_eyebrow_agent))
+                    RunningCard(current)
+                } else {
+                    NewRun(status, onPickModel)
+                }
             }
             item(key = "saved") {
                 Eyebrow(stringResource(R.string.bench_eyebrow_saved), trailing = runs?.size?.toString())
@@ -235,14 +243,23 @@ private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit
             if (list != null && list.isEmpty()) {
                 item(key = "empty") { EmptyRuns() }
             }
-            items(list.orEmpty(), key = { it.id }) { run ->
-                SavedRunCard(
-                    run = run,
-                    selected = run.id in liveSelected,
-                    onToggle = { selected = if (run.id in liveSelected) liveSelected - run.id else liveSelected + run.id },
-                    onOpen = { onCompare(listOf(run.id)) },
-                    onDelete = { store.delete(run.id) },
-                )
+            if (!list.isNullOrEmpty()) {
+                item(key = "runs") {
+                    BenchCard {
+                        list.forEachIndexed { i, run ->
+                            if (i > 0) RowDivider()
+                            key(run.id) {
+                                SavedRunRow(
+                                    run = run,
+                                    selected = run.id in liveSelected,
+                                    onToggle = { selected = if (run.id in liveSelected) liveSelected - run.id else liveSelected + run.id },
+                                    onOpen = { onCompare(listOf(run.id)) },
+                                    onDelete = { store.delete(run.id) },
+                                )
+                            }
+                        }
+                    }
+                }
             }
             item(key = "foot") { Spacer(Modifier.heightIn(min = if (liveSelected.isEmpty()) 24.dp else 96.dp)) }
         }
@@ -304,7 +321,7 @@ internal fun BenchCard(modifier: Modifier = Modifier, border: BorderStroke? = nu
 }
 
 /**
- * The new run card's settings, kept for the process: the card leaves the screen while a run goes, and the next run
+ * The run settings, kept for the process: the settings card leaves the screen while a run goes, and the next run
  * starts from the last one's settings rather than the defaults.
  */
 private object LastRunSettings {
@@ -316,9 +333,12 @@ private object LastRunSettings {
     val repetitions = mutableIntStateOf(1)
 }
 
-/** The run settings, the repetitions and Run. Off with a reason when no model is loaded; the last failure under it. */
+/**
+ * LOADED MODEL (the picker's row), SETTINGS (the toggles and the repetitions), then Run under the card with what it
+ * runs in mono. Run is off with no model or while the bench gate is held; the last failure under it.
+ */
 @Composable
-private fun NewRunCard(status: BenchStatus, onPickModel: (() -> Unit)?) {
+private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
     val context = LocalContext.current
     val reducedMotion = rememberReducedMotion()
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
@@ -338,29 +358,30 @@ private fun NewRunCard(status: BenchStatus, onPickModel: (() -> Unit)?) {
     var greedy by LastRunSettings.greedy
     var repetitions by LastRunSettings.repetitions
 
+    Eyebrow(stringResource(R.string.decode_eyebrow_loaded))
     BenchCard {
         ModelRow(onPickModel) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.bench_new_run), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 if (resident == null) {
-                    Text(stringResource(R.string.bench_no_model), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.bench_no_model), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
                     if (onPickModel != null) ChooseModelHint()
                 } else {
                     Text(
-                        text = listOfNotNull(listOfNotNull(entity?.shownName ?: resident.name, entity?.quantLabel?.takeIf { it.isNotBlank() }).joinToString(" "), backendName(resident.backend)).joinToString(" · "),
+                        text = listOfNotNull(entity?.shownName ?: resident.name, entity?.quantLabel?.takeIf { it.isNotBlank() }, backendName(resident.backend)).joinToString(" · "),
                         fontFamily = TensaiMono,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            promptCount?.let {
-                Text(pluralStringResource(R.plurals.bench_prompts_count, it, it), fontFamily = TensaiMono, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
         }
-        RowDivider()
+    }
+
+    Eyebrow(stringResource(R.string.decode_eyebrow_settings))
+    BenchCard {
         ToggleRow(stringResource(R.string.bench_thinking), stringResource(R.string.bench_thinking_sub), thinking, reducedMotion) { thinking = it }
         RowDivider()
         ToggleRow(stringResource(R.string.bench_base_prompt), stringResource(R.string.bench_base_prompt_sub), basePrompt, reducedMotion) { basePrompt = it }
@@ -382,20 +403,31 @@ private fun NewRunCard(status: BenchStatus, onPickModel: (() -> Unit)?) {
             }
             Stepper(repetitions, 1..BenchTrigger.MaxRepetitions) { repetitions = it }
         }
-        RowDivider()
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // No count until the list is read: "0 calls" would be a number nothing measured.
-            val calls = promptCount?.let { it * repetitions }
-            TensaiButton(
-                text = calls?.let { pluralStringResource(R.plurals.bench_run_calls, it, it) } ?: stringResource(R.string.bench_run_plain),
-                onClick = { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy), context) },
-                icon = Icons.Rounded.PlayArrow,
-                enabled = resident != null && promptCount != null && !gateBusy,
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // No count until the list is read: "0 calls" would be a number nothing measured.
+        val prompts = promptCount
+        TensaiButton(
+            text = prompts?.let { pluralStringResource(R.plurals.bench_run_calls, it * repetitions, it * repetitions) } ?: stringResource(R.string.bench_run_plain),
+            onClick = { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy), context) },
+            icon = Icons.Rounded.PlayArrow,
+            enabled = resident != null && prompts != null && !gateBusy,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (prompts != null) {
+            Text(
+                text = pluralStringResource(R.plurals.bench_run_breakdown, prompts, prompts, repetitions),
+                fontFamily = TensaiMono,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (resident != null && status is BenchStatus.Failed) {
-                Text(stringResource(R.string.bench_failed, status.message), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.error)
-            }
+        }
+        if (resident != null && status is BenchStatus.Failed) {
+            Text(stringResource(R.string.bench_failed, status.message), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -553,10 +585,14 @@ private fun EmptyRuns() {
     }
 }
 
-/** A saved run: checkbox, when, partial badge, model, config chips, the stacked bar and its legend, the medians. Swipe to delete. */
+/**
+ * A saved run, one row of the SAVED RUNS card: checkbox, when, partial badge, model, config chips, the stacked bar and
+ * its legend, the medians. A primary-08 band when selected, on an opaque row so the swipe's delete underlay only shows
+ * while swiping. Swipe to delete.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SavedRunCard(run: BenchRun, selected: Boolean, onToggle: () -> Unit, onOpen: () -> Unit, onDelete: () -> Unit) {
+private fun SavedRunRow(run: BenchRun, selected: Boolean, onToggle: () -> Unit, onOpen: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val totals = remember(run) { RunTotals.of(run.results) }
@@ -570,14 +606,13 @@ private fun SavedRunCard(run: BenchRun, selected: Boolean, onToggle: () -> Unit,
     SwipeToDismissBox(
         state = dismiss,
         enableDismissFromStartToEnd = false,
-        modifier = Modifier.padding(bottom = 10.dp),
         backgroundContent = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.tensaiTints.error12, TensaiShapes.large)
+                    .background(MaterialTheme.tensaiTints.error12)
                     .padding(horizontal = 20.dp),
             ) {
                 Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
@@ -585,11 +620,12 @@ private fun SavedRunCard(run: BenchRun, selected: Boolean, onToggle: () -> Unit,
             }
         },
     ) {
-        BenchCard(
-            border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.tensaiTints.outline),
-            onClick = onOpen,
-        ) {
-            Column(modifier = Modifier.padding(start = 6.dp, end = 4.dp, top = 6.dp, bottom = 12.dp)) {
+        Surface(onClick = onOpen, color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .background(if (selected) MaterialTheme.tensaiTints.primary08 else Color.Transparent)
+                    .padding(start = 6.dp, end = 4.dp, top = 6.dp, bottom = 12.dp),
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onToggle) {
                         Icon(

@@ -246,8 +246,8 @@ private fun ChartCard(metric: Int, onMetric: (Int) -> Unit, maxCtx: Int, valueLa
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                Segmented(
-                    options = listOf(stringResource(R.string.decode_chart_decode), stringResource(R.string.decode_chart_prefill)),
+                BenchSegmented(
+                    options = listOf(SegmentOption(stringResource(R.string.decode_chart_decode)), SegmentOption(stringResource(R.string.decode_chart_prefill))),
                     selected = metric,
                     onSelect = onMetric,
                 )

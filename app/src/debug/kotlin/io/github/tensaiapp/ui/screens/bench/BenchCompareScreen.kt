@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -110,14 +108,13 @@ internal fun BenchCompareScreen(runIds: List<String>, onBack: () -> Unit, onOpen
             SummaryCard(totals)
             Eyebrow(stringResource(R.string.bench_eyebrow_prompts))
             if (runs.size > 1) {
-                Segmented(
+                BenchSegmented(
                     options = listOf(
-                        stringResource(R.string.bench_filter_all, rows.size),
-                        stringResource(R.string.bench_filter_changed, changedCount),
+                        SegmentOption(stringResource(R.string.bench_filter_all, rows.size)),
+                        SegmentOption(stringResource(R.string.bench_filter_changed, changedCount), icon = Icons.Rounded.FilterList),
                     ),
                     selected = if (onlyChanged) 1 else 0,
                     onSelect = { onlyChanged = it == 1 },
-                    icons = listOf(null, Icons.Rounded.FilterList),
                 )
                 Box(Modifier.height(10.dp))
             }
@@ -293,32 +290,6 @@ private fun SummaryCell(totals: RunTotals, metric: SummaryMetric, best: Boolean,
     }
 }
 
-/** A pill segmented control: [options], one [selected]. */
-@Composable
-internal fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, icons: List<ImageVector?> = emptyList()) {
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
-        Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            options.forEachIndexed { i, label ->
-                val on = i == selected
-                Surface(
-                    onClick = { onSelect(i) },
-                    shape = CircleShape,
-                    color = if (on) MaterialTheme.colorScheme.surface else Color.Transparent,
-                    contentColor = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        modifier = Modifier.heightIn(min = 32.dp).padding(horizontal = 12.dp, vertical = 6.dp),
-                    ) {
-                        icons.getOrNull(i)?.let { Icon(it, contentDescription = null, modifier = Modifier.size(15.dp)) }
-                        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                }
-            }
-        }
-    }
-}
 
 private val RowHeight = 40.dp
 private val IdColumn = 120.dp

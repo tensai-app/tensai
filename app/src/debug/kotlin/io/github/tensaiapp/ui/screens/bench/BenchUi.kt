@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -40,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -51,6 +54,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -181,6 +185,59 @@ private fun Modifier.dashedPill(color: Color): Modifier = drawBehind {
         cornerRadius = CornerRadius(size.height / 2),
         style = Stroke(width = stroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))),
     )
+}
+
+/** One option of [BenchSegmented]: its [label], whether it can be picked, an optional leading icon. */
+internal data class SegmentOption(val label: String, val enabled: Boolean = true, val icon: ImageVector? = null)
+
+/**
+ * The bench's segmented control, every one of them: a surface-variant pill track, 3dp inside, 2dp between segments; the
+ * selected segment in the surface color with primary text, the others transparent. The selected pill fills the track's
+ * height: segments are plain selectable rows, not clickable Surfaces, whose minimum touch size would pad the track
+ * around a shorter pill. [mono] is the knobs' style: segments of equal width across the row, mono labels; off, segments
+ * as wide as their label, Figtree. An option that is not [SegmentOption.enabled] is dimmed and takes no taps, nor does
+ * any when [enabled] is false.
+ */
+@Composable
+internal fun BenchSegmented(
+    options: List<SegmentOption>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    mono: Boolean = false,
+) {
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = if (mono) modifier.fillMaxWidth() else modifier) {
+        Row(modifier = Modifier.height(IntrinsicSize.Min).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            options.forEachIndexed { i, option ->
+                val on = i == selected
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(if (mono) 3.dp else 5.dp, Alignment.CenterHorizontally),
+                    modifier = Modifier
+                        .then(if (mono) Modifier.weight(1f) else Modifier)
+                        .fillMaxHeight()
+                        .alpha(if (option.enabled) 1f else 0.38f)
+                        .clip(CircleShape)
+                        .background(if (on) MaterialTheme.colorScheme.surface else Color.Transparent)
+                        .selectable(selected = on, enabled = enabled && option.enabled, role = Role.Tab, onClick = { onSelect(i) })
+                        .heightIn(min = 32.dp)
+                        .padding(horizontal = if (mono) 4.dp else 12.dp, vertical = 6.dp),
+                ) {
+                    val content = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    option.icon?.let { Icon(it, contentDescription = null, tint = content, modifier = Modifier.size(if (mono) 13.dp else 15.dp)) }
+                    Text(
+                        text = option.label,
+                        fontFamily = if (mono) TensaiMono else null,
+                        fontSize = if (mono) 12.5.sp else 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = content,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** The DEBUG badge of the bench top bars: warning tint pill, mono. */

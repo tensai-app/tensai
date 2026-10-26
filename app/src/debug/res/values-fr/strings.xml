@@ -23,7 +23,6 @@
     <string name="bench_tab_agent">Agent</string>
     <string name="bench_eyebrow_agent">Banc agent</string>
     <string name="bench_eyebrow_saved">Runs enregistrés</string>
-    <string name="bench_new_run">Nouveau run</string>
     <string name="bench_no_model">Aucun modèle chargé</string>
     <plurals name="bench_prompts_count">
         <item quantity="one">%d prompt</item>
@@ -42,12 +41,17 @@
     <string name="bench_repetitions_less">Moins de répétitions</string>
     <string name="bench_repetitions_more">Plus de répétitions</string>
     <plurals name="bench_run_calls">
-        <item quantity="one">Lancer · %d appel</item>
-        <item quantity="many">Lancer · %d appels</item>
-        <item quantity="other">Lancer · %d appels</item>
+        <item quantity="one">Lancer le banc agent · %d appel</item>
+        <item quantity="many">Lancer le banc agent · %d appels</item>
+        <item quantity="other">Lancer le banc agent · %d appels</item>
+    </plurals>
+    <plurals name="bench_run_breakdown">
+        <item quantity="one">%1$d prompt × %2$d</item>
+        <item quantity="many">%1$d prompts × %2$d</item>
+        <item quantity="other">%1$d prompts × %2$d</item>
     </plurals>
     <string name="bench_choose_model">Choisir un modèle</string>
-    <string name="bench_run_plain">Lancer</string>
+    <string name="bench_run_plain">Lancer le banc agent</string>
     <string name="bench_running_eyebrow">En cours</string>
     <plurals name="bench_of_prompts">
         <item quantity="one">sur %d prompt</item>
