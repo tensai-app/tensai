@@ -223,7 +223,8 @@ object DecodeBench {
             device = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
             soc = runCatching { RuntimeGraph.deviceProfiler.profile().socModel }.getOrNull(),
         )
-        _progress.value = DecodeProgress(config, startedAtMs = System.currentTimeMillis(), phase = DecodePhase.WarmUp)
+        // Shown from here, a few milliseconds after the tap: the wait, the handover and the token count can take a while.
+        _progress.value = DecodeProgress(config, startedAtMs = System.currentTimeMillis(), phase = DecodePhase.Preparing)
 
         // A prefix warm-up after a load is worth more than the seconds it takes: let it write its file. Idle at two
         // reads in a row, so one about to start on the load that just ended is not missed.
@@ -237,6 +238,7 @@ object DecodeBench {
             }
             if (idleReads < 2) delay(WarmPollMs)
         }
+        _progress.value = _progress.value?.copy(phase = DecodePhase.Preparing)
 
         val handOver = suspend {
             withContext(NonCancellable) {
@@ -254,7 +256,8 @@ object DecodeBench {
 
         Log.i(TAG, DecodeRunJson.startLine(config))
         val startedAt = System.currentTimeMillis()
-        _progress.value = DecodeProgress(config, startedAt, phase = DecodePhase.WarmUp, phaseStartedAtMs = startedAt)
+        // The elapsed time keeps counting from the tap; the saved run starts here.
+        _progress.value = _progress.value?.copy(phase = DecodePhase.WarmUp, phaseStartedAtMs = startedAt)
         // A warm-up the engine refuses says the points would fail too: no run of error points is saved.
         decode(DecodeCurve.prompt(nonce(), 0), DecodeEstimate.WarmUpTokens).second?.let { error ->
             return fail("the warm-up decode failed (${error.message ?: error::class.simpleName}), curve not run")
@@ -346,6 +349,9 @@ object DecodeBench {
 
 /** Where a running curve is. */
 enum class DecodePhase {
+    /** Accepted, before the first decode: the open chat's session saved, the filler's tokens counted. */
+    Preparing,
+
     /** A prefix warm-up after a load is still going: the curve starts once it is done. */
     Waiting,
 

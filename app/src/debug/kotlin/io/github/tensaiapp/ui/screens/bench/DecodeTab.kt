@@ -677,6 +677,7 @@ private val StepLine = 2.dp
 private fun CurrentPoint(progress: DecodeProgress, now: Long, tokens: Int) {
     val label = progress.current?.let(::ctxLabel)
     val (line, rate, bar, note) = when (progress.phase) {
+        DecodePhase.Preparing -> Quad(stringResource(R.string.decode_preparing), null, null, null)
         DecodePhase.Waiting -> Quad(stringResource(R.string.decode_waiting_title), null, null, null)
         DecodePhase.WarmUp -> Quad(stringResource(R.string.decode_warmup, DecodeEstimate.WarmUpTokens), null, null, null)
         // llama.cpp reports no prefill progress before the first token: the phase alone, an open bar.
@@ -832,11 +833,10 @@ private fun SavedDecodeRow(
                     )
                 }
                 Column(modifier = Modifier.weight(1f).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(run.name ?: startedLabel(run.startedAtMs), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (run.partial) PartialBadge(stringResource(R.string.decode_partial, run.points.size, run.config.points.size))
-                    }
+                    Text(run.name ?: startedLabel(run.startedAtMs), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (run.name != null) Text(startedLabel(run.startedAtMs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // On its own line: beside the date, the headline on the right squeezed it to its first letters.
+                    if (run.partial) PartialBadge(stringResource(R.string.decode_partial, run.points.size, run.config.points.size))
                     Text(
                         text = DecodeRunText.modelText(run.config),
                         fontFamily = TensaiMono,

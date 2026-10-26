@@ -234,4 +234,7 @@
     <string name="decode_eyebrow_decode_tps">Decode tok/s</string>
     <string name="decode_eyebrow_prefill_tps">Prefill tok/s</string>
     <string name="decode_noise_note" formatted="false">Within ±2% counts as noise. Higher is faster for both.</string>
+    <string name="bench_preparing">Preparing: warming the prompt cache</string>
+    <string name="bench_stop_note_preparing">Stopping now saves nothing: no prompt is graded yet.</string>
+    <string name="decode_preparing">preparing the run</string>
 </resources>

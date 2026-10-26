@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tensaiapp.R
 import io.github.tensaiapp.bench.AgentBench
+import io.github.tensaiapp.bench.AgentBenchPreparing
 import io.github.tensaiapp.bench.AgentBenchProgress
 import io.github.tensaiapp.bench.BenchGate
 import io.github.tensaiapp.bench.BenchRun
@@ -141,7 +142,7 @@ internal fun BenchScreen(
     onImport: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(BenchTab.Agent) }
-    val agentRunning = AgentBench.progress.collectAsState().value != null
+    val agentRunning = AgentBench.progress.collectAsState().value != null || AgentBench.preparing.collectAsState().value != null
     val decodeRunning = DecodeBench.progress.collectAsState().value != null
     // The gate is taken before a run's progress shows: it, not the progress, says the engine is spoken for.
     val gateBusy by BenchGate.busy.collectAsState()
@@ -218,6 +219,7 @@ private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit
     val store = remember { BenchRunStore.of(context) }
     val runs by store.runs.collectAsState()
     val progress by AgentBench.progress.collectAsState()
+    val preparing by AgentBench.preparing.collectAsState()
     val status by AgentBench.status.collectAsState()
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { store.refresh() } }
 
@@ -229,9 +231,10 @@ private fun AgentTab(onCompare: (List<String>) -> Unit, onPickModel: (() -> Unit
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item(key = "new") {
                 val current = progress
-                if (current != null) {
+                val getting = preparing
+                if (current != null || getting != null) {
                     Eyebrow(stringResource(R.string.bench_eyebrow_agent))
-                    RunningCard(current)
+                    RunningCard(current, getting)
                 } else {
                     NewRun(status, onPickModel)
                 }
@@ -475,19 +478,23 @@ private fun Stepper(value: Int, range: IntRange, onChange: (Int) -> Unit) {
     }
 }
 
-/** The run going on: count, bar, current prompt, elapsed time, verdicts so far, Stop. Ringed in primary, the one glow. */
+/**
+ * The run going on: count, bar, current prompt, elapsed time, verdicts so far, Stop. Ringed in primary, the one glow.
+ * Before the first prompt ([progress] `null`, [preparing] set: the cache handed over, the tool prefix warmed) it says
+ * so over an open bar, the time already ticking from the tap; Stop then saves nothing.
+ */
 @Composable
-private fun RunningCard(progress: AgentBenchProgress) {
+private fun RunningCard(progress: AgentBenchProgress?, preparing: AgentBenchPreparing?) {
     val tints = MaterialTheme.tensaiTints
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(progress.startedAtMs) {
+    LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
             delay(100)
         }
     }
-    val elapsed = now - progress.startedAtMs
-    val reps = progress.config.repetitions
+    val elapsed = now - (progress?.shownFromMs ?: preparing?.startedAtMs ?: now)
+    val reps = progress?.config?.repetitions ?: 1
     Box(modifier = Modifier.border(4.dp, tints.primary08, TensaiShapes.large).padding(4.dp)) {
         BenchCard(border = BorderStroke(1.dp, tints.primary24)) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -502,7 +509,7 @@ private fun RunningCard(progress: AgentBenchProgress) {
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = modelLine(progress.config),
+                        text = progress?.config?.let(::modelLine) ?: preparing?.model.orEmpty(),
                         fontFamily = TensaiMono,
                         fontSize = 11.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -510,41 +517,54 @@ private fun RunningCard(progress: AgentBenchProgress) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(progress.done.toString(), fontFamily = TensaiMono, fontSize = 36.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                if (progress == null) {
+                    Text(stringResource(R.string.bench_preparing), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                    TensaiProgressBar(progress = null)
+                    RunningFact(stringResource(R.string.bench_elapsed), elapsedText(elapsed))
+                    StopButton()
+                    Text(stringResource(R.string.bench_stop_note_preparing), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(progress.done.toString(), fontFamily = TensaiMono, fontSize = 36.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            text = pluralStringResource(if (reps > 1) R.plurals.bench_of_trials else R.plurals.bench_of_prompts, progress.planned, progress.planned),
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 7.dp),
+                        )
+                    }
+                    TensaiProgressBar(progress = if (progress.planned == 0) null else progress.done.toFloat() / progress.planned)
+                    val current = progress.currentId?.let { id -> if (reps > 1) "$id · rep ${progress.currentRep}/$reps" else id } ?: "..."
+                    RunningFact(stringResource(R.string.bench_current), current)
+                    RunningFact(stringResource(R.string.bench_elapsed), elapsedText(elapsed))
+                    RunningFact(
+                        stringResource(R.string.bench_so_far),
+                        listOf(BenchVerdict.Correct, BenchVerdict.FalseCall, BenchVerdict.Missing, BenchVerdict.WrongTool)
+                            .joinToString(" · ") { "${progress.counts[it] ?: 0} ${it.legendKey}" },
+                        maxLines = 2,
+                    )
+                    StopButton()
                     Text(
-                        text = pluralStringResource(if (reps > 1) R.plurals.bench_of_trials else R.plurals.bench_of_prompts, progress.planned, progress.planned),
-                        fontSize = 14.sp,
+                        text = pluralStringResource(if (reps > 1) R.plurals.bench_stop_note_trials else R.plurals.bench_stop_note, progress.done, progress.done),
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 7.dp),
                     )
                 }
-                TensaiProgressBar(progress = if (progress.planned == 0) null else progress.done.toFloat() / progress.planned)
-                val current = progress.currentId?.let { id -> if (reps > 1) "$id · rep ${progress.currentRep}/$reps" else id } ?: "..."
-                RunningFact(stringResource(R.string.bench_current), current)
-                RunningFact(stringResource(R.string.bench_elapsed), elapsedText(elapsed))
-                RunningFact(
-                    stringResource(R.string.bench_so_far),
-                    listOf(BenchVerdict.Correct, BenchVerdict.FalseCall, BenchVerdict.Missing, BenchVerdict.WrongTool)
-                        .joinToString(" · ") { "${progress.counts[it] ?: 0} ${it.legendKey}" },
-                    maxLines = 2,
-                )
-                TensaiButton(
-                    text = stringResource(R.string.bench_stop),
-                    onClick = AgentBench::stop,
-                    variant = TensaiButtonVariant.Outlined,
-                    icon = Icons.Rounded.Stop,
-                    contentColor = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    text = pluralStringResource(if (reps > 1) R.plurals.bench_stop_note_trials else R.plurals.bench_stop_note, progress.done, progress.done),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
+}
+
+@Composable
+private fun StopButton() {
+    TensaiButton(
+        text = stringResource(R.string.bench_stop),
+        onClick = AgentBench::stop,
+        variant = TensaiButtonVariant.Outlined,
+        icon = Icons.Rounded.Stop,
+        contentColor = MaterialTheme.colorScheme.error,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable

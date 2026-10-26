@@ -72,6 +72,14 @@ object AgentBench {
     /** The run going on, for the bench screen's running card, `null` when none is. */
     val progress: StateFlow<AgentBenchProgress?> = _progress.asStateFlow()
 
+    private val _preparing = MutableStateFlow<AgentBenchPreparing?>(null)
+
+    /**
+     * A run accepted and not grading yet (the cache handed over, the tool prefix warmed: up to a minute), so the screen
+     * shows it from the tap. `null` once [progress] takes over, or when none is.
+     */
+    val preparing: StateFlow<AgentBenchPreparing?> = _preparing.asStateFlow()
+
     @Volatile
     private var job: Job? = null
 
@@ -109,6 +117,10 @@ object AgentBench {
         val app = context.applicationContext
         stopRequested = false
         _status.value = BenchStatus.Running(done = 0, total = null)
+        _preparing.value = AgentBenchPreparing(
+            model = RuntimeGraph.inferenceQueue.state.value.residentModel?.let { "${it.name} · ${backendName(it.backend)}" },
+            startedAtMs = System.currentTimeMillis(),
+        )
         job = RuntimeGraph.applicationScope.launch {
             try {
                 run(trigger, app)
@@ -117,8 +129,11 @@ object AgentBench {
             } catch (e: Exception) {
                 fail("the run threw ${e::class.simpleName}: ${e.message}")
             } finally {
-                // Never left on Running: the panel would wait for good.
-                if (_status.value is BenchStatus.Running) _status.value = BenchStatus.Failed("the run ended without a summary")
+                // Never left on Running: the panel would wait for good. Stopped before grading anything: nothing to say.
+                if (_status.value is BenchStatus.Running) {
+                    _status.value = if (stopRequested) BenchStatus.Idle else BenchStatus.Failed("the run ended without a summary")
+                }
+                _preparing.value = null
                 _progress.value = null
                 job = null
                 BenchGate.leave()
@@ -127,7 +142,10 @@ object AgentBench {
         return true
     }
 
-    /** Stops the run going on, cutting short the prompt it is on: what it graded before is saved as a partial run. */
+    /**
+     * Stops the run going on, cutting short the prompt it is on: what it graded before is saved as a partial run. Still
+     * [preparing], nothing is graded and nothing saved.
+     */
     fun stop() {
         stopRequested = true
         job?.cancel()
@@ -227,7 +245,8 @@ object AgentBench {
         // Kept here rather than returned: a stopped run never returns, and what it graded is still saved.
         val results = mutableListOf<BenchResult>()
         var stopReason: String? = null
-        _progress.value = AgentBenchProgress(config, startedAt, planned)
+        _progress.value = AgentBenchProgress(config, startedAt, planned, shownFromMs = _preparing.value?.startedAtMs ?: startedAt)
+        _preparing.value = null
         runThenSave(
             results,
             stopRequested = { stopRequested },
@@ -284,17 +303,23 @@ object AgentBench {
     }
 }
 
+/** A run accepted and getting ready, for the running card: the [model] line (`null` with none loaded) and when the tap was. */
+data class AgentBenchPreparing(val model: String?, val startedAtMs: Long)
+
 /**
  * The agent bench run going on, for the bench screen: what it runs with, when it started, how far it is.
  *
  * @param planned trials to grade, prompts times repetitions.
  * @param currentId the prompt being run and [currentRep] its repetition, `null` before the first.
  * @param counts the verdicts graded so far.
+ * @param shownFromMs when the screen counts the elapsed time from: the tap, before the preparation, where [startedAtMs]
+ *   (the saved run's) is when grading began.
  */
 data class AgentBenchProgress(
     val config: BenchRunConfig,
     val startedAtMs: Long,
     val planned: Int,
+    val shownFromMs: Long = startedAtMs,
     val done: Int = 0,
     val currentId: String? = null,
     val currentRep: Int = 0,

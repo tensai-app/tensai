@@ -219,4 +219,7 @@
     <string name="decode_eyebrow_decode_tps">Décodage tok/s</string>
     <string name="decode_eyebrow_prefill_tps">Prefill tok/s</string>
     <string name="decode_noise_note" formatted="false">À ±2% près, c\'est du bruit. Plus haut est plus rapide pour les deux.</string>
+    <string name="bench_preparing">Préparation : préchauffe du cache de prompt</string>
+    <string name="bench_stop_note_preparing">Arrêter maintenant n\'enregistre rien : aucun prompt n\'est encore noté.</string>
+    <string name="decode_preparing">préparation du run</string>
 </resources>
