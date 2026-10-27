@@ -199,10 +199,48 @@ class InferenceQueueToolPrefixTest {
 
         queue.warmToolPrefix(request, info)
         engine.usedCells = 40
-        queue.warmToolPrefix(request.copy(tools = emptyList()), info)
+        queue.warmToolPrefix(request.copy(tools = request.tools + ToolDefinition("phone", "opens an app", "{}")), info)
 
         assertEquals(listOf(false, true), engine.replaceFlags)
         assertTrue(queue.holdsOnlyWarmedPrefix())
+    }
+
+    @Test
+    fun aWarmUpWithoutToolsLeavesThePrefixAndTheNextGenerationAlone() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+
+        queue.warmToolPrefix(request, info)
+        engine.usedCells = 40
+        assertEquals(WarmUpOutcome.Skipped, queue.warmToolPrefix(request.copy(tools = emptyList()), info))
+        queue.generate(request.copy(messages = request.messages + ChatMessage(MessageRole.User, "hi"))).toList()
+
+        assertEquals("the prefix built first is still the one resident", listOf("prefix-start", "prefix-end", "decode"), engine.events)
+        assertEquals(listOf(false), engine.replaceFlags)
+        assertTrue(queue.holdsPrefixOf(request))
+    }
+
+    @Test
+    fun aStopDuringThePrefixRestoreLeavesTheQueueReadyAndTheNextGenerationResumes() = inTest {
+        val engine = FakeEngine(hold = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        load(queue)
+        val asked = request.messages + ChatMessage(MessageRole.User, "hi")
+        queue.generate(request.copy(messages = asked, tools = emptyList())).toList()
+        engine.usedCells = 300
+
+        val stopped = async { runCatching { queue.generate(request.copy(messages = asked)).toList() } }
+        withTimeout(5_000) { engine.entered.await() }
+        queue.cancelActive()
+        stopped.await()
+
+        assertTrue(queue.state.value is QueueState.ModelReady)
+        assertEquals(HALF_PREFIX, engine.usedCells)
+        queue.generate(request.copy(messages = asked)).toList()
+
+        assertEquals(listOf("decode", "prefix-start", "prefix-cancelled", "decode"), engine.events)
+        assertEquals("the cache already holds part of this prefix: the decode prefills the rest", listOf(true), engine.replaceFlags)
     }
 
     @Test
@@ -278,6 +316,37 @@ class InferenceQueueToolPrefixTest {
 
         queue.restoreSession("/tmp/session", expectedModel = info)
         assertFalse(queue.holdsPrefixOf(request))
+    }
+
+    @Test
+    fun aToolGenerationAfterOneWithoutToolsPutsThePrefixBackFirst() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        load(queue)
+        val asked = request.messages + ChatMessage(MessageRole.User, "hi")
+
+        queue.generate(request.copy(messages = asked, tools = emptyList())).toList()
+        engine.usedCells = 300
+        queue.generate(request.copy(messages = asked)).toList()
+
+        assertEquals("a creative turn holds no tool prefix", listOf("decode", "prefix-start", "prefix-end", "decode"), engine.events)
+        assertEquals("over the cache that turn left", listOf(true), engine.replaceFlags)
+    }
+
+    @Test
+    fun aToolGenerationLeavesTheCacheAloneAfterAToolOneOrARestore() = inTest {
+        val engine = FakeEngine(usedCells = 300)
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        val asked = request.messages + ChatMessage(MessageRole.User, "hi")
+
+        queue.generate(request.copy(messages = asked)).toList()
+        queue.generate(request.copy(messages = asked)).toList()
+        queue.generate(request.copy(messages = asked, tools = emptyList())).toList()
+        queue.restoreSession("/tmp/session", expectedModel = info)
+        queue.generate(request.copy(messages = asked)).toList()
+
+        assertEquals("the prefix is resident, or a conversation's own session is", List(4) { "decode" }, engine.events)
     }
 
     @Test

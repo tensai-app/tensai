@@ -682,7 +682,8 @@ class LlamaKtEngineImpl(
          * the warm-up go through this one function, so the file one writes is the file the other reads.
          *
          * @param replaceResident the tokens already in the cache are an earlier prefix and nothing else, or a
-         *   conversation already saved (a re-warm after the tool set changed): carry on instead of skipping. Both ways to fill it
+         *   conversation already saved (a re-warm after the tool set changed), or a prompt rendered without tools, which
+         *   shares next to nothing with this one (TEN-195): carry on instead of skipping. Both ways to fill it
          *   keep what the new prefix shares with it and drop the rest.
          * @return `true` if the cache holds the whole prefix when this returns (restored or built),
          *   `false` for every skip, stop and failure.

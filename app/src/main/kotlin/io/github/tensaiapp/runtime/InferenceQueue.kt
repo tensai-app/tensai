@@ -604,6 +604,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
         var acquired = false
         // The cache held a warmed prefix that was not written out when this call took the queue (see [prefixWritten]).
         var wasPrefixOnly = false
+        // The last request that filled the cache had no tools: it holds no tool prefix at all.
+        var heldNoTools = false
         val model = underLockWithoutWarmUp {
             val current = _state.value
             if (current is QueueState.ModelReady) {
@@ -617,6 +619,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
                 wasPrefixOnly = prefixOnly && !prefixWritten
                 prefixOnly = false
+                heldNoTools = residentPrefix?.tools?.isEmpty() == true
                 residentPrefix = request.prefixKey()
                 _state.value = QueueState.Generating(current.info)
                 loadedModel
@@ -642,7 +645,11 @@ class InferenceQueue(private val engine: InferenceEngine) {
             // A warm-up cut short (a send, a background) left the prefix, whole or partial, in the cache with no
             // file written, and decode skips its own build on a cache that is not empty. Finish it here: the
             // prefill resumes from what is resident, so this costs the file write and nothing else (TEN-205).
-            if (wasPrefixOnly && request.tools.isNotEmpty()) model.warmToolPrefix(request, replaceResident = true)
+            // Same skip after a turn without tools (a creative first turn, the plain path), and the whole prefix would be
+            // prefilled again (TEN-195). That prompt shares tokens with a tool prompt only up to where the system
+            // messages diverge, inside the system block, before the end of the prefix the file holds: everything the
+            // decode would keep is in the file too, so restoring it in place of the cache loses nothing.
+            if (request.tools.isNotEmpty() && (wasPrefixOnly || heldNoTools)) model.warmToolPrefix(request, replaceResident = true)
             model.decode(request).collect { event -> send(event) }
         } finally {
             // Cleanup must run even if this coroutine was cancelled (by cancelActive() or by
@@ -896,6 +903,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
         onReplace: () -> Unit = {},
     ): WarmUpOutcome =
         runWarmUp(expectedModel) { model ->
+            // No prefix to put there, and the engine leaves the cache as it is: so must the state below, or the next
+            // [generate] would read a prefix it already has as missing and restore it again (TEN-195).
+            if (request.tools.isEmpty()) return@runWarmUp false
             // Before the engine call: a cancel lands inside it, and the partial prefix it keeps counts too.
             // Set over an empty cache too, even if the engine then skips: the flag means "empty or prefix only".
             // Not when someone's conversation is in the cache: the engine leaves that alone, and so must the flag.
