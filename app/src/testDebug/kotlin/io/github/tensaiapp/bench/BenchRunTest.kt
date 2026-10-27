@@ -3,6 +3,7 @@ package io.github.tensaiapp.bench
 import io.github.tensaiapp.engine.ReasoningBudget
 import io.github.tensaiapp.engine.SamplingConfig
 import io.github.tensaiapp.engine.ToolCall
+import io.github.tensaiapp.ui.screens.bench.configChips
 import io.github.tensaiapp.ui.screens.bench.resultNotes
 import java.io.File
 import java.nio.file.Files
@@ -382,5 +383,96 @@ class BenchRunTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun aRunSavedBeforeAnswersAndTheReasoningBudgetLoadsWithNeither() {
+        val text = """{"kind":"tensai.bench.agent_run","version":1,"id":"run-5","started_at_ms":5,"finished_at_ms":6,
+            "config":{"model":"m","thinking":true,"base_prompt":true,"base_prompt_version":2,"examples":false,"tool_grammar":true,
+              "sampling":{"temperature":0.8,"top_p":0.95,"top_k":40,"min_p":0.05,"repeat_penalty":1.1,"max_tokens":2048,"reasoning_max_tokens":1024},
+              "prompts":1},
+            "planned_trials":1,
+            "results":[{"id":"a","prompt":"p","verdict":"correct","reasoning_tokens":40,"reply":"56"}]}"""
+
+        val run = BenchRunJson.decode(text)
+        val totals = RunTotals.of(run.results)
+
+        assertNull(run.config.reasoningBudget)
+        assertNull(run.config.reasoningCapExceeded)
+        assertNull(run.results.single().maxReplyReasoningTokens)
+        assertFalse(run.results.single().reasoningOverCap)
+        assertNull(run.results.single().answerOutcome)
+        assertNull(run.results.single().expectedAnswer)
+        assertEquals(0, totals.answersChecked)
+        assertNull("no share of no checked answer", totals.value(SummaryMetric.AnswerOk))
+        assertEquals(40L, totals.reasoningP50)
+        assertTrue(resultNotes(run.results.single()).none { it.startsWith("answer") })
+        assertTrue("reason 1024" to true in configChips(run.config))
+    }
+
+    @Test
+    fun theAnswerAndTheReasoningBudgetAreSavedCountedAndShown() {
+        val prompt = BenchPrompt("temp", "98.6 F in C?", setOf("convert"), answer = AnswerCheck.Number(37.0, 0.05))
+        val wrong = BenchTrial.of(result("temp", BenchVerdict.Correct).copy(prompt = prompt, reply = "It is\n66 °C.", answer = AnswerOutcome.Wrong))
+        val right = BenchTrial.of(result("temp", BenchVerdict.Correct, rep = 2).copy(prompt = prompt, reply = "37 °C", answer = AnswerOutcome.Correct))
+        val cut = BenchTrial.of(result("temp", BenchVerdict.Missing, rep = 3).copy(prompt = prompt, reply = null, answer = AnswerOutcome.Cut))
+        val empty = BenchTrial.of(result("temp", BenchVerdict.Missing, rep = 4).copy(prompt = prompt, reply = null, answer = AnswerOutcome.Empty))
+        val unchecked = trial("colors", BenchVerdict.Correct)
+        val trigger = BenchTrigger(thinking = true, reasoningBudget = 256)
+        val sampling = BenchSampling.of(trigger.sampling(SamplingConfig(reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))))
+        val run = run(1, wrong, right, cut, empty, unchecked).let { it.copy(config = it.config.copy(reasoningBudget = trigger.reasoningBudget, sampling = sampling)) }
+
+        val back = BenchRunJson.decode(BenchRunJson.encode(run))
+        val totals = RunTotals.of(back.results)
+
+        assertEquals(run, back)
+        assertEquals(256, back.config.reasoningBudget)
+        assertEquals(listOf("wrong", "correct", "cut", "empty", "unchecked"), back.results.map { it.answer })
+        assertEquals("37 ± 0.05", back.results.first().expectedAnswer)
+        assertEquals(listOf(1, 1, 1, 1), listOf(totals.answerOk, totals.answerWrong, totals.answerCut, totals.answerEmpty))
+        assertEquals(0.25, totals.value(SummaryMetric.AnswerOk)!!, 1e-9)
+        assertEquals(1, totals.countOf(SummaryMetric.AnswerEmpty))
+        assertEquals(4L, totals.maxReplyReasoningP50)
+        assertEquals(1, totals.countOf(SummaryMetric.AnswerCut))
+        assertEquals(4L, totals.reasoningP50)
+        assertTrue(resultNotes(wrong).contains("answer wrong · expected 37 ± 0.05 · got 66 °C."))
+        assertTrue(resultNotes(cut).contains("answer cut · expected 37 ± 0.05 · got no reply"))
+        assertTrue(resultNotes(unchecked).none { it.startsWith("answer") })
+        assertTrue("reason 256" to true in configChips(back.config))
+        assertTrue(configChips(back.config.copy(thinking = false, sampling = BenchSampling.of(SamplingConfig()))).none { it.first.startsWith("reason") })
+        val summary = Json.parseToJsonElement(BenchRunJson.encodeCompare(listOf(back))).jsonObject.getValue("runs").jsonArray.single().jsonObject.getValue("summary").jsonObject
+        assertEquals("1", summary.getValue("answer_wrong").jsonPrimitive.content)
+        assertEquals("4", summary.getValue("reasoning_tokens_p50").jsonPrimitive.content)
+        assertEquals("1", summary.getValue("answer_empty").jsonPrimitive.content)
+        assertEquals("4", summary.getValue("max_reply_reasoning_tokens_p50").jsonPrimitive.content)
+    }
+
+    @Test
+    fun aRunWhoseReplyReasonedPastTheCapIsMarkedAndItsChipTurnsOff() {
+        val thinking = config.copy(sampling = BenchSampling.of(SamplingConfig(reasoningBudget = ReasoningBudget(256, 1792, "</think>"))))
+        val over = result("a", BenchVerdict.Correct).copy(maxReplyReasoningTokens = 900, reasoningOverCap = true)
+
+        val marked = BenchRun.of(1, 2, thinking, 2, listOf(over, result("b", BenchVerdict.Correct)), null)
+        val held = BenchRun.of(1, 2, thinking, 1, listOf(result("b", BenchVerdict.Correct)), null)
+        val noCap = BenchRun.of(1, 2, config.copy(sampling = BenchSampling.of(SamplingConfig())), 1, listOf(result("b", BenchVerdict.Correct)), null)
+
+        assertEquals(true, marked.config.reasoningCapExceeded)
+        assertEquals(false, held.config.reasoningCapExceeded)
+        assertNull(noCap.config.reasoningCapExceeded)
+        assertEquals(900, BenchRunJson.decode(BenchRunJson.encode(marked)).results.first().maxReplyReasoningTokens)
+        assertTrue(BenchRunJson.decode(BenchRunJson.encode(marked)).results.first().reasoningOverCap)
+        assertTrue("reason 256" to false in configChips(marked.config))
+        assertTrue("reason 256" to true in configChips(held.config))
+    }
+
+    @Test
+    fun theBestAnswerRunIsTheOneRightMostOften() {
+        val prompt = BenchPrompt("t", "q", emptySet(), answer = AnswerCheck.Number(1.0))
+        fun answered(vararg outcomes: AnswerOutcome) = RunTotals.of(outcomes.mapIndexed { i, a -> BenchTrial.of(result("t", BenchVerdict.Correct, rep = i + 1).copy(prompt = prompt, answer = a)) })
+        val good = answered(AnswerOutcome.Correct, AnswerOutcome.Correct)
+        val bad = answered(AnswerOutcome.Correct, AnswerOutcome.Wrong)
+
+        assertEquals(setOf(0), bestRuns(listOf(good, bad), SummaryMetric.AnswerOk))
+        assertEquals(setOf(0), bestRuns(listOf(good, bad), SummaryMetric.AnswerWrong))
     }
 }

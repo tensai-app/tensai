@@ -4,7 +4,9 @@ package io.github.tensaiapp.bench
  * A run's totals over its trials (a trial is one repetition of one prompt), for the saved run cards and the Compare
  * summary. As in [BenchSummary], the medians leave out errors and a [BenchTrial.prefixCold] trial. [namedInText]:
  * trials with a [BenchTrial.namedInText], [toolErrors]: trials with a call whose result was an error
- * ([BenchCall.error]), whatever their verdict.
+ * ([BenchCall.error]), whatever their verdict. [answerOk], [answerWrong], [answerCut], [answerEmpty]: trials by
+ * [BenchTrial.answerOutcome], none in a run saved before answers were checked. [reasoningP50], [maxReplyReasoningP50]:
+ * reasoning tokens of the turn and of its largest reply, errors left out, as in [BenchSummary].
  */
 data class RunTotals(
     val trials: Int,
@@ -13,13 +15,28 @@ data class RunTotals(
     val ttftP50Ms: Long?,
     val totalP50Ms: Long?,
     val toolErrors: Int = 0,
+    val answerOk: Int = 0,
+    val answerWrong: Int = 0,
+    val answerCut: Int = 0,
+    val answerEmpty: Int = 0,
+    val reasoningP50: Long? = null,
+    val maxReplyReasoningP50: Long? = null,
 ) {
     fun count(verdict: BenchVerdict): Int = counts[verdict] ?: 0
 
-    /** [metric] for this run: a share of [trials] for a count, milliseconds for a median, `null` when there is none. */
+    /** Trials whose answer was checked. */
+    val answersChecked: Int get() = answerOk + answerWrong + answerCut + answerEmpty
+
+    /**
+     * [metric] for this run: a share of [trials] for a count (of [answersChecked] for an answer), milliseconds or tokens
+     * for a median, `null` when there is none.
+     */
     fun value(metric: SummaryMetric): Double? = when (metric) {
         SummaryMetric.TtftP50 -> ttftP50Ms?.toDouble()
         SummaryMetric.TotalP50 -> totalP50Ms?.toDouble()
+        SummaryMetric.ReasoningP50 -> reasoningP50?.toDouble()
+        SummaryMetric.AnswerOk, SummaryMetric.AnswerWrong, SummaryMetric.AnswerCut, SummaryMetric.AnswerEmpty ->
+            if (answersChecked == 0) null else countOf(metric).toDouble() / answersChecked
         else -> if (trials == 0) null else countOf(metric).toDouble() / trials
     }
 
@@ -27,7 +44,11 @@ data class RunTotals(
     fun countOf(metric: SummaryMetric): Int = when (metric) {
         SummaryMetric.NamedInText -> namedInText
         SummaryMetric.ToolErrors -> toolErrors
-        SummaryMetric.TtftP50, SummaryMetric.TotalP50 -> 0
+        SummaryMetric.AnswerOk -> answerOk
+        SummaryMetric.AnswerWrong -> answerWrong
+        SummaryMetric.AnswerCut -> answerCut
+        SummaryMetric.AnswerEmpty -> answerEmpty
+        SummaryMetric.TtftP50, SummaryMetric.TotalP50, SummaryMetric.ReasoningP50 -> 0
         else -> count(metric.verdict!!)
     }
 
@@ -41,6 +62,12 @@ data class RunTotals(
                 ttftP50Ms = BenchSummary.median(timed.mapNotNull { it.ttftMs }),
                 totalP50Ms = BenchSummary.median(timed.map { it.totalMs }),
                 toolErrors = trials.count { trial -> trial.calls.any { it.error != null } },
+                answerOk = trials.count { it.answerOutcome == AnswerOutcome.Correct },
+                answerWrong = trials.count { it.answerOutcome == AnswerOutcome.Wrong },
+                answerCut = trials.count { it.answerOutcome == AnswerOutcome.Cut },
+                answerEmpty = trials.count { it.answerOutcome == AnswerOutcome.Empty },
+                reasoningP50 = BenchSummary.median(trials.filter { it.benchVerdict != BenchVerdict.Error }.mapNotNull { it.reasoningTokens?.toLong() }),
+                maxReplyReasoningP50 = BenchSummary.median(trials.filter { it.benchVerdict != BenchVerdict.Error }.mapNotNull { it.maxReplyReasoningTokens?.toLong() }),
             )
         }
     }
@@ -55,8 +82,13 @@ enum class SummaryMetric(val verdict: BenchVerdict?, val higherIsBetter: Boolean
     Error(BenchVerdict.Error),
     NamedInText(null),
     ToolErrors(null),
+    AnswerOk(null, higherIsBetter = true),
+    AnswerWrong(null),
+    AnswerCut(null),
+    AnswerEmpty(null),
     TtftP50(null),
     TotalP50(null),
+    ReasoningP50(null),
 }
 
 /**

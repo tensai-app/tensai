@@ -333,6 +333,7 @@ private object LastRunSettings {
     val examples = mutableStateOf(false)
     val toolGrammar = mutableStateOf(true)
     val greedy = mutableStateOf(false)
+    val reasoningBudget = mutableStateOf<Int?>(null)
     val repetitions = mutableIntStateOf(1)
 }
 
@@ -359,6 +360,7 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
     var examples by LastRunSettings.examples
     var toolGrammar by LastRunSettings.toolGrammar
     var greedy by LastRunSettings.greedy
+    var reasoningBudget by LastRunSettings.reasoningBudget
     var repetitions by LastRunSettings.repetitions
 
     Eyebrow(stringResource(R.string.decode_eyebrow_loaded))
@@ -396,6 +398,23 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
         RowDivider()
         ToggleRow(stringResource(R.string.bench_greedy), stringResource(R.string.bench_greedy_sub), greedy, reducedMotion) { greedy = it }
         RowDivider()
+        // A budget of reasoning: none to cap without thinking.
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().alpha(if (thinking) 1f else 0.38f).padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text(stringResource(R.string.bench_reasoning_budget), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(R.string.bench_reasoning_budget_sub), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val budgets = listOf(null) + BenchTrigger.ReasoningBudgets
+            BenchSegmented(
+                options = budgets.map { SegmentOption(it?.toString() ?: stringResource(R.string.bench_reasoning_budget_default)) },
+                selected = budgets.indexOf(reasoningBudget).coerceAtLeast(0),
+                onSelect = { reasoningBudget = budgets[it] },
+                enabled = thinking,
+                mono = true,
+            )
+        }
+        RowDivider()
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -414,7 +433,10 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
         val prompts = promptCount
         TensaiButton(
             text = prompts?.let { pluralStringResource(R.plurals.bench_run_calls, it * repetitions, it * repetitions) } ?: stringResource(R.string.bench_run_plain),
-            onClick = { AgentBench.start(BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy), context) },
+            onClick = {
+                val trigger = BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy, reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets })
+                AgentBench.start(trigger, context)
+            },
             icon = Icons.Rounded.PlayArrow,
             enabled = resident != null && prompts != null && !gateBusy,
             modifier = Modifier.fillMaxWidth(),

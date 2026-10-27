@@ -13,13 +13,21 @@ import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ReasoningBudget
 import io.github.tensaiapp.engine.SamplingConfig
+import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.QueueBusyException
+import java.math.BigDecimal
+import java.text.Normalizer
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.pow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -28,8 +36,8 @@ import kotlinx.serialization.json.put
 
 /**
  * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
- * [--ez examples true] [--ez tool_grammar false] [--ez greedy true]`, the debug panel of Settings > This device or
- * Settings > Bench.
+ * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]`, the debug panel of
+ * Settings > This device or Settings > Bench.
  *
  * @param basePrompt the harness's base prompt opens the system message, as in every chat.
  * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
@@ -40,6 +48,9 @@ import kotlinx.serialization.json.put
  *   rather than one draw of the sampler. Every repetition samples as a chat does, unseeded: the engine takes no seed.
  * @param greedy temperature 0 for the whole run, so a single run is as close to reproducible as the engine allows. Off
  *   is the chat's own sampling, what the bench always measured.
+ * @param reasoningBudget tokens of reasoning before the close tag is forced, the chat's own cap of a [ReasoningBudget]
+ *   lowered, so the answer keeps the rest of the chat's total. `null` is the chat's split ([ReasoningBudget.splitting]).
+ *   Only matters when the chat's sampling has a budget at all: thinking on, on a model that thinks.
  */
 data class BenchTrigger(
     val thinking: Boolean,
@@ -48,17 +59,33 @@ data class BenchTrigger(
     val toolGrammar: Boolean = true,
     val repetitions: Int = 1,
     val greedy: Boolean = false,
+    val reasoningBudget: Int? = null,
 ) {
     init {
         require(repetitions in 1..MaxRepetitions) { "repetitions must be 1 to $MaxRepetitions, got $repetitions" }
+        require(reasoningBudget == null || reasoningBudget > 0) { "reasoning budget must be positive, got $reasoningBudget" }
     }
 
-    /** [chat], the sampling a new chat would use, as this run sends it: [toolGrammar], and temperature 0 when [greedy]. */
-    fun sampling(chat: SamplingConfig): SamplingConfig =
-        chat.copy(constrainToolCalls = toolGrammar, temperature = if (greedy) 0f else chat.temperature)
+    /**
+     * [chat], the sampling a new chat would use, as this run sends it: [toolGrammar], temperature 0 when [greedy], and
+     * its reasoning cap set to [reasoningBudget] when it has one, the decode's total left as the chat's.
+     */
+    fun sampling(chat: SamplingConfig): SamplingConfig = chat.copy(
+        constrainToolCalls = toolGrammar,
+        temperature = if (greedy) 0f else chat.temperature,
+        reasoningBudget = chat.reasoningBudget?.let { budget ->
+            reasoningBudget?.let {
+                require(it < chat.maxTokens) { "reasoning budget $it leaves no answer out of ${chat.maxTokens} tokens" }
+                ReasoningBudget(it, chat.maxTokens - it, budget.endMarker)
+            } ?: budget
+        },
+    )
 
     companion object {
         const val MaxRepetitions = 5
+
+        /** The budgets the bench screen offers besides the chat's own. */
+        val ReasoningBudgets = listOf(512, 256, 128)
     }
 }
 
@@ -98,7 +125,8 @@ sealed interface BenchStatus {
  * The bench a launch intent asks for, `null` for none: only `bench=agent`, and only in a debug build ([debug]), so a
  * release build ignores the extra entirely. [thinking] absent is [defaultThinking], the app's own for a new chat;
  * [basePrompt] absent is on and [examples] absent off, what a chat sends. [examples] without the base prompt is off.
- * [toolGrammar] absent is on, what a chat sends. [greedy] absent is off, the chat's sampling.
+ * [toolGrammar] absent is on, what a chat sends. [greedy] absent is off, the chat's sampling. [reasoningBudget] absent,
+ * not positive or without thinking is the chat's split.
  */
 fun benchTrigger(
     debug: Boolean,
@@ -109,10 +137,19 @@ fun benchTrigger(
     examples: Boolean? = null,
     toolGrammar: Boolean? = null,
     greedy: Boolean? = null,
+    reasoningBudget: Int? = null,
 ): BenchTrigger? {
     if (!debug || bench != "agent") return null
     val base = basePrompt ?: true
-    return BenchTrigger(thinking ?: defaultThinking, base, base && examples == true, toolGrammar ?: true, greedy = greedy == true)
+    val think = thinking ?: defaultThinking
+    return BenchTrigger(
+        think,
+        base,
+        base && examples == true,
+        toolGrammar ?: true,
+        greedy = greedy == true,
+        reasoningBudget = reasoningBudget?.takeIf { think && it > 0 },
+    )
 }
 
 /**
@@ -122,12 +159,14 @@ fun benchTrigger(
  * @param maxTokens each reply of the turn answers in at most this many tokens, reasoning left to the run's own cap,
  *   `null` for the run's own cap: a long-form ask is judged on its calls, not on the text, so it costs seconds instead
  *   of minutes.
+ * @param answer what the final reply must hold to be right, `null` for a prompt with no answer to check.
  */
-data class BenchPrompt(val id: String, val prompt: String, val expected: Set<String>, val maxTokens: Int? = null)
+data class BenchPrompt(val id: String, val prompt: String, val expected: Set<String>, val maxTokens: Int? = null, val answer: AnswerCheck? = null)
 
 /**
- * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?}]}`, `expected` being
- * `"none"`, a tool name or an array of tool names, `max_tokens` a positive count. Throws on a malformed file: a bench
+ * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?, "answer"?}]}`,
+ * `expected` being `"none"`, a tool name or an array of tool names, `max_tokens` a positive count, `answer`
+ * `{"number": 37, "tolerance"?: 0.05}` or `{"text": "Tokyo"}`, see [AnswerCheck]. Throws on a malformed file: a bench
  * run on half a list would compare nothing.
  */
 fun parseBenchPrompts(json: String): List<BenchPrompt> {
@@ -140,7 +179,11 @@ fun parseBenchPrompts(json: String): List<BenchPrompt> {
         require(NoTool !in expected) { "'$NoTool' cannot be one of several expected tools" }
         val maxTokens = entry["max_tokens"]?.jsonPrimitive?.int
         require(maxTokens == null || maxTokens > 0) { "max_tokens must be positive, got $maxTokens" }
-        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens)
+        val answer = entry["answer"]?.jsonObject?.let { check ->
+            check["number"]?.let { AnswerCheck.Number(it.jsonPrimitive.double, check["tolerance"]?.jsonPrimitive?.double ?: 0.0) }
+                ?: AnswerCheck.Text(check.getValue("text").jsonPrimitive.content)
+        }
+        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens, answer)
     }
     val duplicate = prompts.groupBy { it.id }.filterValues { it.size > 1 }.keys
     require(duplicate.isEmpty()) { "duplicate prompt ids: $duplicate" }
@@ -148,6 +191,110 @@ fun parseBenchPrompts(json: String): List<BenchPrompt> {
 }
 
 private const val NoTool = "none"
+
+/**
+ * What a prompt's answer must hold to be right, checked on the text of every reply of the turn joined (the one before a
+ * call and the one after it), reasoning and calls left out.
+ */
+sealed interface AnswerCheck {
+    /** Whether [reply] holds the answer. */
+    fun matches(reply: String): Boolean
+
+    /** The expected answer as the log and the bench screen show it: "37 ± 0.05", "tokyo". */
+    val shown: String
+
+    /**
+     * Any number of the reply that is [value] as written, rounded to its own decimals, or within [tolerance]: for an
+     * exact 802.9674796..., "802.97" and "803" hold it, a truncated "802.9674" does not; "37 °C", "37C" and "37.0" all
+     * hold 37, "56.4" does not hold 56. Digit groups by comma or thin space read as one number ("355,614,924"), so do
+     * ".5" and "1.2e6"; a decimal comma does not, the replies are English.
+     */
+    data class Number(val value: Double, val tolerance: Double = 0.0) : AnswerCheck {
+        init {
+            require(tolerance >= 0) { "tolerance must not be negative, got $tolerance" }
+        }
+
+        override fun matches(reply: String): Boolean = numbersIn(reply).any { (number, halfUnit) ->
+            abs(number - value) <= max(tolerance, halfUnit) + abs(value) * 1e-9 + 1e-12
+        }
+
+        override val shown: String get() = format(value) + if (tolerance > 0) " ± ${format(tolerance)}" else ""
+
+        private fun format(x: Double): String = BigDecimal.valueOf(x).stripTrailingZeros().toPlainString()
+
+        companion object {
+            /**
+             * A sign only where it cannot be a minus between two operands, else not inside a number; then digits, grouped
+             * or not, with decimals, or decimals alone; then an exponent. Groups: the decimals, the exponent.
+             */
+            private val NumberPattern =
+                Regex("""(?:(?<![\w.])[-\u2212]|(?<![\d.]))(?:(?:\d{1,3}(?:[,\u00A0\u2009\u202F]\d{3})+|\d+)(?:\.(\d+))?|\.(\d+))(?:[eE]([-+]?\d+))?""")
+
+            /** Each number of [text] and half the unit of its last digit, how far off a rounding of it can be. */
+            internal fun numbersIn(text: String): List<Pair<Double, Double>> = NumberPattern.findAll(text).mapNotNull { match ->
+                val number = match.value.replace("\u2212", "-").filter { it.isDigit() || it in "-.eE+" }.toDoubleOrNull() ?: return@mapNotNull null
+                val decimals = (match.groupValues[1].ifEmpty { match.groupValues[2] }).length
+                val exponent = match.groupValues[3].toIntOrNull() ?: 0
+                number to 0.5 * 10.0.pow(exponent - decimals)
+            }.toList()
+        }
+    }
+
+    /** [text] as words of the reply, case and accents aside: "Buenos días!" holds "buenos dias". */
+    data class Text(val text: String) : AnswerCheck {
+        override fun matches(reply: String): Boolean =
+            Regex("""(?<!\w)${Regex.escape(normalize(text))}(?!\w)""").containsMatchIn(normalize(reply))
+
+        override val shown: String get() = normalize(text)
+
+        private fun normalize(s: String): String =
+            Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("""\p{Mn}+"""), "").lowercase(Locale.ROOT).replace(Regex("""\s+"""), " ").trim()
+    }
+}
+
+/** How a prompt's final reply compares with its [AnswerCheck]. Logged and saved by [storageName]. */
+enum class AnswerOutcome {
+    Correct,
+    Wrong,
+
+    /** No check for the prompt, or the turn failed before it could answer. */
+    Unchecked,
+
+    /** A token cap ended the turn before its reply held the answer: the budget ran out, not the model's knowledge. */
+    Cut,
+
+    /**
+     * No reply, the turn ended by the model itself: at a low budget, the forced close tag followed by end of turn. A
+     * failure of the budget, not a cap.
+     */
+    Empty,
+    ;
+
+    val storageName: String get() = name.lowercase()
+
+    companion object {
+        /** The stop reasons of a decode a cap ended, by [StopReason] name. */
+        private val CappedStops = setOf(
+            StopReason.TokenBudget,
+            StopReason.ReasoningBudgetExhausted,
+            StopReason.ResponseBudgetExhausted,
+            StopReason.ContextBudgetExhausted,
+            StopReason.ContextBudgetClipped,
+        ).mapTo(HashSet()) { it.name }
+
+        /**
+         * The outcome of [reply] (the turn's text, `null` for none) against [check], the last reply having stopped for
+         * [stopReason], `null` when it reported no stats.
+         */
+        fun of(check: AnswerCheck?, reply: String?, stopReason: String?, failed: Boolean = false): AnswerOutcome = when {
+            check == null || failed -> Unchecked
+            !reply.isNullOrBlank() && check.matches(reply) -> Correct
+            stopReason == null || stopReason in CappedStops -> Cut
+            reply.isNullOrBlank() -> Empty
+            else -> Wrong
+        }
+    }
+}
 
 /** How a prompt's tool calls compare with what it expected. Logged by [storageName]. */
 enum class BenchVerdict {
@@ -228,6 +375,10 @@ class RefusingGate : ConfirmationGate {
  * @param tokens llama.cpp's count over every reply of the turn, reasoning included.
  * @param reasoningTokens the reasoning the engine split out (think tags excluded), tokenized again after the turn,
  *   `null` when it could not be counted. The logged `answer_tokens` is [tokens] minus this, tool-call tokens included.
+ * @param maxReplyReasoningTokens the largest reasoning of one reply of the turn, counted the same way: the reasoning cap
+ *   holds each decode, not the turn.
+ * @param reasoningOverCap [maxReplyReasoningTokens] went past the run's reasoning cap by more than [ReasoningCapSlack]:
+ *   nothing forced the close tag, the template does not delimit reasoning.
  * @param ttftMs the first reply's time to first token as the engine reports it (what the chat shows), `null` when
  *   it reported none. [totalMs] is wall-clock, the whole turn.
  * @param stopReason the last reply's [io.github.tensaiapp.engine.StopReason] name, `null` when it reported none.
@@ -243,6 +394,8 @@ class RefusingGate : ConfirmationGate {
  * @param reasoning the reasoning the engine split out of the turn's replies, `null` for none. Same as [reply].
  * @param callErrors what the model was told for each of [calls] that ended in [ToolCallStatus.Error], by call id: a
  *   call the verdict counts as made, whose result gave the model nothing to answer from. Logged on its call.
+ * @param answer [reply] against the prompt's [BenchPrompt.answer], whatever the [verdict]: a right call can still be
+ *   answered wrong.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -251,6 +404,8 @@ data class BenchResult(
     val verdict: BenchVerdict,
     val tokens: Int,
     val reasoningTokens: Int?,
+    val maxReplyReasoningTokens: Int? = reasoningTokens,
+    val reasoningOverCap: Boolean = false,
     val ttftMs: Long?,
     val totalMs: Long,
     val stopReason: String?,
@@ -263,6 +418,7 @@ data class BenchResult(
     val reply: String? = null,
     val reasoning: String? = null,
     val callErrors: Map<String, String> = emptyMap(),
+    val answer: AnswerOutcome = AnswerOutcome.Unchecked,
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -284,8 +440,12 @@ data class BenchResult(
         )
         put("refused", JsonArray(refused.map { JsonPrimitive(it) }))
         put("verdict", verdict.storageName)
+        put("answer", answer.storageName)
+        prompt.answer?.let { put("expected_answer", it.shown) }
         put("tokens", tokens)
         put("reasoning_tokens", reasoningTokens)
+        put("max_reply_reasoning_tokens", maxReplyReasoningTokens)
+        if (reasoningOverCap) put("reasoning_over_cap", true)
         put("answer_tokens", reasoningTokens?.let { (tokens - it).coerceAtLeast(0) })
         put("ttft_ms", ttftMs)
         put("total_ms", totalMs)
@@ -298,6 +458,9 @@ data class BenchResult(
 
     companion object {
         const val MaxArgsChars = 120
+
+        /** Tokens past the cap a reply's reasoning may count, the forced close tag and a tokenization that differs aside. */
+        const val ReasoningCapSlack = 32
     }
 }
 
@@ -306,6 +469,9 @@ data class BenchResult(
  * calls over the prompts expecting no tool, missing calls over the ones expecting one. `null` when there is no such
  * prompt. The medians leave out errors and a [BenchResult.prefixCold] prompt. [namedInText]: prompts with a
  * [BenchResult.namedInText], [toolErrors]: prompts with a [BenchResult.callErrors], whatever their verdict.
+ * [answers]: the [AnswerOutcome] counts. [medianReasoningTokens] and [medianMaxReplyReasoningTokens] leave out errors and
+ * the prompts whose reasoning could not be counted; a cold prefix costs no reasoning, so it stays in. [reasoningOverCap]:
+ * prompts with a [BenchResult.reasoningOverCap].
  */
 data class BenchSummary(
     val counts: Map<BenchVerdict, Int>,
@@ -315,6 +481,10 @@ data class BenchSummary(
     val medianTotalMs: Long?,
     val namedInText: Int = 0,
     val toolErrors: Int = 0,
+    val answers: Map<AnswerOutcome, Int> = emptyMap(),
+    val medianReasoningTokens: Long? = null,
+    val medianMaxReplyReasoningTokens: Long? = null,
+    val reasoningOverCap: Int = 0,
 ) {
     fun toLogLine(trigger: BenchTrigger): String = buildJsonObject {
         put("event", "summary")
@@ -324,6 +494,7 @@ data class BenchSummary(
         put("tool_grammar", trigger.toolGrammar)
         if (trigger.repetitions > 1) put("repetitions", trigger.repetitions)
         if (trigger.greedy) put("greedy", true)
+        put("reasoning_budget", trigger.reasoningBudget)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
@@ -332,6 +503,13 @@ data class BenchSummary(
         put("median_total_ms", medianTotalMs)
         put("named_in_text", namedInText)
         put("tool_errors", toolErrors)
+        put("answer_ok", answers[AnswerOutcome.Correct] ?: 0)
+        put("answer_wrong", answers[AnswerOutcome.Wrong] ?: 0)
+        put("answer_cut", answers[AnswerOutcome.Cut] ?: 0)
+        put("answer_empty", answers[AnswerOutcome.Empty] ?: 0)
+        put("median_reasoning_tokens", medianReasoningTokens)
+        put("median_max_reply_reasoning_tokens", medianMaxReplyReasoningTokens)
+        put("reasoning_over_cap", reasoningOverCap)
     }.toString()
 
     /**
@@ -344,11 +522,18 @@ data class BenchSummary(
         add(
             "thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}" +
                 " · tool grammar ${onOff(trigger.toolGrammar)}" + (if (trigger.greedy) " · greedy" else "") +
-                if (trigger.repetitions > 1) " · repetitions ${trigger.repetitions}" else "",
+                (if (trigger.repetitions > 1) " · repetitions ${trigger.repetitions}" else "") +
+                if (trigger.reasoningBudget != null) " · reasoning ${trigger.reasoningBudget}" else "",
         )
         add("prompts ${counts.values.sum()}: " + BenchVerdict.entries.joinToString(" ") { "${it.storageName} ${counts[it] ?: 0}" })
         add("false_call_rate ${falseCallRate ?: "-"} · missing_rate ${missingRate ?: "-"}")
         add("median ttft ${medianTtftMs ?: "-"} ms · median total ${medianTotalMs ?: "-"} ms")
+        add("median reasoning ${medianReasoningTokens ?: "-"} tokens · one reply ${medianMaxReplyReasoningTokens ?: "-"}")
+        add(
+            "answers ok ${answers[AnswerOutcome.Correct] ?: 0} · wrong ${answers[AnswerOutcome.Wrong] ?: 0} · cut ${answers[AnswerOutcome.Cut] ?: 0}" +
+                " · empty ${answers[AnswerOutcome.Empty] ?: 0}",
+        )
+        if (reasoningOverCap > 0) add("reasoning_over_cap $reasoningOverCap: the cap was not enforced")
         results.filter { it.verdict != BenchVerdict.Correct }.groupBy { it.verdict }.forEach { (verdict, wrong) ->
             add("${verdict.storageName}: " + wrong.map { it.prompt.id }.distinct().joinToString(", "))
         }
@@ -357,6 +542,11 @@ data class BenchSummary(
         }
         results.filter { it.callErrors.isNotEmpty() }.takeIf { it.isNotEmpty() }?.let { failed ->
             add("tool_errors $toolErrors: " + failed.joinToString(", ") { r -> "${r.prompt.id} (${r.calls.filter { it.id in r.callErrors }.joinToString("|") { it.name }})" })
+        }
+        listOf(AnswerOutcome.Wrong, AnswerOutcome.Cut, AnswerOutcome.Empty).forEach { outcome ->
+            results.filter { it.answer == outcome }.takeIf { it.isNotEmpty() }?.let { off ->
+                add("answer_${outcome.storageName}: " + off.map { it.prompt.id }.distinct().joinToString(", "))
+            }
         }
     }
 
@@ -375,6 +565,10 @@ data class BenchSummary(
                 medianTotalMs = median(timed.map { it.totalMs }),
                 namedInText = results.count { it.namedInText.isNotEmpty() },
                 toolErrors = results.count { it.callErrors.isNotEmpty() },
+                answers = AnswerOutcome.entries.associateWith { a -> results.count { it.answer == a } },
+                medianReasoningTokens = median(results.filter { it.verdict != BenchVerdict.Error }.mapNotNull { it.reasoningTokens?.toLong() }),
+                medianMaxReplyReasoningTokens = median(results.filter { it.verdict != BenchVerdict.Error }.mapNotNull { it.maxReplyReasoningTokens?.toLong() }),
+                reasoningOverCap = results.count { it.reasoningOverCap },
             )
         }
 
@@ -465,8 +659,11 @@ class BenchRunner(
             }
         }
         val totalMs = clock() - startedAt
-        var reasoningTokens: Int? = 0
-        for (text in reasonings) reasoningTokens = reasoningTokens?.let { sum -> countTokens(text)?.let { sum + it } }
+        val reply = replyTexts.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+        val counts = reasonings.map { countTokens(it) }
+        val reasoningTokens = if (null in counts) null else counts.sumOf { it!! }
+        val maxReplyReasoningTokens = if (null in counts) null else counts.maxOfOrNull { it!! } ?: 0
+        val cap = request.sampling.reasoningBudget?.reasoningMaxTokens
         return BenchResult(
             prompt = prompt,
             calls = calls,
@@ -474,6 +671,8 @@ class BenchRunner(
             verdict = BenchVerdict.of(prompt.expected, calls.map { it.name } + truncatedCalls, available, failed = error != null),
             tokens = tokens,
             reasoningTokens = reasoningTokens,
+            maxReplyReasoningTokens = maxReplyReasoningTokens,
+            reasoningOverCap = cap != null && maxReplyReasoningTokens != null && maxReplyReasoningTokens > cap + BenchResult.ReasoningCapSlack,
             ttftMs = ttftMs,
             totalMs = totalMs,
             stopReason = stopReason,
@@ -483,9 +682,10 @@ class BenchRunner(
             namedInText = named.toList(),
             truncatedCalls = truncatedCalls,
             repetition = repetition,
-            reply = replyTexts.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
+            reply = reply,
             reasoning = reasonings.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
             callErrors = callErrors,
+            answer = AnswerOutcome.of(prompt.answer, reply, stopReason, failed = error != null),
         )
     }
 

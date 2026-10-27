@@ -49,7 +49,8 @@ data class BenchRun(
 
         /**
          * The run that graded [results] of [planned] trials. Fewer is a partial run, [stopReason] saying why; a full
-         * run keeps no reason, whatever ended it after the last trial.
+         * run keeps no reason, whatever ended it after the last trial. [BenchRunConfig.reasoningCapExceeded] is read
+         * off the results.
          */
         fun of(startedAtMs: Long, finishedAtMs: Long, config: BenchRunConfig, planned: Int, results: List<BenchResult>, stopReason: String?): BenchRun {
             val partial = results.size < planned
@@ -57,7 +58,7 @@ data class BenchRun(
                 id = idFor(startedAtMs),
                 startedAtMs = startedAtMs,
                 finishedAtMs = finishedAtMs,
-                config = config,
+                config = config.copy(reasoningCapExceeded = results.any { it.reasoningOverCap }.takeIf { config.sampling.reasoningMaxTokens != null }),
                 plannedTrials = planned,
                 partial = partial,
                 stopReason = stopReason.takeIf { partial },
@@ -73,6 +74,11 @@ data class BenchRun(
  * @param quant the model's quantization label as the library shows it, `null` when unknown.
  * @param kvType the KV cache type the model was loaded with ([io.github.tensaiapp.engine.KvCacheType]), lowercase.
  * @param tools the tools a prompt offered, by name.
+ * @param reasoningBudget the run's [BenchTrigger.reasoningBudget], `null` for the chat's split (and for every run saved
+ *   before the setting, and when the sampling had no cap to lower): [BenchSampling.reasoningMaxTokens] is the cap the
+ *   decodes got either way.
+ * @param reasoningCapExceeded a reply reasoned past that cap ([BenchResult.reasoningOverCap]): the template does not
+ *   delimit reasoning, so nothing enforced it. `null` with no cap, and for a run saved before the check.
  * @param prefixWarmed the tool prefix was warmed before the first prompt (its timings are left out of the medians either way).
  */
 @Serializable
@@ -88,6 +94,8 @@ data class BenchRunConfig(
     val examples: Boolean,
     @SerialName("tool_grammar") val toolGrammar: Boolean,
     val repetitions: Int = 1,
+    @SerialName("reasoning_budget") val reasoningBudget: Int? = null,
+    @SerialName("reasoning_cap_exceeded") val reasoningCapExceeded: Boolean? = null,
     val sampling: BenchSampling,
     val prompts: Int,
     val tools: List<String> = emptyList(),
@@ -142,6 +150,8 @@ data class BenchSampling(
  *
  * @param expected the tools any of which is a correct call, empty when the right answer calls none.
  * @param verdict a [BenchVerdict.storageName], see [benchVerdict].
+ * @param answer an [AnswerOutcome.storageName], see [answerOutcome], `null` in a run saved before answers were checked.
+ * @param expectedAnswer the prompt's [AnswerCheck.shown], `null` for a prompt with no check.
  */
 @Serializable
 data class BenchTrial(
@@ -156,6 +166,8 @@ data class BenchTrial(
     @SerialName("named_in_text") val namedInText: List<String> = emptyList(),
     val tokens: Int = 0,
     @SerialName("reasoning_tokens") val reasoningTokens: Int? = null,
+    @SerialName("max_reply_reasoning_tokens") val maxReplyReasoningTokens: Int? = null,
+    @SerialName("reasoning_over_cap") val reasoningOverCap: Boolean = false,
     @SerialName("ttft_ms") val ttftMs: Long? = null,
     @SerialName("total_ms") val totalMs: Long = 0,
     val stop: String? = null,
@@ -165,9 +177,14 @@ data class BenchTrial(
     @SerialName("reply_cut") val replyCut: Boolean = false,
     val reasoning: String? = null,
     @SerialName("reasoning_cut") val reasoningCut: Boolean = false,
+    val answer: String? = null,
+    @SerialName("expected_answer") val expectedAnswer: String? = null,
 ) {
     /** [verdict] read back, [BenchVerdict.Error] for a name this build does not know. */
     val benchVerdict: BenchVerdict get() = BenchVerdict.entries.firstOrNull { it.storageName == verdict } ?: BenchVerdict.Error
+
+    /** [answer] read back, `null` when it was not saved or this build does not know it. */
+    val answerOutcome: AnswerOutcome? get() = AnswerOutcome.entries.firstOrNull { it.storageName == answer }
 
     companion object {
         const val MaxTextChars = 4000
@@ -187,6 +204,8 @@ data class BenchTrial(
                 namedInText = result.namedInText,
                 tokens = result.tokens,
                 reasoningTokens = result.reasoningTokens,
+                maxReplyReasoningTokens = result.maxReplyReasoningTokens,
+                reasoningOverCap = result.reasoningOverCap,
                 ttftMs = result.ttftMs,
                 totalMs = result.totalMs,
                 stop = result.stopReason,
@@ -196,6 +215,8 @@ data class BenchTrial(
                 replyCut = replyCut,
                 reasoning = reasoning,
                 reasoningCut = reasoningCut,
+                answer = result.answer.storageName,
+                expectedAnswer = result.prompt.answer?.shown,
             )
         }
     }
@@ -297,6 +318,12 @@ object BenchRunJson {
         put("tool_errors", toolErrors)
         put("ttft_p50_ms", ttftP50Ms)
         put("total_p50_ms", totalP50Ms)
+        put("answer_ok", answerOk)
+        put("answer_wrong", answerWrong)
+        put("answer_cut", answerCut)
+        put("answer_empty", answerEmpty)
+        put("reasoning_tokens_p50", reasoningP50)
+        put("max_reply_reasoning_tokens_p50", maxReplyReasoningP50)
     }
 }
 

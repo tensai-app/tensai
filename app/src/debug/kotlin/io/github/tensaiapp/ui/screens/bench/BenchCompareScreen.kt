@@ -268,8 +268,13 @@ private fun SummaryMetric.labels(): Pair<String, String> = when (this) {
     SummaryMetric.Error -> "error" to stringResource(R.string.bench_metric_error)
     SummaryMetric.NamedInText -> "named_in_text" to stringResource(R.string.bench_metric_named)
     SummaryMetric.ToolErrors -> "tool_errors" to stringResource(R.string.bench_metric_tool_errors)
+    SummaryMetric.AnswerOk -> "answer_ok" to stringResource(R.string.bench_metric_answer_ok)
+    SummaryMetric.AnswerWrong -> "answer_wrong" to stringResource(R.string.bench_metric_answer_wrong)
+    SummaryMetric.AnswerCut -> "answer_cut" to stringResource(R.string.bench_metric_answer_cut)
+    SummaryMetric.AnswerEmpty -> "answer_empty" to stringResource(R.string.bench_metric_answer_empty)
     SummaryMetric.TtftP50 -> "ttft p50" to "ms"
     SummaryMetric.TotalP50 -> "total p50" to "ms"
+    SummaryMetric.ReasoningP50 -> "reasoning p50" to "tokens"
 }
 
 @Composable
@@ -279,6 +284,7 @@ private fun SummaryCell(totals: RunTotals, metric: SummaryMetric, best: Boolean,
     val (main, sub) = when (metric) {
         SummaryMetric.TtftP50 -> (totals.ttftP50Ms?.let(::groupDigits) ?: "-") to null
         SummaryMetric.TotalP50 -> (totals.totalP50Ms?.let(::groupDigits) ?: "-") to null
+        SummaryMetric.ReasoningP50 -> (totals.reasoningP50?.let(::groupDigits) ?: "-") to null
         else -> totals.countOf(metric).toString() to totals.value(metric)?.let { "${Math.round(it * 100)}%" }
     }
     Column(

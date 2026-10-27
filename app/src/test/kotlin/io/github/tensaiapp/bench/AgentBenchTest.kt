@@ -62,11 +62,11 @@ class AgentBenchTest {
         }
     }
 
-    private fun reply(text: String, reasoning: String? = null, calls: List<ToolCall> = emptyList(), tokens: Int = 10, ttftMs: Long = 1L) = listOf(
+    private fun reply(text: String, reasoning: String? = null, calls: List<ToolCall> = emptyList(), tokens: Int = 10, ttftMs: Long = 1L, stop: StopReason = StopReason.Complete) = listOf(
         DecodeEvent.Token(text),
         DecodeEvent.Parsed(text, reasoning, emptyList()),
         DecodeEvent.ToolTurn(text, reasoning, calls, toolsIgnored = false, toolParseFailed = false, truncated = false),
-        DecodeEvent.Done(DecodeStats(tokensGenerated = tokens, tokPerSec = 1f, ttftMs = ttftMs, stopReason = StopReason.Complete)),
+        DecodeEvent.Done(DecodeStats(tokensGenerated = tokens, tokPerSec = 1f, ttftMs = ttftMs, stopReason = stop)),
     )
 
     private fun runner(
@@ -676,5 +676,214 @@ class AgentBenchTest {
             BenchGate.leave()
         }
         assertFalse(BenchGate.busy.value)
+    }
+
+    @Test
+    fun aNumberAnswerIsAnyNumberOfTheReplyWithinItsToleranceWhateverTheUnitOrFormat() {
+        val celsius = AnswerCheck.Number(37.0, tolerance = 0.05)
+
+        listOf("37 °C", "37C", "It is 37.0 degrees.", "98.6°F is about 37 degrees Celsius.", "**37**", "\\boxed{37}").forEach {
+            assertTrue(it, celsius.matches(it))
+        }
+        listOf("36.9 °C", "66.6 °C", "370 C", "3.7", "no idea").forEach { assertFalse(it, celsius.matches(it)) }
+        assertTrue(AnswerCheck.Number(355614924.0).matches("48,291 × 7,364 = 355,614,924"))
+        assertTrue(AnswerCheck.Number(355614924.0).matches("355\u202F614\u202F924"))
+        assertFalse(AnswerCheck.Number(355614924.0).matches("355,614,925"))
+        assertTrue(AnswerCheck.Number(5.0).matches("Half of 10 is 5."))
+        assertFalse("a number is read whole, not a digit of it", AnswerCheck.Number(5.0).matches("Half of 10 is 0.5"))
+        assertTrue(AnswerCheck.Number(-40.0).matches("It is \u221240 °C."))
+        assertFalse("a minus between operands is not a sign", AnswerCheck.Number(-3.0).matches("2-3 is not a date"))
+        assertTrue("1.2e6 is one number", AnswerCheck.Number(1_200_000.0).matches("about 1.2e6 people"))
+        assertFalse("1.2e6 is not 6", AnswerCheck.Number(6.0).matches("about 1.2e6 people"))
+        assertTrue(AnswerCheck.Number(0.5).matches("Half of 1 is .5"))
+        assertEquals("37 ± 0.05", celsius.shown)
+        assertEquals("802.9675 ± 0.0001", AnswerCheck.Number(802.9675, 0.0001).shown)
+        assertEquals("355614924", AnswerCheck.Number(355614924.0).shown)
+    }
+
+    @Test
+    fun aNumberRoundedToItsOwnDecimalsHoldsTheExactValueATruncatedOneDoesNot() {
+        val quotient = AnswerCheck.Number(98765.0 / 123)
+
+        listOf("802.96747967", "802.9675", "802.97", "803").forEach { assertTrue(it, quotient.matches(it)) }
+        listOf("802.9674", "802.96", "802").forEach { assertFalse(it, quotient.matches(it)) }
+        assertTrue(AnswerCheck.Number(42.1648128).matches("about 42 km"))
+        assertTrue(AnswerCheck.Number(42.1648128).matches("42.2 km"))
+        assertTrue(AnswerCheck.Number(314.269680529319).matches("roughly 314"))
+        assertFalse(AnswerCheck.Number(56.0).matches("56.4"))
+        assertFalse(AnswerCheck.Number(56.0).matches("57"))
+        assertTrue(AnswerCheck.Number(56.0).matches("56.0"))
+    }
+
+    @Test
+    fun aTextAnswerIsWordsOfTheReplyCaseAndAccentsAside() {
+        val spanish = AnswerCheck.Text("buenos dias")
+
+        assertTrue(spanish.matches("¡Buenos días!"))
+        assertTrue(spanish.matches("In Spanish: buenos  dias."))
+        assertFalse(spanish.matches("Buenas noches"))
+        assertTrue(AnswerCheck.Text("Tokyo").matches("The capital of Japan is Tokyo."))
+        assertFalse("a word, not part of one", AnswerCheck.Text("Tokyo").matches("Tokyoite"))
+        assertEquals("tokyo", AnswerCheck.Text("Tokyo").shown)
+    }
+
+    @Test
+    fun anAnswerIsCorrectWrongCutEmptyOrUnchecked() {
+        val check = AnswerCheck.Number(56.0)
+
+        assertEquals(AnswerOutcome.Correct, AnswerOutcome.of(check, "56", StopReason.Complete.name))
+        assertEquals(AnswerOutcome.Wrong, AnswerOutcome.of(check, "54", StopReason.Complete.name))
+        assertEquals(AnswerOutcome.Cut, AnswerOutcome.of(check, null, StopReason.ReasoningBudgetExhausted.name))
+        assertEquals("the model ended the turn with nothing: not a cap", AnswerOutcome.Empty, AnswerOutcome.of(check, null, StopReason.Complete.name))
+        assertEquals(AnswerOutcome.Empty, AnswerOutcome.of(check, "  ", StopReason.Complete.name))
+        assertEquals("no stats, no telling", AnswerOutcome.Cut, AnswerOutcome.of(check, null, null))
+        assertEquals(AnswerOutcome.Cut, AnswerOutcome.of(check, "7 times 8 is", StopReason.ResponseBudgetExhausted.name))
+        assertEquals("the answer came before the cap", AnswerOutcome.Correct, AnswerOutcome.of(check, "56, because", StopReason.ResponseBudgetExhausted.name))
+        assertEquals(AnswerOutcome.Unchecked, AnswerOutcome.of(null, "56", StopReason.Complete.name))
+        assertEquals(AnswerOutcome.Unchecked, AnswerOutcome.of(check, null, null, failed = true))
+    }
+
+    @Test
+    fun anAnswerIsANumberWithAnOptionalToleranceOrAText() {
+        val prompts = parseBenchPrompts(
+            """{"version":1,"prompts":[
+                {"id":"a","prompt":"p","expected":"none","answer":{"number":56}},
+                {"id":"b","prompt":"p","expected":"convert","answer":{"number":37,"tolerance":0.05}},
+                {"id":"c","prompt":"p","expected":"none","answer":{"text":"Tokyo"}},
+                {"id":"d","prompt":"p","expected":"none"}]}""",
+        )
+
+        assertEquals(listOf(AnswerCheck.Number(56.0), AnswerCheck.Number(37.0, 0.05), AnswerCheck.Text("Tokyo"), null), prompts.map { it.answer })
+    }
+
+    @Test
+    fun theRepoListChecksTheVerifiablePromptsAndLeavesTheClockOut() {
+        val answers = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText()).associate { it.id to it.answer }
+
+        assertEquals(AnswerCheck.Number(37.0), answers["fahrenheit-to-celsius"])
+        assertEquals(98765.0 / 123, (answers["divide-decimals"] as AnswerCheck.Number).value, 1e-9)
+        assertEquals(26.2 * 1.609344, (answers["miles-to-km"] as AnswerCheck.Number).value, 1e-9)
+        assertEquals(kotlin.math.sqrt(98765.4321), (answers["square-root"] as AnswerCheck.Number).value, 1e-9)
+        assertFalse(".5 is not 5", answers.getValue("half-of-ten")!!.matches("Half of 10 is .5"))
+        assertTrue(answers.getValue("half-of-ten")!!.matches("Half of 10 is 5."))
+        assertTrue(answers.getValue("divide-decimals")!!.matches("about 802.97"))
+        assertTrue(answers.getValue("miles-to-km")!!.matches("about 42 km"))
+        assertTrue(answers.getValue("square-root")!!.matches("about 314"))
+        assertEquals(AnswerCheck.Number(355614924.0), answers["multiply-large"])
+        assertEquals(AnswerCheck.Text("Tokyo"), answers["capital-japan"])
+        assertTrue(answers.getValue("divide-decimals")!!.matches("98765 / 123 = 802.9675"))
+        assertTrue(answers.getValue("square-root")!!.matches("about 314.27"))
+        assertTrue(answers.getValue("miles-to-km")!!.matches("26.2 miles is 42.16 km"))
+        listOf("time-now", "date-today", "time-tokyo", "haiku-autumn", "timer-ten-minutes").forEach { assertNull(it, answers.getValue(it)) }
+    }
+
+    @Test
+    fun eachResultIsCheckedOnItsReplyAndTheSummaryCountsTheAnswersAndTheMedianReasoning() = runBlocking {
+        val gen = ScriptedGenerator(
+            reply("", reasoning = "seven eights", calls = listOf(ToolCall("c1", "calculate", "{}"))),
+            reply("It is 56.", reasoning = "the tool said 56"),
+            reply("98.6 °F is 66 °C.", reasoning = "hmm"),
+            reply("", reasoning = "thinking and thinking", stop = StopReason.ReasoningBudgetExhausted),
+            reply("", reasoning = "ab cd"),
+            reply("blue, white"),
+        )
+        val bench = runner(FakeTool("calculate"), generator = gen)
+        val prompts = listOf(
+            BenchPrompt("times", "7 times 8?", setOf("calculate"), answer = AnswerCheck.Number(56.0)),
+            BenchPrompt("temp", "98.6 F in C?", emptySet(), answer = AnswerCheck.Number(37.0, 0.05)),
+            BenchPrompt("half", "Half of 10?", emptySet(), answer = AnswerCheck.Number(5.0)),
+            BenchPrompt("eight", "8 + 0?", emptySet(), answer = AnswerCheck.Number(8.0)),
+            BenchPrompt("colors", "Two colors?", emptySet()),
+        )
+        val lines = mutableListOf<String>()
+
+        val results = runBench(prompts, bench, firstCold = false, beforeEach = { null }, log = { lines += it })
+
+        assertEquals(
+            listOf(AnswerOutcome.Correct, AnswerOutcome.Wrong, AnswerOutcome.Cut, AnswerOutcome.Empty, AnswerOutcome.Unchecked),
+            results.map { it.answer },
+        )
+        val first = Json.parseToJsonElement(lines.first()).jsonObject
+        assertEquals("correct", first.getValue("answer").jsonPrimitive.content)
+        assertEquals("56", first.getValue("expected_answer").jsonPrimitive.content)
+        // Reasoning counted as its length here: 12 + 16 over the turn, 16 the largest reply.
+        assertEquals("28", first.getValue("reasoning_tokens").jsonPrimitive.content)
+        assertEquals("16", first.getValue("max_reply_reasoning_tokens").jsonPrimitive.content)
+        assertFalse(Json.parseToJsonElement(lines[4]).jsonObject.containsKey("expected_answer"))
+        val summary = BenchSummary.of(results)
+        val line = Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject
+        assertEquals(
+            listOf("1", "1", "1", "1"),
+            listOf("answer_ok", "answer_wrong", "answer_cut", "answer_empty").map { line.getValue(it).jsonPrimitive.content },
+        )
+        // The turns: 28, 3, 21, 5, 0; their largest replies: 16, 3, 21, 5, 0.
+        assertEquals(5L, summary.medianReasoningTokens)
+        assertEquals("5", line.getValue("median_reasoning_tokens").jsonPrimitive.content)
+        assertEquals(listOf(16, 3, 21, 5, 0), results.map { it.maxReplyReasoningTokens })
+        assertEquals("5", line.getValue("median_max_reply_reasoning_tokens").jsonPrimitive.content)
+        val shown = summary.toDisplayLines(BenchTrigger(true), "m", results)
+        assertTrue(shown.contains("answers ok 1 · wrong 1 · cut 1 · empty 1"))
+        assertTrue(shown.contains("answer_wrong: temp"))
+        assertTrue(shown.contains("answer_cut: half"))
+        assertTrue(shown.contains("answer_empty: eight"))
+    }
+
+    @Test
+    fun aReasoningBudgetLowersTheChatsReasoningCapAndKeepsItsTotal() {
+        val chat = SamplingConfig(maxTokens = 2048, reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))
+
+        assertEquals(ReasoningBudget(256, 1792, "</think>"), BenchTrigger(thinking = true, reasoningBudget = 256).sampling(chat).reasoningBudget)
+        assertEquals(ReasoningBudget(128, 1920, "</think>"), BenchTrigger(thinking = true, reasoningBudget = 128).sampling(chat).reasoningBudget)
+        assertEquals(chat.reasoningBudget, BenchTrigger(thinking = true).sampling(chat).reasoningBudget)
+        assertEquals(2048, BenchTrigger(thinking = true, reasoningBudget = 256).sampling(chat).maxTokens)
+        assertNull("no thinking, nothing to cap", BenchTrigger(thinking = true, reasoningBudget = 256).sampling(SamplingConfig(maxTokens = 2048)).reasoningBudget)
+        assertTrue(runCatching { BenchTrigger(thinking = true, reasoningBudget = 0) }.isFailure)
+    }
+
+    @Test
+    fun theReasoningBudgetReachesEveryGenerationOfTheRunAndTheSummary() = runBlocking {
+        val chat = SamplingConfig(maxTokens = 2048, reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))
+        val trigger = BenchTrigger(thinking = true, reasoningBudget = 256)
+        val gen = ScriptedGenerator(reply("", calls = listOf(ToolCall("c1", "datetime", "{}"))), reply("It is ten."), reply("Once"))
+        val bench = runner(FakeTool("datetime"), generator = gen, sampling = trigger.sampling(chat))
+
+        bench.run(prompt("time", "datetime"))
+        bench.run(BenchPrompt("story", "Answer at length.", emptySet(), maxTokens = 96))
+
+        assertEquals(listOf(256, 256, 256), gen.requests.map { it.sampling.reasoningBudget?.reasoningMaxTokens })
+        assertEquals(ReasoningBudget(256, 96, "</think>"), gen.requests.last().sampling.reasoningBudget)
+        assertEquals("256", Json.parseToJsonElement(BenchSummary.of(emptyList()).toLogLine(trigger)).jsonObject.getValue("reasoning_budget").jsonPrimitive.content)
+        assertTrue(BenchSummary.of(emptyList()).toDisplayLines(trigger, "m", emptyList())[1].endsWith(" · reasoning 256"))
+    }
+
+    @Test
+    fun aReplyThatReasonsPastTheCapIsMarkedSinceNothingEnforcedIt() = runBlocking {
+        val sampling = SamplingConfig(maxTokens = 104, reasoningBudget = ReasoningBudget(4, 100, "</think>"))
+        val gen = ScriptedGenerator(reply("56", reasoning = "x".repeat(4 + BenchResult.ReasoningCapSlack + 1)), reply("56", reasoning = "x".repeat(4 + BenchResult.ReasoningCapSlack)))
+        val bench = runner(generator = gen, sampling = sampling)
+        val lines = mutableListOf<String>()
+
+        val results = runBench(listOf(prompt("over"), prompt("within")), bench, firstCold = false, beforeEach = { null }, log = { lines += it })
+
+        assertEquals(listOf(true, false), results.map { it.reasoningOverCap })
+        assertTrue(lines[0].contains("\"reasoning_over_cap\":true"))
+        assertFalse(lines[1].contains("reasoning_over_cap"))
+        val summary = BenchSummary.of(results)
+        assertEquals("1", Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject.getValue("reasoning_over_cap").jsonPrimitive.content)
+        assertTrue(summary.toDisplayLines(BenchTrigger(true), "m", results).contains("reasoning_over_cap 1: the cap was not enforced"))
+        assertFalse("no cap, nothing to exceed", runner(generator = ScriptedGenerator(reply("56", reasoning = "x".repeat(500)))).run(prompt("free")).reasoningOverCap)
+    }
+
+    @Test
+    fun theScreenOffersBudgetsBelowTheChatsOwn() {
+        assertEquals(listOf(512, 256, 128), BenchTrigger.ReasoningBudgets)
+    }
+
+    @Test
+    fun theTriggerTakesAReasoningBudgetOnlyWithThinking() {
+        assertEquals(256, benchTrigger(debug = true, bench = "agent", thinking = true, defaultThinking = true, reasoningBudget = 256)!!.reasoningBudget)
+        assertNull(benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true, reasoningBudget = 256)!!.reasoningBudget)
+        assertNull(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, reasoningBudget = 0)!!.reasoningBudget)
+        assertNull(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true)!!.reasoningBudget)
     }
 }

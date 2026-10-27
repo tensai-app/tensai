@@ -360,13 +360,17 @@ internal fun ConfigChip(label: String, on: Boolean, strikeOff: Boolean = false) 
     }
 }
 
-/** The config chips of [config], label and state: think, base vN, ex, gram, greedy. */
-internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = listOf(
+/**
+ * The config chips of [config], label and state: think, base vN, ex, gram, greedy, then "reason N" with the reasoning
+ * cap the decodes got, when they had one, off when a reply reasoned past it ([BenchRunConfig.reasoningCapExceeded]).
+ */
+internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = listOfNotNull(
     "think" to config.thinking,
     "base v${config.basePromptVersion}" to config.basePrompt,
     "ex" to config.examples,
     "gram" to config.toolGrammar,
     "greedy" to config.sampling.greedy,
+    config.sampling.reasoningMaxTokens?.takeIf { config.thinking }?.let { "reason $it" to (config.reasoningCapExceeded != true) },
 )
 
 /** "Qwen3-1.7B Q4_K_M · CPU", what the run ran on. A run saved before [backendName] has its full label cut down too. */

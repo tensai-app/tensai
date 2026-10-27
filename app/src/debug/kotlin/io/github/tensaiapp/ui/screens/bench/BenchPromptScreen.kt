@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tensaiapp.R
 import io.github.tensaiapp.bench.AgentBench
+import io.github.tensaiapp.bench.AnswerOutcome
 import io.github.tensaiapp.bench.BenchRunJson
 import io.github.tensaiapp.bench.BenchRunStore
 import io.github.tensaiapp.bench.BenchTrial
@@ -116,6 +117,12 @@ internal fun BenchPromptScreen(runId: String, promptId: String, runKey: String, 
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
+                    trial.expectedAnswer?.let { answer ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(stringResource(R.string.bench_expected_answer), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(answer, fontFamily = TensaiMono, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                 }
             }
             Eyebrow(stringResource(R.string.bench_eyebrow_result))
@@ -149,6 +156,8 @@ internal fun BenchPromptScreen(runId: String, promptId: String, runKey: String, 
                 ThinkingBlock(thinking = reasoning, isActive = false)
                 val facts = listOfNotNull(
                     trial.reasoningTokens?.let { pluralStringResource(R.plurals.bench_reasoning_tokens, it, it) },
+                    trial.maxReplyReasoningTokens?.takeIf { it != trial.reasoningTokens }?.let { stringResource(R.string.bench_max_reply_reasoning, it) },
+                    if (trial.reasoningOverCap) stringResource(R.string.bench_reasoning_over_cap) else null,
                     if (trial.reasoningCut) pluralStringResource(R.plurals.bench_cut, BenchTrial.MaxTextChars, BenchTrial.MaxTextChars) else null,
                 )
                 if (facts.isNotEmpty()) {
@@ -198,11 +207,19 @@ private fun ResultCard(trial: BenchTrial) {
     }
 }
 
-/** The machine notes of a result, mono: what was expected against what came, and the flags the verdict alone hides. */
+/**
+ * The machine notes of a result, mono: what was expected against what came, the checked answer against the reply's
+ * last line, and the flags the verdict alone hides.
+ */
 internal fun resultNotes(trial: BenchTrial): List<String> = buildList {
     if (trial.benchVerdict == BenchVerdict.WrongTool || trial.benchVerdict == BenchVerdict.FalseCall) {
         val got = (trial.calls.map { it.name } + trial.truncatedCalls).distinct().joinToString(", ")
         add("expected ${trial.expected.ifEmpty { listOf("no tool") }.joinToString(" | ")} · got $got")
+    }
+    val answer = trial.answerOutcome
+    if (answer != null && answer != AnswerOutcome.Unchecked) {
+        val got = trial.reply?.lines()?.lastOrNull { it.isNotBlank() }?.trim()?.let { if (it.length > MaxGotChars) it.take(MaxGotChars) + "..." else it }
+        add("answer ${answer.storageName} · expected ${trial.expectedAnswer ?: "-"} · got ${got ?: "no reply"}")
     }
     if (trial.truncatedCalls.isNotEmpty()) add("truncated call: " + trial.truncatedCalls.joinToString(", "))
     if (trial.namedInText.isNotEmpty()) add("named in text: " + trial.namedInText.joinToString(", "))
@@ -211,6 +228,8 @@ internal fun resultNotes(trial: BenchTrial): List<String> = buildList {
     trial.error?.let { add("error: $it") }
     trial.stop?.let { add("stop: $it · ${trial.tokens} tokens") }
 }
+
+private const val MaxGotChars = 80
 
 private val PrettyJson = Json { prettyPrint = true }
 

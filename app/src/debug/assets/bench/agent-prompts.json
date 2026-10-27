@@ -9,17 +9,26 @@
     {
       "id": "capital-japan",
       "prompt": "What is the capital of Japan? One word.",
-      "expected": "none"
+      "expected": "none",
+      "answer": {
+        "text": "Tokyo"
+      }
     },
     {
       "id": "seven-times-eight",
       "prompt": "What is 7 times 8? Just the number.",
-      "expected": "none"
+      "expected": "none",
+      "answer": {
+        "number": 56
+      }
     },
     {
       "id": "half-of-ten",
       "prompt": "What is half of 10?",
-      "expected": "none"
+      "expected": "none",
+      "answer": {
+        "number": 5
+      }
     },
     {
       "id": "rephrase-polite",
@@ -29,7 +38,10 @@
     {
       "id": "translate-spanish",
       "prompt": "Translate \"good morning\" into Spanish.",
-      "expected": "none"
+      "expected": "none",
+      "answer": {
+        "text": "buenos dias"
+      }
     },
     {
       "id": "haiku-autumn",
@@ -49,7 +61,10 @@
     {
       "id": "closest-planet",
       "prompt": "Which planet is closest to the Sun?",
-      "expected": "none"
+      "expected": "none",
+      "answer": {
+        "text": "Mercury"
+      }
     },
     {
       "id": "story-lighthouse",
@@ -96,27 +111,42 @@
     {
       "id": "multiply-large",
       "prompt": "What is 48291 times 7364, exactly?",
-      "expected": "calculate"
+      "expected": "calculate",
+      "answer": {
+        "number": 355614924
+      }
     },
     {
       "id": "divide-decimals",
       "prompt": "What is 98765 divided by 123, to 4 decimal places?",
-      "expected": "calculate"
+      "expected": "calculate",
+      "answer": {
+        "number": 802.967479674797
+      }
     },
     {
       "id": "square-root",
       "prompt": "What is the square root of 98765.4321?",
-      "expected": "calculate"
+      "expected": "calculate",
+      "answer": {
+        "number": 314.269680529319
+      }
     },
     {
       "id": "miles-to-km",
       "prompt": "Convert 26.2 miles to kilometers.",
-      "expected": "convert"
+      "expected": "convert",
+      "answer": {
+        "number": 42.1648128
+      }
     },
     {
       "id": "fahrenheit-to-celsius",
       "prompt": "Convert 98.6 degrees Fahrenheit to Celsius.",
-      "expected": "convert"
+      "expected": "convert",
+      "answer": {
+        "number": 37
+      }
     },
     {
       "id": "memory-list",

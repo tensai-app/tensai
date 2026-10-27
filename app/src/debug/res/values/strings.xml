@@ -38,6 +38,9 @@
     <string name="bench_tool_grammar_sub">Holds a call to the tool schemas</string>
     <string name="bench_greedy">Greedy</string>
     <string name="bench_greedy_sub">Temperature 0 for the whole run, off is the chat\'s sampling</string>
+    <string name="bench_reasoning_budget">Reasoning budget</string>
+    <string name="bench_reasoning_budget_sub">Tokens of reasoning before the close tag is forced, with thinking on</string>
+    <string name="bench_reasoning_budget_default">Default</string>
     <string name="bench_repetitions">Repetitions</string>
     <string name="bench_repetitions_sub">Per prompt, for pass rates</string>
     <string name="bench_repetitions_less">Fewer repetitions</string>
@@ -123,8 +126,15 @@
     <string name="bench_metric_error">parse or runtime</string>
     <string name="bench_metric_named">named, not called</string>
     <string name="bench_metric_tool_errors">call, result an error</string>
+    <string name="bench_metric_answer_ok">of checked answers</string>
+    <string name="bench_metric_answer_wrong">answered, not right</string>
+    <string name="bench_metric_answer_cut">cut before the answer</string>
+    <string name="bench_metric_answer_empty">no reply, model ended</string>
     <string name="bench_eyebrow_prompt">Prompt</string>
     <string name="bench_expected">Expected</string>
+    <string name="bench_expected_answer">Answer</string>
+    <string name="bench_max_reply_reasoning">one reply max: %1$d</string>
+    <string name="bench_reasoning_over_cap">past the cap, not enforced</string>
     <!-- %1$d is the repetition, from 1. -->
     <string name="bench_rep">Rep %1$d</string>
     <string name="bench_eyebrow_result">Result</string>
