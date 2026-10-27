@@ -38,6 +38,7 @@
     <string name="bench_greedy_sub">Température 0 pour tout le run, sinon l\'échantillonnage du chat</string>
     <string name="bench_reasoning_budget">Budget de raisonnement</string>
     <string name="bench_reasoning_budget_sub">Tokens de raisonnement avant que la balise de fin soit forcée, avec la réflexion</string>
+    <string name="bench_reasoning_budget_adaptive">Adaptatif</string>
     <string name="bench_reasoning_budget_default">Défaut</string>
     <string name="bench_repetitions">Répétitions</string>
     <string name="bench_repetitions_sub">Par prompt, pour les taux de réussite</string>
@@ -136,6 +137,7 @@
     <string name="bench_expected">Attendu</string>
     <string name="bench_expected_answer">Réponse</string>
     <string name="bench_max_reply_reasoning">max d\'une réponse : %1$d</string>
+    <string name="bench_reasoning_cap">plafond : %1$d</string>
     <string name="bench_reasoning_over_cap">au-delà du plafond, non appliqué</string>
     <string name="bench_rep">Rép. %1$d</string>
     <string name="bench_eyebrow_result">Résultat</string>

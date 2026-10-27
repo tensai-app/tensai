@@ -40,6 +40,7 @@
     <string name="bench_greedy_sub">Temperature 0 for the whole run, off is the chat\'s sampling</string>
     <string name="bench_reasoning_budget">Reasoning budget</string>
     <string name="bench_reasoning_budget_sub">Tokens of reasoning before the close tag is forced, with thinking on</string>
+    <string name="bench_reasoning_budget_adaptive">Adaptive</string>
     <string name="bench_reasoning_budget_default">Default</string>
     <string name="bench_repetitions">Repetitions</string>
     <string name="bench_repetitions_sub">Per prompt, for pass rates</string>
@@ -134,6 +135,7 @@
     <string name="bench_expected">Expected</string>
     <string name="bench_expected_answer">Answer</string>
     <string name="bench_max_reply_reasoning">one reply max: %1$d</string>
+    <string name="bench_reasoning_cap">cap: %1$d</string>
     <string name="bench_reasoning_over_cap">past the cap, not enforced</string>
     <!-- %1$d is the repetition, from 1. -->
     <string name="bench_rep">Rep %1$d</string>

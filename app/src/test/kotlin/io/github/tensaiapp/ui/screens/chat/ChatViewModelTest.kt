@@ -128,6 +128,9 @@ class ChatViewModelTest {
     /** The user's instructions for every chat, as Settings would store them. */
     private val globalInstructions = MutableStateFlow("")
 
+    /** What the view model logged, in order: the JVM has no logcat. */
+    private val logLines = mutableListOf<String>()
+
     /**
      * The system message builder of every view model built here. Without the base prompt by default: the tests
      * written before it compare requests message by message, and the ones about it turn it on.
@@ -210,6 +213,7 @@ class ChatViewModelTest {
         chatTurns = chatTurns,
         globalInstructions = globalInstructions,
         systemPrompts = systemPrompts,
+        log = { logLines += it },
     )
 
     private suspend fun loadFakeModel(supportsThinking: Boolean = false, supportsTools: Boolean = false) {
@@ -1291,6 +1295,63 @@ class ChatViewModelTest {
         assertNull("no split without thinking", sampling.reasoningBudget)
         assertEquals(300, sampling.maxTokens)
         assertFalse(sampling.enableThinking)
+    }
+
+    /**
+     * TEN-166: a simple message reasons on 256 tokens, a multi-step problem on the whole split, the answer keeping the
+     * rest either way; each reply logs which.
+     */
+    @Test
+    fun theReasoningBudgetFollowsTheMessageRepliedToAndIsLogged() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("hi")
+        awaitAssistantReply(conversation, expectedCount = 2)
+        val simple = engine.lastRequest!!.sampling.reasoningBudget!!
+        viewModel.send(
+            "Tom is twice as old as Ana. In 5 years, the sum of their ages will be 34. How old is Ana now? " +
+                "Work it out step by step and answer with the number only.",
+        )
+        awaitAssistantReply(conversation, expectedCount = 4)
+        val problem = engine.lastRequest!!.sampling.reasoningBudget!!
+
+        assertEquals(256 to 1792, simple.reasoningMaxTokens to simple.responseMaxTokens)
+        assertEquals(1024 to 1024, problem.reasoningMaxTokens to problem.responseMaxTokens)
+        assertEquals(listOf("reasoning budget: 256 (simple)", "reasoning budget: 1024 (problem)"), logLines.filter { it.startsWith("reasoning budget") })
+    }
+
+    /** TEN-166 on the agent path: every reply of a tool turn reasons on the budget its message chose, chosen and logged once. */
+    @Test
+    fun everyReplyOfAToolTurnKeepsTheBudgetOfItsMessageLoggedOnce() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsThinking = true, supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += answerReply("It is late.")
+        val id = chatRepository.createConversation(modelId = null)
+        engine.requests.clear()
+
+        newViewModel(id).send("what time is it?")
+        awaitGeneration()
+
+        val replies = engine.requests.filter { it.messages.any { m -> m.role == MessageRole.User } }
+        assertEquals(2, replies.size)
+        assertEquals(listOf(256, 256), replies.map { it.sampling.reasoningBudget?.reasoningMaxTokens })
+        assertEquals(listOf("reasoning budget: 256 (simple)"), logLines.filter { it.startsWith("reasoning budget") })
+    }
+
+    @Test
+    fun withThinkingOffNoBudgetIsChosenOrLogged() = runBlocking {
+        loadFakeModel(supportsThinking = true)
+        val conversation = chatRepository.createConversation(modelId = null)
+        chatRepository.setEnableThinking(conversation, enabled = false)
+
+        newViewModel(conversation).send("hi")
+        awaitAssistantReply(conversation, expectedCount = 2)
+
+        assertNull(engine.lastRequest!!.sampling.reasoningBudget)
+        assertTrue(logLines.none { it.startsWith("reasoning budget") })
     }
 
     /**
@@ -3221,6 +3282,9 @@ class ChatViewModelTest {
         /** The last [DecodeRequest] handed to [LoadedModel.decode] — TEN-35 asserts on its sampling. */
         var lastRequest: DecodeRequest? = null
 
+        /** Every [DecodeRequest] handed to [LoadedModel.decode], in order. */
+        val requests = mutableListOf<DecodeRequest>()
+
         /** TEN-88: every [LoadedModel.warmUp] the engine was asked for, with its thinking flag. */
         val warmUps = mutableListOf<Pair<List<ChatMessage>, Boolean>>()
 
@@ -3269,6 +3333,7 @@ class ChatViewModelTest {
 
             override suspend fun decode(request: DecodeRequest): Flow<DecodeEvent> = flow {
                 lastRequest = request
+                requests += request
                 if (request.tools.isNotEmpty()) residentAtToolDecode += usedCells
                 val scripted = scriptQueue.removeFirstOrNull() ?: scriptedEvents
                 (scripted ?: listOf(DecodeEvent.Token("hi"))).forEach { emit(it) }

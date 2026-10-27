@@ -295,6 +295,51 @@ data class ReasoningBudget(
                 endMarker = endMarker,
             )
         }
+
+        /**
+         * Reasoning a reply to a simple message gets (TEN-166): on the bench, Qwen3-1.7B answered as many checked
+         * prompts at 256 as at 1024, in two thirds of the time. Below it, the reasoning it was cut short of spilled
+         * into the visible reply.
+         */
+        const val SimpleReasoningTokens = 256
+
+        /** Words, and numbers, from which a message [looksLikeProblem]. */
+        const val ProblemMinWords = 25
+        const val ProblemMinNumbers = 2
+
+        /**
+         * A number as a reader counts one: digits, with their group separators and decimals, not at the end of a word
+         * ("mp3") but with a unit after it ("10km", "3pm").
+         */
+        private val NumberPattern = Regex("""(?<![\p{L}\d.,:])\d+(?:[.,:]\d+)*(?!\d)""")
+
+        /**
+         * Whether [message] reads as a problem to work through in steps (a word problem, a schedule, a puzzle with
+         * positions) rather than a question or a request: at least [ProblemMinWords] words and [ProblemMinNumbers]
+         * numbers. A long ask with no numbers (a story, a summary) and a short sum ("7 times 8?") are not.
+         *
+         * Words are counted between whitespace, so a script written without spaces (Chinese, Japanese, Thai) counts a
+         * sentence as about one word, and only digits are numbers ("twenty", "vingt" are not): such a message reasons on
+         * [SimpleReasoningTokens], whatever it asks.
+         */
+        fun looksLikeProblem(message: String): Boolean =
+            message.split(Regex("""\s+""")).count { word -> word.any { it.isLetterOrDigit() } } >= ProblemMinWords &&
+                countNumbers(message) >= ProblemMinNumbers
+
+        /** The numbers of [text] as [looksLikeProblem] counts them. */
+        internal fun countNumbers(text: String): Int = NumberPattern.findAll(text).count()
+
+        /**
+         * The budget of a reply to [message], the user's last: [splitting] when it [looksLikeProblem], else at most
+         * [SimpleReasoningTokens] of reasoning (never more than [splitting] would give). Either way the answer keeps
+         * the rest of [maxTokens], so the two caps still sum to it.
+         */
+        fun forMessage(message: String, maxTokens: Int, endMarker: String): ReasoningBudget {
+            val split = splitting(maxTokens, endMarker)
+            if (looksLikeProblem(message)) return split
+            val reasoning = minOf(SimpleReasoningTokens, split.reasoningMaxTokens)
+            return split.copy(reasoningMaxTokens = reasoning, responseMaxTokens = split.reasoningMaxTokens + split.responseMaxTokens - reasoning)
+        }
     }
 }
 

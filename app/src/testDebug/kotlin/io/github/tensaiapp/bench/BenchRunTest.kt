@@ -399,6 +399,8 @@ class BenchRunTest {
 
         assertNull(run.config.reasoningBudget)
         assertNull(run.config.reasoningCapExceeded)
+        assertNull(run.config.reasoningBudgetMode)
+        assertNull(run.results.single().reasoningCap)
         assertNull(run.results.single().maxReplyReasoningTokens)
         assertFalse(run.results.single().reasoningOverCap)
         assertNull(run.results.single().answerOutcome)
@@ -466,6 +468,22 @@ class BenchRunTest {
         assertTrue(BenchRunJson.decode(BenchRunJson.encode(marked)).results.first().reasoningOverCap)
         assertTrue("reason 256" to false in configChips(marked.config))
         assertTrue("reason 256" to true in configChips(held.config))
+    }
+
+    @Test
+    fun anAdaptiveRunSavesItsModeAndEachTrialsCapAndShowsTheChip() {
+        val thinking = config.copy(
+            reasoningBudgetMode = BenchTrigger(thinking = true, adaptiveReasoning = true).reasoningBudgetMode,
+            sampling = BenchSampling.of(SamplingConfig(reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))),
+        )
+        val run = BenchRun.of(1, 2, thinking, 2, listOf(result("a", BenchVerdict.Correct).copy(reasoningCap = 256), result("b", BenchVerdict.Correct).copy(reasoningCap = 1024)), null)
+
+        val back = BenchRunJson.decode(BenchRunJson.encode(run))
+
+        assertEquals("adaptive", back.config.reasoningBudgetMode)
+        assertEquals(listOf(256, 1024), back.results.map { it.reasoningCap })
+        assertTrue("reason adaptive" to true in configChips(back.config))
+        assertTrue("reason 1024" to true in configChips(back.config.copy(reasoningBudgetMode = "default")))
     }
 
     @Test

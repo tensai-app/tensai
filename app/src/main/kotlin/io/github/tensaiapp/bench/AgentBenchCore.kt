@@ -36,8 +36,8 @@ import kotlinx.serialization.json.put
 
 /**
  * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
- * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]`, the debug panel of
- * Settings > This device or Settings > Bench.
+ * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256 | --ez adaptive_reasoning true]`,
+ * the debug panel of Settings > This device or Settings > Bench.
  *
  * @param basePrompt the harness's base prompt opens the system message, as in every chat.
  * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
@@ -51,6 +51,9 @@ import kotlinx.serialization.json.put
  * @param reasoningBudget tokens of reasoning before the close tag is forced, the chat's own cap of a [ReasoningBudget]
  *   lowered, so the answer keeps the rest of the chat's total. `null` is the chat's split ([ReasoningBudget.splitting]).
  *   Only matters when the chat's sampling has a budget at all: thinking on, on a model that thinks.
+ * @param adaptiveReasoning each prompt gets the budget a chat gives the same message
+ *   ([io.github.tensaiapp.engine.ReasoningBudget.forMessage], see [BenchRunner]'s `samplingFor`), so the run measures the
+ *   chat's rule. Never with a fixed [reasoningBudget].
  */
 data class BenchTrigger(
     val thinking: Boolean,
@@ -60,11 +63,21 @@ data class BenchTrigger(
     val repetitions: Int = 1,
     val greedy: Boolean = false,
     val reasoningBudget: Int? = null,
+    val adaptiveReasoning: Boolean = false,
 ) {
     init {
         require(repetitions in 1..MaxRepetitions) { "repetitions must be 1 to $MaxRepetitions, got $repetitions" }
         require(reasoningBudget == null || reasoningBudget > 0) { "reasoning budget must be positive, got $reasoningBudget" }
+        require(!adaptiveReasoning || reasoningBudget == null) { "an adaptive budget takes no fixed one" }
     }
+
+    /** How the run budgets reasoning, as logged and saved: "adaptive", "fixed" ([reasoningBudget]) or "default", the split. */
+    val reasoningBudgetMode: String
+        get() = when {
+            adaptiveReasoning -> "adaptive"
+            reasoningBudget != null -> "fixed"
+            else -> "default"
+        }
 
     /**
      * [chat], the sampling a new chat would use, as this run sends it: [toolGrammar], temperature 0 when [greedy], and
@@ -126,7 +139,7 @@ sealed interface BenchStatus {
  * release build ignores the extra entirely. [thinking] absent is [defaultThinking], the app's own for a new chat;
  * [basePrompt] absent is on and [examples] absent off, what a chat sends. [examples] without the base prompt is off.
  * [toolGrammar] absent is on, what a chat sends. [greedy] absent is off, the chat's sampling. [reasoningBudget] absent,
- * not positive or without thinking is the chat's split.
+ * not positive or without thinking is the chat's split. [adaptiveReasoning] needs thinking and wins over a fixed budget.
  */
 fun benchTrigger(
     debug: Boolean,
@@ -138,6 +151,7 @@ fun benchTrigger(
     toolGrammar: Boolean? = null,
     greedy: Boolean? = null,
     reasoningBudget: Int? = null,
+    adaptiveReasoning: Boolean? = null,
 ): BenchTrigger? {
     if (!debug || bench != "agent") return null
     val base = basePrompt ?: true
@@ -148,7 +162,8 @@ fun benchTrigger(
         base && examples == true,
         toolGrammar ?: true,
         greedy = greedy == true,
-        reasoningBudget = reasoningBudget?.takeIf { think && it > 0 },
+        reasoningBudget = reasoningBudget?.takeIf { think && it > 0 && adaptiveReasoning != true },
+        adaptiveReasoning = think && adaptiveReasoning == true,
     )
 }
 
@@ -387,6 +402,8 @@ class RefusingGate : ConfirmationGate {
  *   `null` when it could not be counted. The logged `answer_tokens` is [tokens] minus this, tool-call tokens included.
  * @param maxReplyReasoningTokens the largest reasoning of one reply of the turn, counted the same way: the reasoning cap
  *   holds each decode, not the turn.
+ * @param reasoningCap the reasoning cap the prompt's decodes got, `null` for none (thinking off): with an adaptive
+ *   budget, which prompts got the split.
  * @param reasoningOverCap [maxReplyReasoningTokens] went past the run's reasoning cap by more than [ReasoningCapSlack]:
  *   nothing forced the close tag, the template does not delimit reasoning.
  * @param ttftMs the first reply's time to first token as the engine reports it (what the chat shows), `null` when
@@ -415,6 +432,7 @@ data class BenchResult(
     val tokens: Int,
     val reasoningTokens: Int?,
     val maxReplyReasoningTokens: Int? = reasoningTokens,
+    val reasoningCap: Int? = null,
     val reasoningOverCap: Boolean = false,
     val ttftMs: Long?,
     val totalMs: Long,
@@ -456,6 +474,7 @@ data class BenchResult(
         put("tokens", tokens)
         put("reasoning_tokens", reasoningTokens)
         put("max_reply_reasoning_tokens", maxReplyReasoningTokens)
+        put("reasoning_cap", reasoningCap)
         if (reasoningOverCap) put("reasoning_over_cap", true)
         put("answer_tokens", reasoningTokens?.let { (tokens - it).coerceAtLeast(0) })
         put("ttft_ms", ttftMs)
@@ -508,6 +527,7 @@ data class BenchSummary(
         if (trigger.repetitions > 1) put("repetitions", trigger.repetitions)
         if (trigger.greedy) put("greedy", true)
         put("reasoning_budget", trigger.reasoningBudget)
+        put("reasoning_budget_mode", trigger.reasoningBudgetMode)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
@@ -540,7 +560,11 @@ data class BenchSummary(
             "thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}" +
                 " · tool grammar ${onOff(trigger.toolGrammar)}" + (if (trigger.greedy) " · greedy" else "") +
                 (if (trigger.repetitions > 1) " · repetitions ${trigger.repetitions}" else "") +
-                if (trigger.reasoningBudget != null) " · reasoning ${trigger.reasoningBudget}" else "",
+                when {
+                    trigger.adaptiveReasoning -> " · reasoning adaptive"
+                    trigger.reasoningBudget != null -> " · reasoning ${trigger.reasoningBudget}"
+                    else -> ""
+                },
         )
         add("prompts ${counts.values.sum()}: " + BenchVerdict.entries.joinToString(" ") { "${it.storageName} ${counts[it] ?: 0}" })
         add("false_call_rate ${falseCallRate ?: "-"} · missing_rate ${missingRate ?: "-"}")
@@ -612,6 +636,8 @@ data class BenchSummary(
  * @param system the system message of a request offering the tools it is given (by name), handed to [AgentRuntime.run]
  *   as a chat does: a prompt the runtime runs with no tools gets the no-tools text. `null` for none.
  * @param countTokens tokens of a text under the loaded model's tokenizer, `null` when it cannot be counted.
+ * @param samplingFor the sampling of a prompt by its text, in place of [sampling] (which still warms the prefix): the
+ *   chat's per-message budget for [BenchTrigger.adaptiveReasoning]. `null`: every prompt on [sampling].
  */
 class BenchRunner(
     private val runtime: AgentRuntime,
@@ -621,6 +647,7 @@ class BenchRunner(
     private val countTokens: suspend (String) -> Int?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val system: ((Set<String>) -> String?)? = null,
+    private val samplingFor: ((String) -> SamplingConfig)? = null,
 ) {
     /** The request the tool prefix is warmed from: the system message of the tools a turn gets, no history, those tools. */
     fun prefixRequest(): DecodeRequest = DecodeRequest(
@@ -638,7 +665,8 @@ class BenchRunner(
      */
     suspend fun run(prompt: BenchPrompt, prefixCold: Boolean = false, repetition: Int = 1): BenchResult {
         gate.drain()
-        val request = DecodeRequest(listOf(ChatMessage(MessageRole.User, prompt.prompt)), prompt.maxTokens?.let(::capped) ?: sampling)
+        val own = samplingFor?.invoke(prompt.prompt) ?: sampling
+        val request = DecodeRequest(listOf(ChatMessage(MessageRole.User, prompt.prompt)), prompt.maxTokens?.let { capped(own, it) } ?: own)
         val available = availableTools()
         val startedAt = clock()
         var ttftMs: Long? = null
@@ -694,6 +722,7 @@ class BenchRunner(
             tokens = tokens,
             reasoningTokens = reasoningTokens,
             maxReplyReasoningTokens = maxReplyReasoningTokens,
+            reasoningCap = cap,
             reasoningOverCap = cap != null && maxReplyReasoningTokens != null && maxReplyReasoningTokens > cap + BenchResult.ReasoningCapSlack,
             ttftMs = ttftMs,
             totalMs = totalMs,
@@ -712,10 +741,10 @@ class BenchRunner(
     }
 
     /**
-     * [sampling] with its answer held to [maxTokens]. The reasoning keeps the run's own cap, so the model decides on a
+     * [sampling] with its answer held to [maxTokens]. The reasoning keeps the prompt's own cap, so the model decides on a
      * call as it would in a chat: the total is then that cap plus [maxTokens], the sum the engine holds a decode to.
      */
-    private fun capped(maxTokens: Int): SamplingConfig = when (val budget = sampling.reasoningBudget) {
+    private fun capped(sampling: SamplingConfig, maxTokens: Int): SamplingConfig = when (val budget = sampling.reasoningBudget) {
         null -> sampling.copy(maxTokens = maxTokens)
         else -> sampling.copy(
             maxTokens = budget.reasoningMaxTokens + maxTokens,

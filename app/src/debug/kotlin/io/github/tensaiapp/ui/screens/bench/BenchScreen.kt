@@ -334,6 +334,7 @@ private object LastRunSettings {
     val toolGrammar = mutableStateOf(true)
     val greedy = mutableStateOf(false)
     val reasoningBudget = mutableStateOf<Int?>(null)
+    val adaptiveReasoning = mutableStateOf(false)
     val repetitions = mutableIntStateOf(1)
 }
 
@@ -361,6 +362,7 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
     var toolGrammar by LastRunSettings.toolGrammar
     var greedy by LastRunSettings.greedy
     var reasoningBudget by LastRunSettings.reasoningBudget
+    var adaptiveReasoning by LastRunSettings.adaptiveReasoning
     var repetitions by LastRunSettings.repetitions
 
     Eyebrow(stringResource(R.string.decode_eyebrow_loaded))
@@ -405,13 +407,19 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
         ) {
             Text(stringResource(R.string.bench_reasoning_budget), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
             Text(stringResource(R.string.bench_reasoning_budget_sub), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Adaptive first, then the chat's split (Default), then the fixed budgets.
             val budgets = listOf(null) + BenchTrigger.ReasoningBudgets
             BenchSegmented(
-                options = budgets.map { SegmentOption(it?.toString() ?: stringResource(R.string.bench_reasoning_budget_default)) },
-                selected = budgets.indexOf(reasoningBudget).coerceAtLeast(0),
-                onSelect = { reasoningBudget = budgets[it] },
+                options = listOf(SegmentOption(stringResource(R.string.bench_reasoning_budget_adaptive))) +
+                    budgets.map { SegmentOption(it?.toString() ?: stringResource(R.string.bench_reasoning_budget_default)) },
+                selected = if (adaptiveReasoning) 0 else budgets.indexOf(reasoningBudget).coerceAtLeast(0) + 1,
+                onSelect = {
+                    adaptiveReasoning = it == 0
+                    reasoningBudget = if (it == 0) null else budgets[it - 1]
+                },
                 enabled = thinking,
                 mono = true,
+                fitLabels = true,
             )
         }
         RowDivider()
@@ -434,7 +442,7 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
         TensaiButton(
             text = prompts?.let { pluralStringResource(R.plurals.bench_run_calls, it * repetitions, it * repetitions) } ?: stringResource(R.string.bench_run_plain),
             onClick = {
-                val trigger = BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy, reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets })
+                val trigger = BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy, reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets }, thinking && adaptiveReasoning)
                 AgentBench.start(trigger, context)
             },
             icon = Icons.Rounded.PlayArrow,

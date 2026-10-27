@@ -1,5 +1,6 @@
 package io.github.tensaiapp.ui.screens.chat
 
+import android.util.Log
 import io.github.tensaiapp.agent.AgentEvent
 import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ReplyGenerator
@@ -88,17 +89,28 @@ internal fun worthWarmingUp(stats: DecodeStats): Boolean =
 /**
  * The sampling of a reply, see [ChatViewModel.generateReply] for where each part comes from: the knobs of
  * [samplingJson], the [enableThinking] flag and, only when the loaded model can think ([thinkingSupported]),
- * the reasoning split of their `maxTokens`. Shared with the agent bench, so it measures the requests a send builds.
+ * the reasoning budget of their `maxTokens`: [ReasoningBudget.forMessage] of [lastUserMessage] (TEN-166), the
+ * whole split ([ReasoningBudget.splitting]) when there is none to read. Shared with the agent bench, so it measures
+ * the requests a send builds: its Adaptive budget passes each prompt as the message, the chat's rule; its Default
+ * passes none and keeps the split, as runs before TEN-166's rule did.
  */
-internal fun replySampling(samplingJson: String?, enableThinking: Boolean, thinkingSupported: Boolean): SamplingConfig {
+internal fun replySampling(
+    samplingJson: String?,
+    enableThinking: Boolean,
+    thinkingSupported: Boolean,
+    lastUserMessage: String? = null,
+): SamplingConfig {
     val sampling = SamplingJson.decode(samplingJson)
-    val reasoningBudget = if (enableThinking && thinkingSupported) {
-        ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
-    } else {
-        null
+    val reasoningBudget = when {
+        !enableThinking || !thinkingSupported -> null
+        lastUserMessage == null -> ReasoningBudget.splitting(sampling.maxTokens, ThinkingStreamParser.CloseTag)
+        else -> ReasoningBudget.forMessage(lastUserMessage, sampling.maxTokens, ThinkingStreamParser.CloseTag)
     }
     return sampling.copy(enableThinking = enableThinking, reasoningBudget = reasoningBudget)
 }
+
+/** The log tag of the chat's replies. */
+private const val ChatLogTag = "tensai.chat"
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
@@ -383,6 +395,8 @@ class ChatViewModel(
     /** The user's instructions for every chat ([io.github.tensaiapp.data.InstructionsSettings]): a layer of each request, previewed by the settings sheet. */
     val globalInstructions: Flow<String> = RuntimeGraph.instructionsSettings.global,
     private val systemPrompts: SystemPrompt = SystemPrompt(),
+    /** A line about a reply for logcat, under [ChatLogTag]: replaced by the JVM tests, which have no logcat. */
+    private val log: (String) -> Unit = { Log.i(ChatLogTag, it) },
 ) {
     private val _conversationId = MutableStateFlow(conversationId)
 
@@ -1064,7 +1078,8 @@ class ChatViewModel(
      * it: the sampling knobs from [ConversationEntity.samplingJson], `enableThinking` from its own
      * column, and the reasoning split derived from the knobs' own `maxTokens` via
      * [ReasoningBudget.splitting] — never stored, so it cannot go stale against the max-tokens the
-     * user actually set.
+     * user actually set. Since TEN-166 the reasoning share of that split depends on the message
+     * replied to, see [ReasoningBudget.forMessage].
      */
     private suspend fun generateReply(conversationId: String, turn: ChatTurns.Turn) {
         // Before the sync below, not left to [InferenceQueue.generate]: a switch saves the outgoing
@@ -1118,11 +1133,20 @@ class ChatViewModel(
         return requestFor(settings, history, conversation?.let { memoryPrompt.blockFor(it.id) }, system)
     }
 
-    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?, system: String?): DecodeRequest =
-        DecodeRequest(
-            messages = chatRepository.toEngineMessages(history, system, memory),
-            sampling = replySampling(settings.samplingJson, settings.enableThinking, currentModelSupportsThinking.first()),
-        )
+    /**
+     * The request of a reply to [history], its reasoning budget read off the last user message (TEN-166) and logged
+     * once: [prefixRequest]'s empty history has none, so it keeps the split and logs nothing.
+     */
+    private suspend fun requestFor(settings: ConversationSettings, history: List<MessageEntity>, memory: String?, system: String?): DecodeRequest {
+        val lastUserMessage = history.lastOrNull { it.role == "user" }?.content
+        val sampling = replySampling(settings.samplingJson, settings.enableThinking, currentModelSupportsThinking.first(), lastUserMessage)
+        if (lastUserMessage != null) {
+            sampling.reasoningBudget?.let { budget ->
+                log("reasoning budget: ${budget.reasoningMaxTokens} (${if (ReasoningBudget.looksLikeProblem(lastUserMessage)) "problem" else "simple"})")
+            }
+        }
+        return DecodeRequest(messages = chatRepository.toEngineMessages(history, system, memory), sampling = sampling)
+    }
 
     /**
      * The system message of a request on [settings], see [SystemPrompt] for its layers: the base prompt,

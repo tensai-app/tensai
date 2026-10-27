@@ -196,7 +196,8 @@ internal data class SegmentOption(val label: String, val enabled: Boolean = true
  * height: segments are plain selectable rows, not clickable Surfaces, whose minimum touch size would pad the track
  * around a shorter pill. [mono] is the knobs' style: segments of equal width across the row, mono labels; off, segments
  * as wide as their label, Figtree. An option that is not [SegmentOption.enabled] is dimmed and takes no taps, nor does
- * any when [enabled] is false.
+ * any when [enabled] is false. [fitLabels], with [mono]: the row is still shared out to the end, but by label length,
+ * so a long label ("Default" among numbers) is not cut where equal widths would cut it.
  */
 @Composable
 internal fun BenchSegmented(
@@ -206,6 +207,7 @@ internal fun BenchSegmented(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     mono: Boolean = false,
+    fitLabels: Boolean = false,
 ) {
     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = if (mono) modifier.fillMaxWidth() else modifier) {
         Row(modifier = Modifier.height(IntrinsicSize.Min).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -215,7 +217,7 @@ internal fun BenchSegmented(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (mono) 3.dp else 5.dp, Alignment.CenterHorizontally),
                     modifier = Modifier
-                        .then(if (mono) Modifier.weight(1f) else Modifier)
+                        .then(if (mono) Modifier.weight(if (fitLabels) option.label.length.coerceAtLeast(1).toFloat() else 1f) else Modifier)
                         .fillMaxHeight()
                         .alpha(if (option.enabled) 1f else 0.38f)
                         .clip(CircleShape)
@@ -362,7 +364,8 @@ internal fun ConfigChip(label: String, on: Boolean, strikeOff: Boolean = false) 
 
 /**
  * The config chips of [config], label and state: think, base vN, ex, gram, greedy, then "reason N" with the reasoning
- * cap the decodes got, when they had one, off when a reply reasoned past it ([BenchRunConfig.reasoningCapExceeded]).
+ * cap the decodes got, when they had one ("reason adaptive" when each prompt had its own), off when a reply reasoned
+ * past it ([BenchRunConfig.reasoningCapExceeded]).
  */
 internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = listOfNotNull(
     "think" to config.thinking,
@@ -370,7 +373,9 @@ internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = 
     "ex" to config.examples,
     "gram" to config.toolGrammar,
     "greedy" to config.sampling.greedy,
-    config.sampling.reasoningMaxTokens?.takeIf { config.thinking }?.let { "reason $it" to (config.reasoningCapExceeded != true) },
+    config.sampling.reasoningMaxTokens?.takeIf { config.thinking }?.let {
+        (if (config.reasoningBudgetMode == "adaptive") "reason adaptive" else "reason $it") to (config.reasoningCapExceeded != true)
+    },
 )
 
 /** "Qwen3-1.7B Q4_K_M · CPU", what the run ran on. A run saved before [backendName] has its full label cut down too. */

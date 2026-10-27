@@ -946,6 +946,50 @@ class AgentBenchTest {
     }
 
     @Test
+    fun anAdaptiveRunGivesEachPromptTheBudgetItsTextChoosesAndRecordsIt() = runBlocking {
+        val chat = SamplingConfig(maxTokens = 2048, reasoningBudget = ReasoningBudget.splitting(2048, "</think>"))
+        val laundry = "Two loads of laundry each need washing (20 minutes), then drying (30 minutes), then folding (10 minutes), in " +
+            "that order. There is one washer, one dryer and one person folding, and each handles one load at a time."
+        val gen = ScriptedGenerator(reply("Tokyo"), reply("90"), reply("Once"))
+        val bench = BenchRunner(
+            runtime = AgentRuntime(ToolRegistry(emptyList()) { ToolTier.entries.toSet() }, RefusingGate(), waitForQueue = { false }),
+            gate = RefusingGate(),
+            generator = gen,
+            sampling = chat,
+            countTokens = { it.length },
+            samplingFor = { text -> chat.copy(reasoningBudget = ReasoningBudget.forMessage(text, chat.maxTokens, "</think>")) },
+        )
+        val lines = mutableListOf<String>()
+
+        val results = runBench(
+            listOf(BenchPrompt("capital", "Capital of Japan?", emptySet()), BenchPrompt("laundry", laundry, emptySet()), BenchPrompt("story", "A story.", emptySet(), maxTokens = 96)),
+            bench,
+            firstCold = false,
+            beforeEach = { null },
+            log = { lines += it },
+        )
+
+        assertEquals(listOf(256, 1024, 256), gen.requests.map { it.sampling.reasoningBudget?.reasoningMaxTokens })
+        assertEquals("the long-form cap still holds the answer", ReasoningBudget(256, 96, "</think>"), gen.requests.last().sampling.reasoningBudget)
+        assertEquals(listOf(256, 1024, 256), results.map { it.reasoningCap })
+        assertEquals("1024", Json.parseToJsonElement(lines[1]).jsonObject.getValue("reasoning_cap").jsonPrimitive.content)
+        assertEquals(chat, bench.prefixRequest().sampling)
+    }
+
+    @Test
+    fun theBudgetModeIsAdaptiveFixedOrDefaultAndAdaptiveTakesNoFixedBudget() {
+        assertEquals("adaptive", BenchTrigger(thinking = true, adaptiveReasoning = true).reasoningBudgetMode)
+        assertEquals("fixed", BenchTrigger(thinking = true, reasoningBudget = 256).reasoningBudgetMode)
+        assertEquals("default", BenchTrigger(thinking = true).reasoningBudgetMode)
+        assertTrue(runCatching { BenchTrigger(thinking = true, reasoningBudget = 256, adaptiveReasoning = true) }.isFailure)
+        val adaptive = BenchTrigger(thinking = true, adaptiveReasoning = true)
+        assertEquals("adaptive", Json.parseToJsonElement(BenchSummary.of(emptyList()).toLogLine(adaptive)).jsonObject.getValue("reasoning_budget_mode").jsonPrimitive.content)
+        assertTrue(BenchSummary.of(emptyList()).toDisplayLines(adaptive, "m", emptyList())[1].endsWith(" · reasoning adaptive"))
+        assertEquals(adaptive, benchTrigger(debug = true, bench = "agent", thinking = true, defaultThinking = true, reasoningBudget = 256, adaptiveReasoning = true))
+        assertFalse(benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true, adaptiveReasoning = true)!!.adaptiveReasoning)
+    }
+
+    @Test
     fun theTriggerTakesAReasoningBudgetOnlyWithThinking() {
         assertEquals(256, benchTrigger(debug = true, bench = "agent", thinking = true, defaultThinking = true, reasoningBudget = 256)!!.reasoningBudget)
         assertNull(benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true, reasoningBudget = 256)!!.reasoningBudget)

@@ -157,6 +157,7 @@ internal fun BenchPromptScreen(runId: String, promptId: String, runKey: String, 
                 val facts = listOfNotNull(
                     trial.reasoningTokens?.let { pluralStringResource(R.plurals.bench_reasoning_tokens, it, it) },
                     trial.maxReplyReasoningTokens?.takeIf { it != trial.reasoningTokens }?.let { stringResource(R.string.bench_max_reply_reasoning, it) },
+                    trial.reasoningCap?.let { stringResource(R.string.bench_reasoning_cap, it) },
                     if (trial.reasoningOverCap) stringResource(R.string.bench_reasoning_over_cap) else null,
                     if (trial.reasoningCut) pluralStringResource(R.plurals.bench_cut, BenchTrial.MaxTextChars, BenchTrial.MaxTextChars) else null,
                 )

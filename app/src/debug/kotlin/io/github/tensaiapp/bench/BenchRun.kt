@@ -77,6 +77,8 @@ data class BenchRun(
  * @param reasoningBudget the run's [BenchTrigger.reasoningBudget], `null` for the chat's split (and for every run saved
  *   before the setting, and when the sampling had no cap to lower): [BenchSampling.reasoningMaxTokens] is the cap the
  *   decodes got either way.
+ * @param reasoningBudgetMode [BenchTrigger.reasoningBudgetMode], `null` for a run saved before it: "default" or "fixed",
+ *   [reasoningBudget] says which. "adaptive": each prompt had its own cap, see [BenchTrial.reasoningCap].
  * @param reasoningCapExceeded a reply reasoned past that cap ([BenchResult.reasoningOverCap]): the template does not
  *   delimit reasoning, so nothing enforced it. `null` with no cap, and for a run saved before the check.
  * @param prefixWarmed the tool prefix was warmed before the first prompt (its timings are left out of the medians either way).
@@ -95,6 +97,7 @@ data class BenchRunConfig(
     @SerialName("tool_grammar") val toolGrammar: Boolean,
     val repetitions: Int = 1,
     @SerialName("reasoning_budget") val reasoningBudget: Int? = null,
+    @SerialName("reasoning_budget_mode") val reasoningBudgetMode: String? = null,
     @SerialName("reasoning_cap_exceeded") val reasoningCapExceeded: Boolean? = null,
     val sampling: BenchSampling,
     val prompts: Int,
@@ -153,6 +156,7 @@ data class BenchSampling(
  * @param answer an [AnswerOutcome.storageName], see [answerOutcome], `null` in a run saved before answers were checked.
  * @param expectedAnswer the prompt's [AnswerCheck.shown], `null` for a prompt with no check.
  * @param tags the prompt's [BenchPrompt.tags].
+ * @param reasoningCap [BenchResult.reasoningCap], `null` too in a run saved before it.
  */
 @Serializable
 data class BenchTrial(
@@ -181,6 +185,7 @@ data class BenchTrial(
     val answer: String? = null,
     @SerialName("expected_answer") val expectedAnswer: String? = null,
     val tags: List<String> = emptyList(),
+    @SerialName("reasoning_cap") val reasoningCap: Int? = null,
 ) {
     /** [verdict] read back, [BenchVerdict.Error] for a name this build does not know. */
     val benchVerdict: BenchVerdict get() = BenchVerdict.entries.firstOrNull { it.storageName == verdict } ?: BenchVerdict.Error
@@ -220,6 +225,7 @@ data class BenchTrial(
                 answer = result.answer.storageName,
                 expectedAnswer = result.prompt.answer?.shown,
                 tags = result.prompt.tags.toList(),
+                reasoningCap = result.reasoningCap,
             )
         }
     }

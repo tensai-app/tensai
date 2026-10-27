@@ -37,7 +37,8 @@ import kotlinx.serialization.json.put
  * should not, or misses one, is measured rather than guessed.
  *
  * `adb shell am start -n io.github.tensaiapp/.MainActivity --activity-single-top --es bench agent [--ez thinking false]
- * [--ez base_prompt false] [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]`,
+ * [--ez base_prompt false] [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]
+ * [--ez adaptive_reasoning true]`,
  * "Run agent bench" in Settings > This device, which shows [status] (the summary included) on screen, or Settings >
  * Bench (TEN-187), which shows [progress]. Wherever it starts, a run that graded a prompt is saved as a [BenchRun] in
  * [BenchRunStore], a run stopped early ([stop], the model gone) as a partial one.
@@ -61,6 +62,7 @@ object AgentBench {
     const val EXTRA_TOOL_GRAMMAR = "tool_grammar"
     const val EXTRA_GREEDY = "greedy"
     const val EXTRA_REASONING_BUDGET = "reasoning_budget"
+    const val EXTRA_ADAPTIVE_REASONING = "adaptive_reasoning"
     private const val WarmRetryMs = 500L
 
     private val _status = MutableStateFlow<BenchStatus>(BenchStatus.Idle)
@@ -100,6 +102,7 @@ object AgentBench {
             toolGrammar = flag(EXTRA_TOOL_GRAMMAR),
             greedy = flag(EXTRA_GREEDY),
             reasoningBudget = intent?.takeIf { it.hasExtra(EXTRA_REASONING_BUDGET) }?.getIntExtra(EXTRA_REASONING_BUDGET, 0),
+            adaptiveReasoning = flag(EXTRA_ADAPTIVE_REASONING),
         ) ?: return
         // Consumed once: a recreation must not run it again.
         intent?.removeExtra(EXTRA_BENCH)
@@ -176,7 +179,16 @@ object AgentBench {
         val system = { tools: Set<String> -> systemPrompt.build(tools = tools, startedAt = null, global = null, chat = null) }
         val sampling = trigger.sampling(replySampling(null, trigger.thinking, entity.thinkingAvailable))
         // The budget the decodes get, as logged and saved: none when the chat's sampling has no reasoning cap to lower.
-        val ran = trigger.copy(reasoningBudget = trigger.reasoningBudget.takeIf { sampling.reasoningBudget != null })
+        val ran = trigger.copy(
+            reasoningBudget = trigger.reasoningBudget.takeIf { sampling.reasoningBudget != null },
+            adaptiveReasoning = trigger.adaptiveReasoning && sampling.reasoningBudget != null,
+        )
+        // Adaptive: each prompt as a chat would send it, its budget read off the prompt by the chat's own rule.
+        val samplingFor = if (ran.adaptiveReasoning) {
+            { text: String -> trigger.sampling(replySampling(null, trigger.thinking, entity.thinkingAvailable, lastUserMessage = text)) }
+        } else {
+            null
+        }
         val runner = BenchRunner(
             runtime = runtime,
             gate = gate,
@@ -184,6 +196,7 @@ object AgentBench {
             sampling = sampling,
             countTokens = { text -> queue.countTokens(listOf(text))?.firstOrNull() },
             system = system,
+            samplingFor = samplingFor,
         )
 
         // The cache's owner is saved, then forgotten: from here the cache holds the bench, whatever is saved next.
@@ -219,6 +232,7 @@ object AgentBench {
                 put("tool_grammar", trigger.toolGrammar)
                 if (trigger.greedy) put("greedy", true)
                 put("reasoning_budget", ran.reasoningBudget)
+                put("reasoning_budget_mode", ran.reasoningBudgetMode)
                 put("reasoning_max_tokens", sampling.reasoningBudget?.reasoningMaxTokens)
                 if (trigger.repetitions > 1) put("repetitions", trigger.repetitions)
                 put("thinking_supported", entity.thinkingAvailable)
@@ -240,6 +254,7 @@ object AgentBench {
             toolGrammar = trigger.toolGrammar,
             repetitions = trigger.repetitions,
             reasoningBudget = ran.reasoningBudget,
+            reasoningBudgetMode = ran.reasoningBudgetMode,
             sampling = BenchSampling.of(sampling, greedy = trigger.greedy),
             prompts = prompts.size,
             tools = runner.availableTools().toList(),
