@@ -358,6 +358,30 @@ class ChatViewModelTest {
     }
 
     /**
+     * TEN-180. A save that read the tracker during a switch's restore (`onStop`) would write the
+     * incoming conversation's state into the outgoing one's file: the owner has to be gone from the
+     * tracker before the restore replaces the cache, so the save's `ownsCache` refuses it.
+     */
+    @Test
+    fun theOutgoingConversationNoLongerOwnsTheCacheWhileTheIncomingOneIsRestored() = runBlocking {
+        loadFakeModel()
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+        newViewModel(conversationB).send("hi from B")
+        awaitAssistantReply(conversationB, expectedCount = 2)
+
+        val ownersDuringRestore = mutableListOf<String?>()
+        engine.duringLoad = { ownersDuringRestore += ActiveSessionTracker.current.value?.first }
+        newViewModel(conversationA).send("back in A")
+        awaitAssistantReply(conversationA, expectedCount = 4)
+
+        assertEquals("precondition: A's session was restored", 1, ownersDuringRestore.size)
+        assertNotEquals("B's id still named the cache while A's state went in", conversationB, ownersDuringRestore.single())
+    }
+
+    /**
      * TEN-80, the defect itself. Two quantisations of one model — a Q4 and a Q8 imported to compare
      * them — are two files, two rows, and one GGUF display name. `resolveSessionKey` used to turn
      * the loaded model back into a row by that name, against a list ordered `importedAt DESC`, so
@@ -2431,9 +2455,10 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun aConversationReportedAfterTheSaveKeepsItsTrackerEntryThroughTheReplace() = runBlocking {
-        conversationInCacheThenTierChange()
-        // A send in another chat between the save and the warm-up taking the queue: it reports itself the owner.
+    fun anOwnerChangeDuringTheSaveMakesTheWarmUpGiveWay() = runBlocking {
+        val conversationA = conversationInCacheThenTierChange()
+        // A send in another chat while the save dumps: it reports itself the owner, so what was dumped may be its
+        // state and not A's (TEN-180). Nothing is written under A's name and the cache is left to the new owner.
         engine.duringSave = { ActiveSessionTracker.report("new-owner", ActiveSessionTracker.current.value!!.second) }
 
         val warm = keepWarm(newViewModel(null))
@@ -2441,8 +2466,25 @@ class ChatViewModelTest {
         settle()
         warm.cancelAndJoin()
 
-        assertTrue("precondition: the cache was replaced", engine.toolPrefixWarmUps.single().second)
-        assertEquals("only A's entry may be cleared", "new-owner", ActiveSessionTracker.current.value?.first)
+        assertFalse("the save was refused: the engine must leave the cache alone", engine.toolPrefixWarmUps.single().second)
+        assertNull("nothing may be on disk as A's", sessionDao.getByConversation(conversationA))
+        assertEquals("the new owner keeps its entry", "new-owner", ActiveSessionTracker.current.value?.first)
+    }
+
+    @Test
+    fun aSwitchRestoringAnotherSessionDuringTheWarmUpsSaveKeepsItOutOfTheOutgoingFile() = runBlocking {
+        val conversationA = conversationInCacheThenTierChange()
+        // Another chat's switch lands while the warm-up's save dumps: it clears A before restoring its own session
+        // (ChatViewModel.restoreOnto), so the dump may hold that session's state.
+        engine.duringSave = { ActiveSessionTracker.clearIf(conversationA) }
+
+        val warm = keepWarm(newViewModel(null))
+        withTimeout(5_000) { engine.toolPrefixEntered.await() }
+        settle()
+        warm.cancelAndJoin()
+
+        assertNull("the dump must not become A's session", sessionDao.getByConversation(conversationA))
+        assertFalse(engine.toolPrefixWarmUps.single().second)
     }
 
     @Test
@@ -3392,8 +3434,12 @@ class ChatViewModelTest {
             return usedCells
         }
 
+        /** Runs inside every [loadSession]: what a save picked up meanwhile would find. */
+        var duringLoad: (() -> Unit)? = null
+
         override suspend fun loadSession(path: String): Boolean {
             loadSessionCalls++
+            duringLoad?.invoke()
             return true
         }
 

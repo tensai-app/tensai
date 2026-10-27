@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,7 +69,7 @@ class SessionRepositoryTest {
         val finalFile = File(entity.filePath)
         assertTrue("expected the final file to exist", finalFile.exists())
         assertEquals("kv-state", finalFile.readText())
-        assertFalse("expected no leftover .tmp file", File(finalFile.path + ".tmp").exists())
+        assertEquals("expected no leftover .tmp file", listOf(finalFile.name), finalFile.parentFile!!.list()!!.toList())
         assertEquals("model-1", entity.modelId)
         assertEquals(4096, entity.nCtx)
         assertEquals("F16", entity.kvCacheType)
@@ -479,6 +480,29 @@ class SessionRepositoryTest {
         assertTrue(File(newestPath).exists())
     }
 
+    @Test
+    fun pruneToStoragePolicyDeletesTempDumpsLeftByADeadProcess() = runBlocking {
+        // Each save names its own temp file (TEN-180), so a dump the process died in is never
+        // overwritten by the next one: app start is what takes it.
+        repository.save("c1", key) { path -> File(path).writeText("kept"); SessionSaveOutcome.Wrote(1) }
+        val sessionsDir = File(storageRoot, "sessions")
+        val leftover = File(sessionsDir, "c1.7.llamastate.tmp").apply { writeText("half a dump") }
+
+        repository.pruneToStoragePolicy()
+
+        assertFalse(leftover.exists())
+        assertEquals("kept", File(dao.getByConversation("c1")!!.filePath).readText())
+    }
+
+    @Test
+    fun pruneToStoragePolicyDeletesTempDumpsEvenWithNoRows() = runBlocking {
+        val leftover = File(storageRoot, "sessions/c1.1.llamastate.tmp").apply { parentFile!!.mkdirs(); writeText("x") }
+
+        repository.pruneToStoragePolicy()
+
+        assertFalse(leftover.exists())
+    }
+
     private fun sessionRow(conversationId: String, lastAccessedAt: Long) = SessionEntity(
         conversationId = conversationId,
         modelId = key.modelId,
@@ -572,6 +596,98 @@ class SessionRepositoryTest {
 
         assertTrue("the sessions directory itself must survive", sessionsDir.isDirectory)
         assertTrue("purge matches this class's own file names, it is not a deleteRecursively", notOurs.exists())
+    }
+
+    // ---- overlapping saves of one conversation (TEN-180) ----
+
+    @Test
+    fun aSaveThatCommitsWhileAnotherIsStillDumpingLeavesTheLaterCommitWholeOnDisk() = runBlocking {
+        // `onStop` twice in a row during a long dump: the second save starts and commits while the
+        // first is still writing. A shared temp path had the first one's tail land in a fresh file
+        // and commit that, a truncated session in place of a good one.
+        val result = repository.save("c1", key) { path ->
+            File(path).writeText("first-")
+            val inner = repository.save("c1", key) { innerPath -> File(innerPath).writeText("second"); SessionSaveOutcome.Wrote(20) }
+            assertTrue("precondition: the overlapping save committed", inner is SaveResult.Saved)
+            File(path).appendText("whole")
+            SessionSaveOutcome.Wrote(10)
+        }
+
+        assertTrue(result is SaveResult.Saved)
+        val entity = dao.getByConversation("c1")!!
+        assertEquals("first-whole", File(entity.filePath).readText())
+        assertEquals(10, entity.tokenCount)
+        assertEquals(File(entity.filePath).length(), entity.sizeBytes)
+        assertEquals("no temp file left behind", listOf("c1.llamastate"), File(storageRoot, "sessions").list()!!.toList())
+    }
+
+    @Test
+    fun aSaveThatFailsWhileAnotherIsDumpingDoesNotDeleteTheOthersTempFile() = runBlocking {
+        // A failed save cleans up its own temp file, and only its own: with one shared path it took
+        // the other save's finished dump with it, and that one reported "wrote no file", which a
+        // conversation switch reads as a reason to cancel its restore.
+        val result = repository.save("c1", key) { path ->
+            File(path).writeText("good")
+            val inner = repository.save("c1", key) { innerPath -> File(innerPath).writeText("half"); SessionSaveOutcome.EngineFailed }
+            assertTrue("precondition: the overlapping save failed", inner is SaveResult.Failed)
+            SessionSaveOutcome.Wrote(10)
+        }
+
+        assertTrue("got $result", result is SaveResult.Saved)
+        assertEquals("good", File(dao.getByConversation("c1")!!.filePath).readText())
+        assertEquals(listOf("c1.llamastate"), File(storageRoot, "sessions").list()!!.toList())
+    }
+
+    @Test
+    fun aSaveWhoseConversationNoLongerOwnsTheCacheIsRefusedAndKeepsThePreviousSession() = runBlocking {
+        repository.save("c1", key) { path -> File(path).writeText("c1's own"); SessionSaveOutcome.Wrote(10) }
+
+        // A switch restored another conversation's session between the caller reading the owner and
+        // the dump: what was written is that conversation's state, under this one's name.
+        var owner = "c1"
+        val result = repository.save("c1", key, ownsCache = { owner == "c1" }) { path ->
+            File(path).writeText("c2's restored state")
+            owner = "c2"
+            SessionSaveOutcome.Wrote(30)
+        }
+
+        assertEquals(SaveResult.OwnerChanged, result)
+        val entity = dao.getByConversation("c1")!!
+        assertEquals("c1's own", File(entity.filePath).readText())
+        assertEquals(10, entity.tokenCount)
+        assertEquals(listOf("c1.llamastate"), File(storageRoot, "sessions").list()!!.toList())
+    }
+
+    @Test
+    fun aSaveCancelledWhileWaitingToCommitTakesItsTempFileWithIt() = runBlocking {
+        // Another mutation holds the commit lock; the save has dumped and waits for it, then is
+        // cancelled. Its temp name is its own, so nothing else would ever remove that file.
+        val dumping = CompletableDeferred<Unit>()
+        val dumpDone = CompletableDeferred<Unit>()
+        val save = launch {
+            repository.save("c1", key) { path ->
+                File(path).writeText("kv-state")
+                dumping.complete(Unit)
+                dumpDone.await()
+                SessionSaveOutcome.Wrote(10)
+            }
+        }
+        dumping.await()
+        val holding = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        dao.beforeAllSessions = { holding.complete(Unit); release.await() }
+        val holder = launch { repository.deleteForModel("another-model") }
+        holding.await()
+        dumpDone.complete(Unit)
+        yield()
+
+        save.cancelAndJoin()
+        dao.beforeAllSessions = null
+        release.complete(Unit)
+        holder.join()
+
+        assertNull(dao.getByConversation("c1"))
+        assertEquals(emptyList<String>(), File(storageRoot, "sessions").list()!!.toList())
     }
 
     // ---- purgeAll racing a save (TEN-38) ----
@@ -748,7 +864,13 @@ class SessionRepositoryTest {
 
         override fun observeAll(): Flow<List<SessionEntity>> = flow
 
-        override suspend fun allSessions(): List<SessionEntity> = rows.values.toList()
+        /** Suspends [allSessions], which the repository only calls under its commit lock. */
+        var beforeAllSessions: (suspend () -> Unit)? = null
+
+        override suspend fun allSessions(): List<SessionEntity> {
+            beforeAllSessions?.invoke()
+            return rows.values.toList()
+        }
 
         override suspend fun upsert(session: SessionEntity) {
             rows[session.conversationId] = session

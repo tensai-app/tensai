@@ -1284,7 +1284,13 @@ class ChatViewModel(
         if (outgoingConversationId == _conversationId.value) return null
         val (_, key) = resolveSessionKey() ?: return null
         if (outgoingKey != key) return null
-        return when (sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)) {
+        val result = sessionRepository.save(
+            outgoingConversationId,
+            outgoingKey,
+            ownsCache = { ActiveSessionTracker.current.value == (outgoingConversationId to outgoingKey) },
+            saveOnEngine = inferenceQueue::saveSession,
+        )
+        return when (result) {
             is SaveResult.Saved, is SaveResult.Unchanged -> outgoingConversationId to resident
             else -> null
         }
@@ -1434,7 +1440,13 @@ class ChatViewModel(
         val (incomingInfo, incomingKey) = resolveSessionKey() ?: return
         if (outgoingKey != incomingKey) return
 
-        val saveResult = sessionRepository.save(outgoingConversationId, outgoingKey, saveOnEngine = inferenceQueue::saveSession)
+        val outgoing = outgoingConversationId to outgoingKey
+        val saveResult = sessionRepository.save(
+            outgoingConversationId,
+            outgoingKey,
+            ownsCache = { ActiveSessionTracker.current.value == outgoing },
+            saveOnEngine = inferenceQueue::saveSession,
+        )
         val outgoingStateIsSafe = when (saveResult) {
             is SaveResult.Saved, is SaveResult.Unchanged, SaveResult.NothingToSave -> true
             // TEN-78 splits what used to be one branch. Both still block the restore, for the one
@@ -1442,7 +1454,7 @@ class ChatViewModel(
             // but they are not the same event and nothing downstream may conflate them again:
             // `Failed` is the engine breaking, `NotAttempted` is a queue that was busy and a switch
             // that simply has to wait for the next turn.
-            is SaveResult.Failed, SaveResult.Discarded, SaveResult.NotAttempted -> false
+            is SaveResult.Failed, SaveResult.Discarded, SaveResult.NotAttempted, SaveResult.OwnerChanged -> false
         }
         if (!outgoingStateIsSafe) return
 
@@ -1463,6 +1475,10 @@ class ChatViewModel(
         key: SessionModelKey,
         expectedModel: LoadedModelInfo,
     ) {
+        // The cache stops being the outgoing conversation's before the restore can replace it, not
+        // once this one reports: a save picked up off the tracker meanwhile (`onStop`) would put this
+        // conversation's state in the other's file. Its `ownsCache` sees the owner gone (TEN-180).
+        ActiveSessionTracker.current.value?.first?.takeIf { it != conversationId }?.let(ActiveSessionTracker::clearIf)
         sessionRepository.restore(conversationId, key) { path ->
             inferenceQueue.restoreSession(path, expectedModel = expectedModel)
         }

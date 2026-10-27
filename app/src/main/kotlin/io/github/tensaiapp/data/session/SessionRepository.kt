@@ -54,6 +54,18 @@ sealed class SaveResult {
      */
     data object Discarded : SaveResult()
 
+    /**
+     * Nothing was persisted because [SessionRepository.save]'s `ownsCache` said, once the dump was
+     * done, that the KV cache was no longer this conversation's (TEN-180): a conversation switch
+     * restoring another session can land between a caller reading the owner and the queue taking
+     * its dump, and what was dumped may then be the other conversation's state. Its temp file is
+     * deleted and the previous session for this conversation is left untouched.
+     *
+     * Like [Discarded], nothing went wrong and nothing was written: callers deciding whether live
+     * state is safe to overwrite must treat it like [Failed], callers reporting errors must not.
+     */
+    data object OwnerChanged : SaveResult()
+
     /** Nothing was persisted — any previous session for this conversation is untouched. */
     data class Failed(val cause: Throwable) : SaveResult()
 }
@@ -168,22 +180,19 @@ class SessionRepository(
      * The engine work staying outside is also the point: a purge must not have to wait behind a
      * multi-hundred-MB state dump, and a generation's save must not be blocked by a purge.
      *
-     * ### The one thing this lock does *not* protect, and what does
+     * ### Two saves of the same conversation
      *
-     * Two [save] calls for the **same** conversation overlapping would dump into the same temp
-     * path and then rename it twice: interleaved writes, the first rename winning, the second
-     * reporting "the engine succeeded but wrote no file". Nothing here prevents that — the dumps
-     * happen outside this lock by design.
+     * They can overlap: `onStop` firing twice during a multi-hundred-MB dump, `onStop` beside a
+     * conversation switch's save, the swap hook beside a queued save. The queue's own mutex
+     * serializes the dumps, but not what [save] does around them, so a shared temp path let one
+     * save rename a file the other was still writing, or delete the other's temp before its rename
+     * (TEN-180). Each [save] therefore dumps into a temp path of its own ([tempPathFor]); only the
+     * rename into the one final path is shared, and that happens under this lock. Whichever commits
+     * last wins, with a complete file and a row that matches it.
      *
-     * What prevents it is [io.github.tensaiapp.runtime.InferenceQueue]'s own mutex, one
-     * layer up: `onBeforeModelSwap` holds it while calling the engine directly, and every other
-     * caller reaches the engine through `inferenceQueue::saveSession`, which takes it. So the dumps
-     * are already serialized before they get here.
-     *
-     * That is an invariant spanning two classes, and this one is deliberately decoupled from the
-     * other (see this class's KDoc), so it is worth stating rather than assuming: **a future caller
-     * that dumps state without going through the queue would corrupt the temp file, and no test
-     * here would catch it.**
+     * Not a per-conversation lock around the whole save on purpose: it would be held across the
+     * dump, and `onBeforeModelSwap` takes it under the queue's mutex while a `ChatViewModel` save
+     * would hold it while waiting for the queue's, the deadlock this lock is a leaf to avoid.
      */
     private val commitMutex = Mutex()
 
@@ -194,6 +203,9 @@ class SessionRepository(
      * rid of. Read outside the lock too, so it is atomic rather than mutex-guarded state.
      */
     private val purgeEpoch = AtomicLong(0)
+
+    /** Numbers each [save]'s temp file, see [commitMutex]'s KDoc. */
+    private val tempSequence = AtomicLong(0)
 
     /** Every persisted session, most recently accessed first — feeds Settings > Storage (TEN-38). */
     fun observeSessions(): Flow<List<SessionEntity>> = dao.observeAll()
@@ -243,10 +255,18 @@ class SessionRepository(
      * succeeded — a failure at any point (the engine call itself, or the rename) leaves any
      * previous session for this conversation exactly as it was, never a half-written file mistaken
      * for a valid one.
+     *
+     * @param ownsCache asked once the dump is done: does the KV cache still belong to
+     *   [conversationId]? `false` resolves to [SaveResult.OwnerChanged]. A caller that picked
+     *   [conversationId] off `ActiveSessionTracker` passes a re-read of it: a switch clears the
+     *   outgoing owner before it restores another session, so a dump that may have read the restored
+     *   state always finishes with the owner already moved. The swap hook keeps the default, it
+     *   dumps under the queue's mutex with the owner it cleared itself.
      */
     suspend fun save(
         conversationId: String,
         key: SessionModelKey,
+        ownsCache: () -> Boolean = { true },
         saveOnEngine: suspend (path: String) -> SessionSaveOutcome,
     ): SaveResult {
         // Read under the lock, together, so a purge can't slip between them: an
@@ -312,47 +332,58 @@ class SessionRepository(
             tempFile.delete()
             return SaveResult.NothingToSave
         }
+        if (!ownsCache()) {
+            tempFile.delete()
+            return SaveResult.OwnerChanged
+        }
 
-        return commitMutex.withLock {
-            // Checked before the file checks below, not after: a purge deletes the temp file out
-            // from under an in-flight dump (see [purgeAll]), so "the engine wrote nothing" and
-            // "the user cleared storage mid-save" would otherwise be reported as the same
-            // failure, and only one of them is one.
-            if (purgeEpoch.get() != epochAtStart) {
-                tempFile.delete()
-                return@withLock SaveResult.Discarded
-            }
-            if (!tempFile.exists()) {
-                return@withLock SaveResult.Failed(
-                    IllegalStateException("Session save reported success but wrote no file"),
-                )
-            }
-            if (!moveIntoPlace(tempFile, finalFile)) {
-                tempFile.delete()
-                return@withLock SaveResult.Failed(
-                    IOException("Could not move saved session into place at $finalFile"),
-                )
-            }
+        return try {
+            commitMutex.withLock {
+                // Checked before the file checks below, not after: a purge deletes the temp file out
+                // from under an in-flight dump (see [purgeAll]), so "the engine wrote nothing" and
+                // "the user cleared storage mid-save" would otherwise be reported as the same
+                // failure, and only one of them is one.
+                if (purgeEpoch.get() != epochAtStart) {
+                    tempFile.delete()
+                    return@withLock SaveResult.Discarded
+                }
+                if (!tempFile.exists()) {
+                    return@withLock SaveResult.Failed(
+                        IllegalStateException("Session save reported success but wrote no file"),
+                    )
+                }
+                if (!moveIntoPlace(tempFile, finalFile)) {
+                    tempFile.delete()
+                    return@withLock SaveResult.Failed(
+                        IOException("Could not move saved session into place at $finalFile"),
+                    )
+                }
 
-            val now = System.currentTimeMillis()
-            val sizeBytes = finalFile.length()
-            dao.upsert(
-                SessionEntity(
-                    conversationId = conversationId,
-                    modelId = key.modelId,
-                    filePath = finalFile.absolutePath,
-                    nCtx = key.nCtx,
-                    kvCacheType = key.kvCacheType.name,
-                    chatTemplate = key.chatTemplate,
-                    backend = key.backend,
-                    tokenCount = tokenCount,
-                    sizeBytes = sizeBytes,
-                    createdAt = existingBeforeSave?.createdAt ?: now,
-                    lastAccessedAt = now,
-                ),
-            )
-            evictLocked(SessionStoragePolicy.evictionPlan(dao.allSessions(), justWritten = conversationId))
-            SaveResult.Saved(tokenCount, sizeBytes)
+                val now = System.currentTimeMillis()
+                val sizeBytes = finalFile.length()
+                dao.upsert(
+                    SessionEntity(
+                        conversationId = conversationId,
+                        modelId = key.modelId,
+                        filePath = finalFile.absolutePath,
+                        nCtx = key.nCtx,
+                        kvCacheType = key.kvCacheType.name,
+                        chatTemplate = key.chatTemplate,
+                        backend = key.backend,
+                        tokenCount = tokenCount,
+                        sizeBytes = sizeBytes,
+                        createdAt = existingBeforeSave?.createdAt ?: now,
+                        lastAccessedAt = now,
+                    ),
+                )
+                evictLocked(SessionStoragePolicy.evictionPlan(dao.allSessions(), justWritten = conversationId))
+                SaveResult.Saved(tokenCount, sizeBytes)
+            }
+        } catch (e: Throwable) {
+            // A throw from the DAO, or a cancellation while waiting on [commitMutex]: the temp name
+            // is this save's own, so nothing else would ever overwrite or remove it.
+            tempFile.delete()
+            throw e
         }
     }
 
@@ -475,8 +506,9 @@ class SessionRepository(
      * and its DB write. Settings > Storage > Clear (TEN-38) is the only caller.
      *
      * Deliberately **not** a `deleteRecursively` on the directory: it removes exactly the two file
-     * shapes this class creates (`<id>.llamastate` and its `.tmp`), leaves the directory itself in
-     * place, and never touches anything else that might one day share the path.
+     * shapes this class creates (`<id>.llamastate` and its `<id>.<n>.llamastate.tmp` dumps),
+     * leaves the directory itself in place, and never touches anything else that might one day
+     * share the path.
      *
      * ### What it does to a generation in flight
      *
@@ -532,9 +564,17 @@ class SessionRepository(
      * plus whichever *other* row is next most recent, exactly like a normal [save] would. A no-op
      * once at most [SessionStoragePolicy]'s cap remains — safe to call unconditionally on every app
      * start.
+     *
+     * Also deletes every temp dump left in the sessions directory (TEN-180): each [save] names its
+     * own, so a dump cut short by the process dying is never overwritten by a later one, and no
+     * row counts it in Storage. Safe here and nowhere else: this runs at app start, before any
+     * model is loaded, so no save can be dumping.
      */
     suspend fun pruneToStoragePolicy() {
         commitMutex.withLock {
+            sessionsDir.listFiles().orEmpty()
+                .filter { it.isFile && it.name.endsWith(TEMP_SUFFIX) }
+                .forEach { it.delete() }
             val all = dao.allSessions()
             val mostRecent = all.maxByOrNull { it.lastAccessedAt } ?: return@withLock
             evictLocked(SessionStoragePolicy.evictionPlan(all, justWritten = mostRecent.conversationId))
@@ -558,7 +598,9 @@ class SessionRepository(
 
     private fun finalPathFor(conversationId: String) = File(sessionsDir, "$conversationId$STATE_SUFFIX")
 
-    private fun tempPathFor(conversationId: String) = File(sessionsDir, "$conversationId$TEMP_SUFFIX")
+    /** A new path on every call, still ending in [TEMP_SUFFIX] so [purgeAll] sweeps a leftover one. */
+    private fun tempPathFor(conversationId: String) =
+        File(sessionsDir, "$conversationId.${tempSequence.incrementAndGet()}$TEMP_SUFFIX")
 
     private fun moveIntoPlace(temp: File, final: File): Boolean {
         if (temp.renameTo(final)) return true

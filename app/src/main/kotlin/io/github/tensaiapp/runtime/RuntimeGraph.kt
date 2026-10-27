@@ -160,7 +160,12 @@ object RuntimeGraph {
                     // long-lived collector: an escaping exception would end the collection and this
                     // trigger would silently stop existing for the rest of the process.
                     runCatching {
-                        sessionRepository.save(conversationId, key, saveOnEngine = inferenceQueue::saveSession)
+                        sessionRepository.save(
+                            conversationId,
+                            key,
+                            ownsCache = { ActiveSessionTracker.current.value == (conversationId to key) },
+                            saveOnEngine = inferenceQueue::saveSession,
+                        )
                     }
                 },
             )

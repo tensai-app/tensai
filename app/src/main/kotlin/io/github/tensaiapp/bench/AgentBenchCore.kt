@@ -763,7 +763,7 @@ suspend fun <K> handOverCache(owner: Pair<String, K>?, save: suspend (String, K)
     val (conversationId, key) = owner ?: return true
     when (save(conversationId, key)) {
         is SaveResult.Saved, is SaveResult.Unchanged, SaveResult.NothingToSave -> Unit
-        is SaveResult.Failed, SaveResult.Discarded, SaveResult.NotAttempted -> return false
+        is SaveResult.Failed, SaveResult.Discarded, SaveResult.NotAttempted, SaveResult.OwnerChanged -> return false
     }
     forget(conversationId)
     return true

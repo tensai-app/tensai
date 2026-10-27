@@ -190,10 +190,16 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         AppForegroundTracker.onActivityStopped()
-        val (conversationId, key) = ActiveSessionTracker.current.value ?: return
+        val active = ActiveSessionTracker.current.value ?: return
+        val (conversationId, key) = active
         RuntimeGraph.applicationScope.launch {
             runCatching {
-                RuntimeGraph.sessionRepository.save(conversationId, key, saveOnEngine = RuntimeGraph.inferenceQueue::saveSession)
+                RuntimeGraph.sessionRepository.save(
+                    conversationId,
+                    key,
+                    ownsCache = { ActiveSessionTracker.current.value == active },
+                    saveOnEngine = RuntimeGraph.inferenceQueue::saveSession,
+                )
             }
         }
     }
