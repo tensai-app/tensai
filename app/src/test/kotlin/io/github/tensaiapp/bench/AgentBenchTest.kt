@@ -95,7 +95,7 @@ class AgentBenchTest {
 
     @Test
     fun theRepoListParsesWithHalfTheShortPromptsExpectingNoToolAndCappedLongFormAsks() {
-        val prompts = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText())
+        val prompts = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText()).filter { "reasoning" !in it.tags }
         val (longForm, short) = prompts.partition { it.maxTokens != null }
 
         assertTrue("about 20 short prompts, got ${short.size}", short.size in 18..24)
@@ -109,6 +109,72 @@ class AgentBenchTest {
         assertEquals("Name two colors of the French flag, one line.", prompts.single { it.id == "flag-colors" }.prompt)
         assertEquals(setOf("datetime", "convert_time"), prompts.single { it.id == "time-tokyo" }.expected)
         assertEquals(setOf("set_timer"), prompts.single { it.id == "timer-ten-minutes" }.expected)
+    }
+
+    @Test
+    fun theReasoningPromptsCallNoToolAndTheirAnswersHoldWhatWorkingItOutGivesNotTheUsualSlips() {
+        val reasoning = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText()).filter { "reasoning" in it.tags }
+
+        assertEquals(listOf("reason-money-left", "reason-ages", "reason-seats", "reason-letter-count", "reason-laundry"), reasoning.map { it.id })
+        assertTrue(reasoning.all { it.expected.isEmpty() && it.maxTokens == null })
+        val answers = reasoning.associate { it.id to it.answer!! }
+        // 20 - 3 × 4 - 4 / 2. Slips: forgetting the pen (8), the pen at full price (4).
+        assertTrue(answers.getValue("reason-money-left").matches("20 - 12 - 2 = 6"))
+        listOf("8", "4 euros").forEach { assertFalse(it, answers.getValue("reason-money-left").matches(it)) }
+        // 2a + 5 + a + 5 = 34. Slips: Tom's age (16), forgetting one of the two 5 years (9.67, 9), halving 34 - 10 (12).
+        assertTrue(answers.getValue("reason-ages").matches("Ana is 8 years old (Tom is 16)."))
+        listOf("16", "9.67", "9", "12").forEach { assertFalse(it, answers.getValue("reason-ages").matches(it)) }
+        // Bea 3, Cal 4, Dan 2 (the only seat left off the ends), Eve 1 left of Ali 5.
+        assertTrue(answers.getValue("reason-seats").matches("Eve."))
+        listOf("Ali", "Dan", "Bea", "Evelyn").forEach { assertFalse(it, answers.getValue("reason-seats").matches(it)) }
+        // e-x-c-e-l-l-e-n-c-e.
+        assertTrue(answers.getValue("reason-letter-count").matches("4"))
+        listOf("3", "5").forEach { assertFalse(it, answers.getValue("reason-letter-count").matches(it)) }
+        // The dryer is the bottleneck: load 2 dries 50-80 behind load 1, then folds 80-90. Slips: in series (120), one
+        // load's time plus a wash (80), overlapping everything (60).
+        assertTrue(answers.getValue("reason-laundry").matches("At minute 90."))
+        listOf("120", "80", "60", "70").forEach { assertFalse(it, answers.getValue("reason-laundry").matches(it)) }
+    }
+
+    @Test
+    fun tagsAreOptionalNames() {
+        val prompts = parseBenchPrompts(
+            """{"version":1,"prompts":[
+                {"id":"a","prompt":"p","expected":"none","tags":["reasoning"]},
+                {"id":"b","prompt":"p","expected":"none"}]}""",
+        )
+
+        assertEquals(listOf(setOf("reasoning"), emptySet()), prompts.map { it.tags })
+    }
+
+    @Test
+    fun aTaggedPromptIsCountedInItsGroupsAnswersAndCallingAToolThereIsAFalseCall() = runBlocking {
+        val gen = ScriptedGenerator(
+            reply("6"),
+            reply("", calls = listOf(ToolCall("c1", "calculate", "{}"))),
+            reply("It is 4."),
+            reply("Paris"),
+        )
+        val bench = runner(FakeTool("calculate"), generator = gen)
+        val prompts = listOf(
+            BenchPrompt("money", "q", emptySet(), answer = AnswerCheck.Number(6.0), tags = setOf("reasoning")),
+            BenchPrompt("ages", "q", emptySet(), answer = AnswerCheck.Number(8.0), tags = setOf("reasoning")),
+            BenchPrompt("capital", "q", emptySet(), answer = AnswerCheck.Text("Paris")),
+        )
+        val lines = mutableListOf<String>()
+
+        val results = runBench(prompts, bench, firstCold = false, beforeEach = { null }, log = { lines += it })
+
+        assertEquals(listOf(BenchVerdict.Correct, BenchVerdict.FalseCall, BenchVerdict.Correct), results.map { it.verdict })
+        assertTrue(lines[0].contains("\"tags\":[\"reasoning\"]"))
+        assertFalse(lines[2].contains("tags"))
+        val summary = BenchSummary.of(results)
+        assertEquals(mapOf("reasoning" to (1 to 2)), summary.tagAnswers)
+        val line = Json.parseToJsonElement(summary.toLogLine(BenchTrigger(true))).jsonObject
+        assertEquals("1", line.getValue("reasoning_ok").jsonPrimitive.content)
+        assertEquals("2", line.getValue("reasoning_checked").jsonPrimitive.content)
+        assertTrue(summary.toDisplayLines(BenchTrigger(true), "m", results).contains("reasoning_ok 1/2"))
+        assertFalse(BenchSummary.of(results.takeLast(1)).toLogLine(BenchTrigger(true)).contains("reasoning_ok"))
     }
 
     @Test

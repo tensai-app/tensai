@@ -157,6 +157,61 @@
       "id": "timer-ten-minutes",
       "prompt": "Set a timer for 10 minutes.",
       "expected": "set_timer"
+    },
+    {
+      "id": "reason-money-left",
+      "prompt": "Maya has 20 euros. She buys 3 notebooks at 4 euros each and a pen that costs half the price of one notebook. How much money does she have left? Answer with the number only.",
+      "expected": "none",
+      "answer": {
+        "number": 6
+      },
+      "tags": [
+        "reasoning"
+      ]
+    },
+    {
+      "id": "reason-ages",
+      "prompt": "Tom is twice as old as Ana. In 5 years, the sum of their ages will be 34. How old is Ana now? Answer with the number only.",
+      "expected": "none",
+      "answer": {
+        "number": 8
+      },
+      "tags": [
+        "reasoning"
+      ]
+    },
+    {
+      "id": "reason-seats",
+      "prompt": "Five friends sit in a row of seats numbered 1 to 5 from left to right. Bea sits in seat 3. Cal sits directly to the right of Bea. Dan does not sit at either end. Eve sits somewhere to the left of Ali. Who sits in seat 1? Answer with the name only.",
+      "expected": "none",
+      "answer": {
+        "text": "Eve"
+      },
+      "tags": [
+        "reasoning"
+      ]
+    },
+    {
+      "id": "reason-letter-count",
+      "prompt": "How many times does the letter e appear in the word \"excellence\"? Answer with the number only.",
+      "expected": "none",
+      "answer": {
+        "number": 4
+      },
+      "tags": [
+        "reasoning"
+      ]
+    },
+    {
+      "id": "reason-laundry",
+      "prompt": "Two loads of laundry each need washing (20 minutes), then drying (30 minutes), then folding (10 minutes), in that order. There is one washer, one dryer and one person folding, and each handles one load at a time. Starting at minute 0, at what minute, at the earliest, are both loads fully folded? Answer with the number only.",
+      "expected": "none",
+      "answer": {
+        "number": 90
+      },
+      "tags": [
+        "reasoning"
+      ]
     }
   ]
 }

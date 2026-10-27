@@ -160,14 +160,23 @@ fun benchTrigger(
  *   `null` for the run's own cap: a long-form ask is judged on its calls, not on the text, so it costs seconds instead
  *   of minutes.
  * @param answer what the final reply must hold to be right, `null` for a prompt with no answer to check.
+ * @param tags the groups the prompt is counted in besides the whole list ("reasoning": an answer to work out without a
+ *   tool), see [BenchSummary.tagAnswers].
  */
-data class BenchPrompt(val id: String, val prompt: String, val expected: Set<String>, val maxTokens: Int? = null, val answer: AnswerCheck? = null)
+data class BenchPrompt(
+    val id: String,
+    val prompt: String,
+    val expected: Set<String>,
+    val maxTokens: Int? = null,
+    val answer: AnswerCheck? = null,
+    val tags: Set<String> = emptySet(),
+)
 
 /**
- * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?, "answer"?}]}`,
+ * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?, "answer"?, "tags"?}]}`,
  * `expected` being `"none"`, a tool name or an array of tool names, `max_tokens` a positive count, `answer`
- * `{"number": 37, "tolerance"?: 0.05}` or `{"text": "Tokyo"}`, see [AnswerCheck]. Throws on a malformed file: a bench
- * run on half a list would compare nothing.
+ * `{"number": 37, "tolerance"?: 0.05}` or `{"text": "Tokyo"}`, see [AnswerCheck], `tags` an array of names. Throws on a
+ * malformed file: a bench run on half a list would compare nothing.
  */
 fun parseBenchPrompts(json: String): List<BenchPrompt> {
     val prompts = Json.parseToJsonElement(json).jsonObject.getValue("prompts").jsonArray.map { element ->
@@ -183,7 +192,8 @@ fun parseBenchPrompts(json: String): List<BenchPrompt> {
             check["number"]?.let { AnswerCheck.Number(it.jsonPrimitive.double, check["tolerance"]?.jsonPrimitive?.double ?: 0.0) }
                 ?: AnswerCheck.Text(check.getValue("text").jsonPrimitive.content)
         }
-        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens, answer)
+        val tags = entry["tags"]?.jsonArray?.mapTo(LinkedHashSet()) { it.jsonPrimitive.content }.orEmpty()
+        BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens, answer, tags)
     }
     val duplicate = prompts.groupBy { it.id }.filterValues { it.size > 1 }.keys
     require(duplicate.isEmpty()) { "duplicate prompt ids: $duplicate" }
@@ -426,6 +436,7 @@ data class BenchResult(
         put("id", prompt.id)
         if (repetition > 1) put("rep", repetition)
         put("expected", prompt.expected.ifEmpty { setOf(NoTool) }.joinToString("|"))
+        if (prompt.tags.isNotEmpty()) put("tags", JsonArray(prompt.tags.map { JsonPrimitive(it) }))
         put(
             "calls",
             buildJsonArray {
@@ -471,7 +482,8 @@ data class BenchResult(
  * [BenchResult.namedInText], [toolErrors]: prompts with a [BenchResult.callErrors], whatever their verdict.
  * [answers]: the [AnswerOutcome] counts. [medianReasoningTokens] and [medianMaxReplyReasoningTokens] leave out errors and
  * the prompts whose reasoning could not be counted; a cold prefix costs no reasoning, so it stays in. [reasoningOverCap]:
- * prompts with a [BenchResult.reasoningOverCap].
+ * prompts with a [BenchResult.reasoningOverCap]. [tagAnswers]: per [BenchPrompt.tags] name, the answers right and the
+ * answers checked of the prompts it tags.
  */
 data class BenchSummary(
     val counts: Map<BenchVerdict, Int>,
@@ -485,6 +497,7 @@ data class BenchSummary(
     val medianReasoningTokens: Long? = null,
     val medianMaxReplyReasoningTokens: Long? = null,
     val reasoningOverCap: Int = 0,
+    val tagAnswers: Map<String, Pair<Int, Int>> = emptyMap(),
 ) {
     fun toLogLine(trigger: BenchTrigger): String = buildJsonObject {
         put("event", "summary")
@@ -510,6 +523,10 @@ data class BenchSummary(
         put("median_reasoning_tokens", medianReasoningTokens)
         put("median_max_reply_reasoning_tokens", medianMaxReplyReasoningTokens)
         put("reasoning_over_cap", reasoningOverCap)
+        tagAnswers.forEach { (tag, okOfChecked) ->
+            put("${tag}_ok", okOfChecked.first)
+            put("${tag}_checked", okOfChecked.second)
+        }
     }.toString()
 
     /**
@@ -533,6 +550,7 @@ data class BenchSummary(
             "answers ok ${answers[AnswerOutcome.Correct] ?: 0} · wrong ${answers[AnswerOutcome.Wrong] ?: 0} · cut ${answers[AnswerOutcome.Cut] ?: 0}" +
                 " · empty ${answers[AnswerOutcome.Empty] ?: 0}",
         )
+        tagAnswers.forEach { (tag, okOfChecked) -> add("${tag}_ok ${okOfChecked.first}/${okOfChecked.second}") }
         if (reasoningOverCap > 0) add("reasoning_over_cap $reasoningOverCap: the cap was not enforced")
         results.filter { it.verdict != BenchVerdict.Correct }.groupBy { it.verdict }.forEach { (verdict, wrong) ->
             add("${verdict.storageName}: " + wrong.map { it.prompt.id }.distinct().joinToString(", "))
@@ -569,6 +587,10 @@ data class BenchSummary(
                 medianReasoningTokens = median(results.filter { it.verdict != BenchVerdict.Error }.mapNotNull { it.reasoningTokens?.toLong() }),
                 medianMaxReplyReasoningTokens = median(results.filter { it.verdict != BenchVerdict.Error }.mapNotNull { it.maxReplyReasoningTokens?.toLong() }),
                 reasoningOverCap = results.count { it.reasoningOverCap },
+                tagAnswers = results.flatMap { it.prompt.tags }.distinct().sorted().associateWith { tag ->
+                    val checked = results.filter { tag in it.prompt.tags && it.answer != AnswerOutcome.Unchecked }
+                    checked.count { it.answer == AnswerOutcome.Correct } to checked.size
+                },
             )
         }
 

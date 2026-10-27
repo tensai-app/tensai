@@ -152,6 +152,7 @@ data class BenchSampling(
  * @param verdict a [BenchVerdict.storageName], see [benchVerdict].
  * @param answer an [AnswerOutcome.storageName], see [answerOutcome], `null` in a run saved before answers were checked.
  * @param expectedAnswer the prompt's [AnswerCheck.shown], `null` for a prompt with no check.
+ * @param tags the prompt's [BenchPrompt.tags].
  */
 @Serializable
 data class BenchTrial(
@@ -179,6 +180,7 @@ data class BenchTrial(
     @SerialName("reasoning_cut") val reasoningCut: Boolean = false,
     val answer: String? = null,
     @SerialName("expected_answer") val expectedAnswer: String? = null,
+    val tags: List<String> = emptyList(),
 ) {
     /** [verdict] read back, [BenchVerdict.Error] for a name this build does not know. */
     val benchVerdict: BenchVerdict get() = BenchVerdict.entries.firstOrNull { it.storageName == verdict } ?: BenchVerdict.Error
@@ -217,6 +219,7 @@ data class BenchTrial(
                 reasoningCut = reasoningCut,
                 answer = result.answer.storageName,
                 expectedAnswer = result.prompt.answer?.shown,
+                tags = result.prompt.tags.toList(),
             )
         }
     }
