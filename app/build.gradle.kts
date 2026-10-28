@@ -120,6 +120,17 @@ kotlin {
     jvmToolchain(21)
 }
 
+// One lint analysis at a time (TEN-172). AGP runs lint in-process with K2 UAST (Kotlin 2.0), and
+// when lintAnalyzeDebugUnitTest and lintAnalyzeDebugAndroidTest start together in the same daemon
+// they intermittently crash on their first file with "Error while resolving FirRegularClassImpl
+// from RAW_FIR to TYPES" (LLFirModuleLazyDeclarationResolver). AGP 8.7.3 is the last 8.7 patch.
+abstract class LintAnalysisSlot : BuildService<BuildServiceParameters.None>
+
+val lintAnalysisSlot = gradle.sharedServices.registerIfAbsent("lintAnalysisSlot", LintAnalysisSlot::class) {
+    maxParallelUsages = 1
+}
+tasks.matching { it.name.startsWith("lintAnalyze") }.configureEach { usesService(lintAnalysisSlot) }
+
 ksp {
     // Committed under app/schemas/ (see TensaiDb's KDoc) so MigrationTestHelper can replay every
     // past version and TEN-48's migration tests have something to diff future schema changes
