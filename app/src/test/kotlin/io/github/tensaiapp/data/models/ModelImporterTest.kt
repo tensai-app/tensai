@@ -16,6 +16,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -61,11 +62,16 @@ class ModelImporterTest {
         modelsDir.deleteRecursively()
     }
 
-    private fun newImporter(readMetadata: suspend (String) -> GgufInfo = { ggufInfo() }) = ModelImporter(
+    private fun newImporter(
+        readMetadata: suspend (String) -> GgufInfo = { ggufInfo() },
+        models: Flow<List<ModelEntity>> = dao.observeAll(),
+        log: (String) -> Unit = {},
+    ) = ModelImporter(
         modelsDir = modelsDir,
         modelDao = dao,
-        models = dao.observeAll(),
+        models = models,
         readMetadata = readMetadata,
+        log = log,
     )
 
     private fun filesOnDisk(): List<String> = modelsDir.listFiles().orEmpty().map { it.name }.sorted()
@@ -77,12 +83,12 @@ class ModelImporterTest {
      *
      * The race is *forced*, not hoped for: both coroutines run on [Dispatchers.IO] (real threads,
      * not a test scheduler that would interleave them at suspension points of its own choosing)
-     * and each one parks on a shared [CountDownLatch] inside `openSource` — which the importer
-     * calls **after** reserving its destination and **before** writing a single byte. Neither can
-     * get past that point until the other has also reserved, so the two reservations provably
-     * overlap. That window is the bug: the old code picked a name with `exists()` and only opened
-     * the output stream here, so with both coroutines parked, both were holding `model.gguf` and
-     * whichever wrote second silently destroyed the other's copy.
+     * and each one parks on a shared [CountDownLatch] inside `openSource`, before writing a single
+     * byte. Neither can get past that point until the other has also reached it, so the two imports
+     * provably overlap. The TEN-53 bug was there: the old code picked a name with `exists()` and
+     * only opened the output stream at this point, so both were holding `model.gguf` and whichever
+     * wrote second silently destroyed the other's copy. Since TEN-176 the copy goes to a part file
+     * and the name is reserved after it, but two overlapping imports must still get two names.
      *
      * The two sources are given different sizes so that neither the pre-copy nor the post-copy
      * dedup check can fire and mask the file-level outcome this test is about.
@@ -195,14 +201,9 @@ class ModelImporterTest {
         assertTrue("no row may be inserted", dao.rows.isEmpty())
     }
 
-    /**
-     * The reservation is a real file from the moment it is made, so the empty file it leaves
-     * behind has to be cleaned up on the same path as a half-written one. This is the case the
-     * atomic-creation approach opens and this is where it is closed: the failure here happens
-     * before the copy writes anything at all.
-     */
+    /** A source that cannot even be opened fails before anything is written, and leaves nothing. */
     @Test
-    fun anEmptyReservationIsCleanedUpWhenTheSourceCannotEvenBeOpened() = runBlocking {
+    fun nothingIsLeftWhenTheSourceCannotEvenBeOpened() = runBlocking {
         try {
             importer.import("model.gguf", 64, plentyOfSpace, { throw IOException("stream is gone") }) {}
             fail("expected ModelImportException")
@@ -210,7 +211,7 @@ class ModelImporterTest {
             assertTrue(expected.cause is IOException)
         }
 
-        assertEquals("the reservation must not outlive the import", emptyList<String>(), filesOnDisk())
+        assertEquals("nothing may outlive the import", emptyList<String>(), filesOnDisk())
     }
 
     // ---- 3. the cancellation ----
@@ -474,7 +475,7 @@ class ModelImporterTest {
      * A competing relink of the same row commits while this one is still copying. Under the commit
      * lock the importer re-reads the row, finds the other one's file on disk and refuses this one
      * as the duplicate it now is, removing its copy: no file is left without a row. (Simulated
-     * from inside the source stream, which runs after the destination is reserved and before the
+     * from inside the source stream, which runs after the part file is claimed and before the
      * commit, so the interleaving is exact and not left to thread timing.)
      */
     @Test
@@ -648,6 +649,172 @@ class ModelImporterTest {
         assertEquals(first.id, again.id)
         assertEquals("K8", again.contextOverride)
         assertEquals("K8", dao.rows.single().contextOverride)
+    }
+
+    // ---- what a killed process leaves behind (TEN-176) ----
+
+    /**
+     * A copy in progress is not a `.gguf`: killed here, the process leaves a part file the sweep
+     * knows is unfinished. Before TEN-176 the destination itself filled for minutes and a kill left
+     * a multi-GB `model.gguf` no row pointed at.
+     */
+    @Test
+    fun anImportBeingCopiedIsAPartFileUntilTheRename() = runBlocking {
+        var midCopy: List<String>? = null
+        val source = object : InputStream() {
+            private var chunks = 0
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (chunks == 1) midCopy = filesOnDisk()
+                if (chunks++ == 2) return -1
+                b.fill(1, off, off + 32)
+                return 32
+            }
+
+            override fun read(): Int = throw UnsupportedOperationException("the copy reads in buffers")
+        }
+
+        importer.import("model.gguf", 64, plentyOfSpace, { source }) {}
+
+        val during = checkNotNull(midCopy)
+        assertEquals("mid-copy the directory holds the part only, got $during", 1, during.size)
+        assertTrue("mid-copy the file is a part, got $during", during.single().endsWith(ModelImporter.IMPORT_SUFFIX))
+        assertEquals(listOf("model.gguf"), filesOnDisk())
+        assertEquals(64L, File(modelsDir, "model.gguf").length())
+    }
+
+    /** What a killed import or registration leaves: deleted, and logged with its name and size. */
+    @Test
+    fun theSweepDeletesAGgufNoRowReferencesAndAnUnfinishedImport() = runBlocking {
+        val logs = mutableListOf<String>()
+        val kept = importMine()
+        File(modelsDir, "lost.gguf").writeBytes(ByteArray(40))
+        File(modelsDir, "0f1e.import").writeBytes(ByteArray(12))
+
+        newImporter(log = { logs += it }).sweepOrphans()
+
+        assertEquals(listOf(File(kept.filePath).name), filesOnDisk())
+        assertEquals(listOf(kept), dao.rows)
+        assertTrue("expected the name and size logged, got $logs", logs.any { "lost.gguf" in it && "40 bytes" in it })
+        assertTrue("expected the import part logged, got $logs", logs.any { "0f1e.import" in it && "12 bytes" in it })
+    }
+
+    /** Only what this class writes, only regular files, only directly in the directory. */
+    @Test
+    fun theSweepLeavesDownloadPartsOtherFilesSymlinksAndSubdirectoriesAlone() = runBlocking {
+        File(modelsDir, "dl.part").writeBytes(ByteArray(8))
+        File(modelsDir, "notes.txt").writeText("mine")
+        File(modelsDir, "sub").mkdirs()
+        File(modelsDir, "sub/deep.gguf").writeBytes(ByteArray(8))
+        val outside = Files.createTempFile("tensai-sweep-outside", ".gguf").toFile()
+        try {
+            Files.createSymbolicLink(File(modelsDir, "link.gguf").toPath(), outside.toPath())
+
+            importer.sweepOrphans()
+
+            assertEquals(listOf("dl.part", "link.gguf", "notes.txt", "sub"), filesOnDisk())
+            assertTrue(File(modelsDir, "sub/deep.gguf").exists())
+            assertTrue("a symlink's target is never touched", outside.exists())
+        } finally {
+            outside.delete()
+        }
+    }
+
+    /**
+     * A row protects its file by name, whatever directory it stores: rows restored onto another
+     * data directory (`/data/user/10` while they say `/data/user/0`) must not lose their models.
+     */
+    @Test
+    fun theSweepMatchesRowsToFilesByName() = runBlocking {
+        val moved = File(modelsDir, "moved.gguf").apply { writeBytes(ByteArray(8)) }
+        val odd = File(modelsDir, "odd.gguf").apply { writeBytes(ByteArray(8)) }
+        val lost = File(modelsDir, "lost.gguf").apply { writeBytes(ByteArray(8)) }
+        val row = importMine()
+        dao.insert(row.copy(id = "moved", fileName = "moved.gguf", filePath = "/data/user/0/io.github.tensaiapp/files/models/moved.gguf"))
+        dao.insert(row.copy(id = "odd", fileName = "odd.gguf", filePath = "${modelsDir.path}/../${modelsDir.name}/./odd.gguf"))
+
+        importer.sweepOrphans()
+
+        assertTrue("a row from another data directory keeps its file", moved.exists())
+        assertTrue("a non-canonical path keeps its file", odd.exists())
+        assertFalse(lost.exists())
+    }
+
+    /**
+     * An empty library is what a destroyed table looks like (a downgrade, a broken migration): its
+     * `.gguf` files are kept and logged, only unfinished imports go.
+     */
+    @Test
+    fun anEmptyLibraryKeepsItsGgufsAndOnlyDeletesUnfinishedImports() = runBlocking {
+        val logs = mutableListOf<String>()
+        File(modelsDir, "lost.gguf").writeBytes(ByteArray(40))
+        File(modelsDir, "x.import").writeBytes(ByteArray(12))
+
+        newImporter(log = { logs += it }).sweepOrphans()
+
+        assertEquals(listOf("lost.gguf"), filesOnDisk())
+        assertTrue("expected the kept file logged, got $logs", logs.any { "kept" in it && "lost.gguf" in it && "40 bytes" in it })
+    }
+
+    /** No library, no verdict: a failed read deletes nothing. */
+    @Test
+    fun theSweepDeletesNothingWhenTheLibraryCannotBeRead() = runBlocking {
+        File(modelsDir, "lost.gguf").writeBytes(ByteArray(8))
+
+        try {
+            newImporter(models = flow { throw IOException("database is locked") }).sweepOrphans()
+            fail("expected the read failure")
+        } catch (_: IOException) {
+        }
+
+        assertEquals(listOf("lost.gguf"), filesOnDisk())
+    }
+
+    /** A sweep landing in the middle of a live copy leaves the part alone, and the import completes. */
+    @Test
+    fun aSweepDuringAnImportKeepsItsPart() = runBlocking {
+        val source = object : InputStream() {
+            private var chunks = 0
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (chunks == 1) runBlocking { importer.sweepOrphans() }
+                if (chunks++ == 2) return -1
+                b.fill(1, off, off + 32)
+                return 32
+            }
+
+            override fun read(): Int = throw UnsupportedOperationException("the copy reads in buffers")
+        }
+
+        val stored = importer.import("model.gguf", 64, plentyOfSpace, { source }) {}
+
+        assertEquals(64L, File(stored.filePath).length())
+        assertEquals(listOf("model.gguf"), filesOnDisk())
+    }
+
+    /**
+     * The adopt's crash window: the part is already renamed to its `.gguf`, the row is not written.
+     * A sweep of this process (the reservation is claimed) keeps it; the next process's sweep, which
+     * is what runs after a kill here, deletes it, and the download starts over instead of leaving
+     * the bytes on disk next to a second copy.
+     */
+    @Test
+    fun betweenTheAdoptRenameAndItsInsertOnlyTheNextProcessSweepsTheFile() = runBlocking {
+        importMine() // a library that is not empty, see the empty-library test
+        var keptByThisProcess: Boolean? = null
+        var keptByTheNext: Boolean? = null
+        importer = newImporter(readMetadata = { path ->
+            importer.sweepOrphans()
+            keptByThisProcess = File(path).exists()
+            newImporter().sweepOrphans()
+            keptByTheNext = File(path).exists()
+            ggufInfo()
+        })
+
+        importer.adopt(partFile(), "model.gguf")
+
+        assertEquals("this process's own sweep deleted the file it is registering", true, keptByThisProcess)
+        assertEquals("the file a killed adopt leaves must be swept on the next start", false, keptByTheNext)
     }
 
     /** In-memory stand-in for Room, same idea as `SessionRepositoryTest`'s `FakeSessionDao`. */

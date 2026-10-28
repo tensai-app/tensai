@@ -5,6 +5,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
@@ -19,8 +20,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * The half of [ModelRepository.importModel] that starts once the source `Uri` has been resolved
- * to a name, a size and a way to open it: reserve a destination, copy, read the header, insert
- * the row — and undo the file if any of that goes wrong.
+ * to a name, a size and a way to open it: copy into a part file, reserve a destination, rename,
+ * read the header, insert the row, and undo the files if any of that goes wrong.
  *
  * Split out of [ModelRepository] by TEN-53 so it can be tested. The three things this class is
  * careful about (a concurrent import picking the same destination, a partial copy surviving a
@@ -47,9 +48,14 @@ internal class ModelImporter(
     private val models: Flow<List<ModelEntity>>,
     private val readMetadata: suspend (path: String) -> GgufInfo,
     private val fileExists: (path: String) -> Boolean = { File(it).exists() },
+    private val log: (String) -> Unit = {},
 ) {
     private val commitMutex = Mutex()
 
+    // Names under [modelsDir] an import or adopt of this process is writing and has not committed
+    // yet (TEN-176): [sweepOrphans] leaves them alone. Guarded by itself, never held across more
+    // I/O than one create or one delete, so it is safe to release from a cancelled coroutine.
+    private val claimed = mutableSetOf<String>()
 
     /**
      * Copies the source into [modelsDir] and persists a [ModelEntity] for it.
@@ -85,23 +91,24 @@ internal class ModelImporter(
             }
         }
 
-        val destFile = try {
-            reserveDestFile(sourceName)
-        } catch (e: IOException) {
-            // Nothing to clean up: createNewFile either created the file or it threw.
-            throw ModelImportException(sourceName, e)
-        }
+        // The copy goes to a part file of its own and becomes a `.gguf` only by a rename once every
+        // byte is in (TEN-176). A process killed mid-copy (swiped from recents, low memory) runs no
+        // cleanup at all, so what it leaves has to be something [sweepOrphans] knows is unfinished,
+        // not a multi-GB file named like a model.
+        modelsDir.mkdirs()
+        val partFile = File(modelsDir, "${UUID.randomUUID()}$IMPORT_SUFFIX").also { claim(it) }
+        var destFile: File? = null
 
-        // The destination now exists on disk, so from here on *every* way out other than the
-        // successful one has to remove it — hence one catch on Throwable around the lot rather
-        // than a `destFile.delete()` repeated at each throw site, which is how the old code let a
-        // SecurityException (SAF permission revoked mid-copy) strand a multi-GB partial file with
-        // no row pointing at it and no way for the user to find it (TEN-53). The catches inside
-        // classify; this one cleans up, and re-throws whatever it caught untouched.
+        // From here on *every* way out other than the successful one has to remove what is on
+        // disk: hence one catch on Throwable around the lot rather than a `delete()` repeated at
+        // each throw site, which is how the old code let a SecurityException (SAF permission
+        // revoked mid-copy) strand a multi-GB partial file with no row pointing at it and no way
+        // for the user to find it (TEN-53). The catches inside classify; this one cleans up, and
+        // re-throws whatever it caught untouched.
         var committed = false
         try {
             val copiedBytes = try {
-                copyInto(destFile, sourceSize, openSource, onProgress)
+                copyInto(partFile, sourceSize, openSource, onProgress)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -117,13 +124,25 @@ internal class ModelImporter(
                 }
             }
 
-            return commit(sourceName, destFile, copiedBytes, relink, origin = null) { committed = true }.model
+            val dest = try {
+                reserveDestFile(sourceName)
+            } catch (e: IOException) {
+                throw ModelImportException(sourceName, e)
+            }
+            destFile = dest
+            moveOnto(partFile, dest, sourceName)
+            return commit(sourceName, dest, copiedBytes, relink, origin = null) { committed = true }.model
         } catch (e: Throwable) {
-            if (!committed) destFile.delete()
+            if (!committed) {
+                partFile.delete()
+                destFile?.delete()
+            }
             throw e
+        } finally {
+            release(partFile)
+            destFile?.let(::release)
         }
     }
-
 
     /**
      * Registers a file that was *downloaded* (TEN-141) through the same pipeline as an import:
@@ -153,25 +172,74 @@ internal class ModelImporter(
         } catch (e: IOException) {
             throw ModelImportException(sourceName, e)
         }
+        // A death between the rename and the insert leaves a `.gguf` no row references: the next
+        // start's [sweepOrphans] deletes it and the download, back in the queue without its part,
+        // starts over. Inserting first instead would leave a row pointing at an empty reservation,
+        // which the next attempt takes for a duplicate already on disk.
         var committed = false
         try {
-            try {
-                // Same directory, same volume: a rename, atomic, replacing the empty reservation.
-                Files.move(
-                    partFile.toPath(),
-                    destFile.toPath(),
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            } catch (e: IOException) {
-                throw ModelImportException(sourceName, e)
-            }
+            moveOnto(partFile, destFile, sourceName)
             return commit(sourceName, destFile, size, relink, origin) { committed = true }
         } catch (e: Throwable) {
             if (!committed) restorePartOrDelete(e, destFile, partFile)
             throw e
+        } finally {
+            release(destFile)
         }
     }
+
+    /**
+     * Deletes the files under [modelsDir] that a dead process left behind (TEN-176): `.gguf` files
+     * no [ModelEntity.filePath] references and unfinished import parts. Called at start; cheap and
+     * idempotent, so safe to call again.
+     *
+     * Conservative on purpose, since a wrong answer here deletes a multi-GB model: only regular
+     * files (a symlink is never followed) directly in [modelsDir], only the two kinds this class
+     * writes (download `.part` files are `DownloadManager.reconcile`'s), never one claimed by an
+     * import or adopt running now. A failed library read throws before anything is deleted.
+     *
+     * A file is referenced when a row's [ModelEntity.filePath] has its *name*, whatever the
+     * directory: names under [modelsDir] are unique ([reserveDestFile]), and rows restored onto
+     * another data directory (a transfer onto a work profile, `/data/user/10` while the rows say
+     * `/data/user/0`) must keep their files, which a full-path match would delete. An empty library
+     * deletes no `.gguf` at all: that is what a destroyed table (downgrade, broken migration) looks
+     * like, and those files are better kept than lost.
+     *
+     * Under [commitMutex], so no row can be inserted between the read and the deletes: a file not
+     * referenced by the rows read here and not claimed is not about to be.
+     */
+    suspend fun sweepOrphans() = commitMutex.withLock {
+        val candidates = modelsDir.listFiles().orEmpty().filter { file ->
+            (file.name.endsWith(".gguf") || file.name.endsWith(IMPORT_SUFFIX)) &&
+                Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)
+        }
+        if (candidates.isEmpty()) return@withLock
+        val rows = models.first()
+        val referenced = rows.mapTo(HashSet()) { File(it.filePath).name }
+        candidates.filter { it.name !in referenced }.forEach { file ->
+            val size = file.length()
+            if (rows.isEmpty() && !file.name.endsWith(IMPORT_SUFFIX)) {
+                log("kept unreferenced model file ${file.name} ($size bytes): the library is empty")
+                return@forEach
+            }
+            synchronized(claimed) {
+                if (file.name !in claimed && file.delete()) log("deleted orphan model file ${file.name} ($size bytes)")
+            }
+        }
+    }
+
+    /** Same directory, same volume: a rename, atomic, replacing the empty reservation at [dest]. */
+    private fun moveOnto(source: File, dest: File, sourceName: String) {
+        try {
+            Files.move(source.toPath(), dest.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (e: IOException) {
+            throw ModelImportException(sourceName, e)
+        }
+    }
+
+    private fun claim(file: File) = synchronized(claimed) { claimed += file.name }
+
+    private fun release(file: File) = synchronized(claimed) { claimed -= file.name }
 
     /**
      * After a failed [adopt]: a file that is not a model (bad header) or whose rename failed is
@@ -324,13 +392,16 @@ internal class ModelImporter(
      * What it costs is an empty file left behind if a later step fails, which is exactly what
      * [import]'s cleanup removes; the reservation is not a special case there, it is the same
      * `destFile.delete()` that clears a half-written copy.
+     *
+     * The file is claimed in the same step it is created (TEN-176), so [sweepOrphans] never sees it
+     * unclaimed before its row exists.
      */
     private fun reserveDestFile(sourceName: String): File {
         modelsDir.mkdirs()
         val base = sourceName.removeSuffix(".gguf")
         var candidate = File(modelsDir, sourceName)
         var suffix = 0
-        while (!candidate.createNewFile()) {
+        while (!synchronized(claimed) { candidate.createNewFile().also { if (it) claimed += candidate.name } }) {
             suffix++
             candidate = File(modelsDir, "$base-$suffix.gguf")
         }
@@ -369,7 +440,10 @@ internal class ModelImporter(
         return copied
     }
 
-    private companion object {
-        const val COPY_BUFFER_SIZE = 256 * 1024
+    companion object {
+        private const val COPY_BUFFER_SIZE = 256 * 1024
+
+        /** An import being copied. Not `.part`: those are download rows', swept by `DownloadManager.reconcile`. */
+        const val IMPORT_SUFFIX = ".import"
     }
 }

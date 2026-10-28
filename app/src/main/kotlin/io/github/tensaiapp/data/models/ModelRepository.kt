@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import android.provider.OpenableColumns
+import android.util.Log
 import io.github.tensaiapp.data.ContextSetting
 import io.github.tensaiapp.engine.GgufInfo
 import java.io.File
@@ -102,6 +103,7 @@ class ModelRepository(
             modelDao = modelDao,
             models = models,
             readMetadata = readMetadata,
+            log = { Log.i("tensai.download", it) },
         )
     }
 
@@ -183,6 +185,14 @@ class ModelRepository(
 
     /** Every `*.part` file under `models/`, referenced by a download row or not (see `DownloadManager.reconcile`). */
     fun downloadPartFiles(): List<File> = modelsDir.listFiles { f -> f.name.endsWith(".part") }?.toList().orEmpty()
+
+    /**
+     * Deletes model files no row references, left by an import or a download registration the
+     * process died in (TEN-176). See [ModelImporter.sweepOrphans] for what it will and will not touch.
+     */
+    suspend fun sweepOrphanFiles() = withContext(Dispatchers.IO) {
+        importer.sweepOrphans()
+    }
 
     /** Free bytes on the volume models live on. */
     fun freeBytes(): Long = StatFs(modelsDir.absolutePath).availableBytes

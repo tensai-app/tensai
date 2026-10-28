@@ -186,8 +186,13 @@ object RuntimeGraph {
         // already had (see [ModelRepository.backfillKvCacheShape]).
         applicationScope.launch { runCatching { modelRepository.backfillKvCacheShape() } }
 
-        // TEN-141: stuck rows, orphan parts, and a drainer if anything is waiting.
-        applicationScope.launch { runCatching { downloadManager.reconcile() } }
+        // TEN-176: model files no row references (an import or a registration the process died in),
+        // then TEN-141: stuck rows, orphan parts, and a drainer if anything is waiting. The sweep
+        // skips files an import or adopt has claimed, so it cannot race one started meanwhile.
+        applicationScope.launch {
+            runCatching { modelRepository.sweepOrphanFiles() }
+            runCatching { downloadManager.reconcile() }
+        }
 
         // TEN-144: decrypt the Hugging Face token once, off Main, so the HTTP clients' provider is a cache hit.
         applicationScope.launch(Dispatchers.IO) { runCatching { tokenStore.get() } }
