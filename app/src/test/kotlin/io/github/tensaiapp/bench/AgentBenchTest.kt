@@ -1,9 +1,11 @@
 package io.github.tensaiapp.bench
 
 import io.github.tensaiapp.agent.AgentRuntime
+import io.github.tensaiapp.agent.BasePrompt
 import io.github.tensaiapp.agent.DateTimeTool
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.Tool
+import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.agent.ToolRegistry
 import io.github.tensaiapp.agent.ToolResult
 import io.github.tensaiapp.agent.ToolTier
@@ -18,6 +20,9 @@ import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.QueueBusyException
 import java.io.File
+import java.time.Clock
+import java.time.LocalDate
+import java.time.ZoneOffset
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
@@ -75,13 +80,14 @@ class AgentBenchTest {
         generator: ReplyGenerator,
         system: ((Set<String>) -> String?)? = null,
         sampling: SamplingConfig = SamplingConfig(),
+        toolPolicy: ToolPolicy = ToolPolicy.Current,
     ): BenchRunner {
         // Every tier granted: the bench refuses a network call whatever the user granted.
         val registry = ToolRegistry(tools.map(::BenchTool)) { ToolTier.entries.toSet() }
         var now = 0L
         return BenchRunner(
             // No wait for a busy queue: the turn ends on the first refusal.
-            runtime = AgentRuntime(registry, gate, waitForQueue = { false }),
+            runtime = AgentRuntime(registry, gate, waitForQueue = { false }, toolPolicy = toolPolicy),
             gate = gate,
             generator = generator,
             sampling = sampling,
@@ -100,7 +106,8 @@ class AgentBenchTest {
 
         assertTrue("about 20 short prompts, got ${short.size}", short.size in 18..24)
         assertEquals(short.size / 2, short.count { it.expected.isEmpty() })
-        assertTrue("a few long-form asks, got ${longForm.size}", longForm.size in 3..6)
+        // Never more long-form asks than short ones: the short ones hold the tool / no-tool balance.
+        assertTrue("a few long-form asks, got ${longForm.size}", longForm.size in 3..short.size)
         assertTrue(longForm.all { it.expected.isEmpty() })
         assertEquals(
             "Write a long story about a lighthouse keeper and a storm, at least 900 words.",
@@ -109,6 +116,71 @@ class AgentBenchTest {
         assertEquals("Name two colors of the French flag, one line.", prompts.single { it.id == "flag-colors" }.prompt)
         assertEquals(setOf("datetime", "convert_time"), prompts.single { it.id == "time-tokyo" }.expected)
         assertEquals(setOf("set_timer"), prompts.single { it.id == "timer-ten-minutes" }.expected)
+    }
+
+    @Test
+    fun theCreativeAsksOfTheToolPolicyRunsCallNoToolAndAreCapped() {
+        val prompts = parseBenchPrompts(File("src/debug/assets/bench/agent-prompts.json").readText()).associateBy { it.id }
+
+        // When added (TEN-197), CreativeRequest missed the first four (a song, a verse, a dialogue: nouns it does not
+        // list; "30 ans": a digit) and caught the French story, a control for the current policy.
+        listOf("song-autumn-fr", "rap-city", "dialogue-couch", "poem-sister-fr", "story-dragon-fr").forEach { id ->
+            val prompt = prompts.getValue(id)
+            assertTrue(id, prompt.expected.isEmpty() && prompt.maxTokens != null)
+        }
+    }
+
+    // Debug builds only: BuildConfig.DEBUG gates StrictLine, so always-strict fails under testReleaseUnitTest.
+    @Test
+    fun eachToolPolicyOffersItsToolsAndSystemMessageOnACreativeAndOnAToolPromptOnTheWarmedPrefix() = runBlocking {
+        val day = LocalDate.of(2026, 10, 24)
+        val clock = Clock.fixed(day.atStartOfDay(ZoneOffset.UTC).toInstant(), ZoneOffset.UTC)
+        val story = BenchPrompt("story", "Write a long story about a lighthouse keeper.", emptySet())
+        val time = BenchPrompt("time", "What time is it right now?", setOf("datetime"))
+
+        for (policy in ToolPolicy.entries) {
+            val prompts = BenchTrigger(thinking = true, toolPolicy = policy).systemPrompt(clock)
+            val gen = ScriptedGenerator(reply("Once"), reply("Noon"))
+            val runner = runner(FakeTool("datetime"), generator = gen, system = { prompts.build(it, null, null, null) }, toolPolicy = policy)
+
+            runner.run(story)
+            runner.run(time)
+
+            val (creative, tool) = gen.requests
+            val withTools = BasePrompt.render(setOf("datetime"), day, strict = policy.strictPrompt)
+            assertEquals(policy.storageName, policy.strictPrompt, BasePrompt.StrictLine in withTools.lines())
+            if (policy == ToolPolicy.Current) {
+                // Today's rule: a creative first turn gets no tools and the no-tools text.
+                assertEquals(emptyList<String>(), creative.tools.map { it.name })
+                assertEquals(BasePrompt.render(emptySet(), day), creative.messages.first().content)
+            } else {
+                assertEquals(policy.storageName, listOf("datetime"), creative.tools.map { it.name })
+                assertEquals(policy.storageName, withTools, creative.messages.first().content)
+            }
+            assertEquals(policy.storageName, listOf("datetime"), tool.tools.map { it.name })
+            assertEquals(policy.storageName, withTools, tool.messages.first().content)
+            assertEquals(policy.storageName, policy == ToolPolicy.AlwaysStrict, BasePrompt.StrictLine in tool.messages.first().content.lines())
+            // The prefix the bench warms is the system message of every turn with tools, the strict line included.
+            assertEquals(policy.storageName, withTools, runner.prefixRequest().messages.single().content)
+        }
+    }
+
+    @Test
+    fun theToolPolicyIsTheChatsUnlessNamedAndShownInTheSummary() {
+        assertEquals(ToolPolicy.Current, benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true)!!.toolPolicy)
+        assertEquals(ToolPolicy.Current, benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, toolPolicy = "never")!!.toolPolicy)
+        assertEquals(ToolPolicy.Always, benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, toolPolicy = "always")!!.toolPolicy)
+        val strict = benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, toolPolicy = "always-strict")!!
+        assertEquals(ToolPolicy.AlwaysStrict, strict.toolPolicy)
+        // The strict line rides in the base prompt: without it, the run is the one it really is.
+        assertEquals(
+            ToolPolicy.Always,
+            benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, basePrompt = false, toolPolicy = "always-strict")!!.toolPolicy,
+        )
+
+        assertEquals("always-strict", Json.parseToJsonElement(BenchSummary.of(emptyList()).toLogLine(strict)).jsonObject.getValue("tool_policy").jsonPrimitive.content)
+        assertTrue(BenchSummary.of(emptyList()).toDisplayLines(strict, "m", emptyList())[1].endsWith(" · tools always-strict"))
+        assertFalse(BenchSummary.of(emptyList()).toDisplayLines(BenchTrigger(thinking = true), "m", emptyList())[1].contains("tools"))
     }
 
     @Test

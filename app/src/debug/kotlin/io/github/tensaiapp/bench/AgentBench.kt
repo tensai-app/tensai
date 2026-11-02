@@ -38,13 +38,14 @@ import kotlinx.serialization.json.put
  *
  * `adb shell am start -n io.github.tensaiapp/.MainActivity --activity-single-top --es bench agent [--ez thinking false]
  * [--ez base_prompt false] [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]
- * [--ez adaptive_reasoning true]`,
+ * [--ez adaptive_reasoning true] [--es tool_policy current|always|always-strict]`,
  * "Run agent bench" in Settings > This device, which shows [status] (the summary included) on screen, or Settings >
  * Bench (TEN-187), which shows [progress]. Wherever it starts, a run that graded a prompt is saved as a [BenchRun] in
  * [BenchRunStore], a run stopped early ([stop], the model gone) as a partial one.
  *
  * The requests carry the system message a chat would, built by [SystemPrompt] from the toggles of [BenchTrigger]
- * (base prompt, few-shot examples) and the tools the turn offers, without the user's instructions.
+ * (base prompt, few-shot examples, the stricter tool line of [BenchTrigger.toolPolicy]) and the tools the turn offers,
+ * without the user's instructions. The runtime runs that same policy.
  *
  * No chat is stored: each prompt is a one-message conversation in memory, after the tool prefix is warmed so the
  * first one does not pay for it. The conversation the KV cache held is saved first and the cache no longer named
@@ -63,6 +64,7 @@ object AgentBench {
     const val EXTRA_GREEDY = "greedy"
     const val EXTRA_REASONING_BUDGET = "reasoning_budget"
     const val EXTRA_ADAPTIVE_REASONING = "adaptive_reasoning"
+    const val EXTRA_TOOL_POLICY = "tool_policy"
     private const val WarmRetryMs = 500L
 
     private val _status = MutableStateFlow<BenchStatus>(BenchStatus.Idle)
@@ -103,6 +105,7 @@ object AgentBench {
             greedy = flag(EXTRA_GREEDY),
             reasoningBudget = intent?.takeIf { it.hasExtra(EXTRA_REASONING_BUDGET) }?.getIntExtra(EXTRA_REASONING_BUDGET, 0),
             adaptiveReasoning = flag(EXTRA_ADAPTIVE_REASONING),
+            toolPolicy = intent?.getStringExtra(EXTRA_TOOL_POLICY),
         ) ?: return
         // Consumed once: a recreation must not run it again.
         intent?.removeExtra(EXTRA_BENCH)
@@ -173,9 +176,9 @@ object AgentBench {
 
         val gate = RefusingGate()
         val registry = ToolRegistry(RuntimeGraph.toolRegistry.registered().map(::BenchTool), RuntimeGraph.toolSettings)
-        val runtime = RuntimeGraph.agentRuntimeOn(registry, gate)
+        val runtime = RuntimeGraph.agentRuntimeOn(registry, gate, trigger.toolPolicy)
         if (!runtime.hasTools()) return fail("no tool is granted")
-        val systemPrompt = SystemPrompt(base = trigger.basePrompt, examples = trigger.examples)
+        val systemPrompt = trigger.systemPrompt()
         val system = { tools: Set<String> -> systemPrompt.build(tools = tools, startedAt = null, global = null, chat = null) }
         val sampling = trigger.sampling(replySampling(null, trigger.thinking, entity.thinkingAvailable))
         // The budget the decodes get, as logged and saved: none when the chat's sampling has no reasoning cap to lower.
@@ -230,6 +233,7 @@ object AgentBench {
                 put("base_prompt_version", BasePrompt.VERSION)
                 put("examples", trigger.examples)
                 put("tool_grammar", trigger.toolGrammar)
+                put("tool_policy", trigger.toolPolicy.storageName)
                 if (trigger.greedy) put("greedy", true)
                 put("reasoning_budget", ran.reasoningBudget)
                 put("reasoning_budget_mode", ran.reasoningBudgetMode)
@@ -252,6 +256,7 @@ object AgentBench {
             basePromptVersion = BasePrompt.VERSION,
             examples = trigger.examples,
             toolGrammar = trigger.toolGrammar,
+            toolPolicy = trigger.toolPolicy.storageName,
             repetitions = trigger.repetitions,
             reasoningBudget = ran.reasoningBudget,
             reasoningBudgetMode = ran.reasoningBudgetMode,

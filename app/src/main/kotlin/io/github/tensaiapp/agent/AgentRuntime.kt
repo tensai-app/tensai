@@ -32,6 +32,30 @@ fun interface ReplyGenerator {
 }
 
 /**
+ * Which turns get the tools, and how strictly the base prompt holds the model back from them (TEN-197). Every chat
+ * runs [Current]; the others are the debug agent bench's, to measure what the creative rule costs and saves.
+ *
+ * @param storageName the name a bench run logs and saves.
+ * @param creativeWithoutTools a creative first turn ([CreativeRequest]) gets no tools, see [AgentRuntime.run].
+ * @param strictPrompt the base prompt adds its stricter line ([BasePrompt.render]).
+ */
+enum class ToolPolicy(val storageName: String, val creativeWithoutTools: Boolean, val strictPrompt: Boolean) {
+    Current("current", creativeWithoutTools = true, strictPrompt = false),
+
+    /** The tools on every turn: one tools prefix for every first turn, a creative one included. */
+    Always("always", creativeWithoutTools = false, strictPrompt = false),
+
+    /** [Always], the base prompt telling the model to call a tool only when the answer cannot do without one. */
+    AlwaysStrict("always-strict", creativeWithoutTools = false, strictPrompt = true),
+    ;
+
+    companion object {
+        /** The policy saved as [name], `null` for one this build does not know. */
+        fun of(name: String?): ToolPolicy? = entries.firstOrNull { it.storageName == name }
+    }
+}
+
+/**
  * Asked before a call that [Tool.requiresConfirmation] runs. The chat's "tensai wants to ..." card is
  * [UiConfirmationGate] (TEN-174); the wait is not counted against the tool's timeout.
  */
@@ -81,6 +105,7 @@ fun interface ConfirmationGate {
  * @param countTokens tokens of a text under the loaded model's tokenizer, `null` when it cannot be
  *   counted (no model, a generation holding the engine).
  * @param timeoutMs how long a call of [Tool] may run, a parameter for tests.
+ * @param toolPolicy which turns get the tools: [ToolPolicy.Current] in a chat, another in the debug agent bench.
  */
 class AgentRuntime(
     private val registry: ToolRegistry,
@@ -89,6 +114,7 @@ class AgentRuntime(
     private val countTokens: suspend (String) -> Int? = { null },
     private val timeoutMs: (Tool) -> Long = { it.tier.timeoutMs },
     private val clock: () -> Long = System::currentTimeMillis,
+    private val toolPolicy: ToolPolicy = ToolPolicy.Current,
 ) {
 
     /** The tier of the registered tool called [toolName], granted or not, `null` when there is none of that name. */
@@ -128,13 +154,15 @@ class AgentRuntime(
      * asks for creative writing ([CreativeRequest]) gets no tools at all, and [system] the empty set: the model writes,
      * as on the plain path, instead of searching first. Only the first: without tools the prompt differs from token 0,
      * so later in a chat the whole history would be prefilled again, for this turn and for the next. On the first turn
-     * that prompt is short, and there is no earlier call in it for the model to copy.
+     * that prompt is short, and there is no earlier call in it for the model to copy. Unless [toolPolicy] offers the
+     * tools on every turn.
      */
     fun run(request: DecodeRequest, generator: ReplyGenerator, system: ((Set<String>) -> String?)? = null): Flow<AgentEvent> = flow {
         emit(AgentEvent.TurnStarted)
         val firstTurn = request.messages.none { it.role == MessageRole.Assistant }
         val asked = request.messages.lastOrNull { it.role == MessageRole.User }?.let { MemoryContext.withoutBlock(it.content) }
-        val tools = if (firstTurn && asked != null && CreativeRequest.matches(asked)) emptyList() else registry.active()
+        val creative = toolPolicy.creativeWithoutTools && firstTurn && asked != null && CreativeRequest.matches(asked)
+        val tools = if (creative) emptyList() else registry.active()
         val definitions = tools.map { ToolDefinition(it.name, it.description, it.parametersSchema) }
         val turnId = UUID.randomUUID().toString().take(8)
         val usedIds = HashSet<String>()

@@ -4,8 +4,10 @@ import io.github.tensaiapp.agent.AgentEvent
 import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ConfirmationGate
 import io.github.tensaiapp.agent.ReplyGenerator
+import io.github.tensaiapp.agent.SystemPrompt
 import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolCallStatus
+import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.agent.ConversationTrust
 import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.ChatMessage
@@ -18,6 +20,7 @@ import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.QueueBusyException
 import java.math.BigDecimal
 import java.text.Normalizer
+import java.time.Clock
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -36,8 +39,8 @@ import kotlinx.serialization.json.put
 
 /**
  * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
- * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256 | --ez adaptive_reasoning true]`,
- * the debug panel of Settings > This device or Settings > Bench.
+ * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256 | --ez adaptive_reasoning true]
+ * [--es tool_policy current|always|always-strict]`, the debug panel of Settings > This device or Settings > Bench.
  *
  * @param basePrompt the harness's base prompt opens the system message, as in every chat.
  * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
@@ -54,6 +57,9 @@ import kotlinx.serialization.json.put
  * @param adaptiveReasoning each prompt gets the budget a chat gives the same message
  *   ([io.github.tensaiapp.engine.ReasoningBudget.forMessage], see [BenchRunner]'s `samplingFor`), so the run measures the
  *   chat's rule. Never with a fixed [reasoningBudget].
+ * @param toolPolicy which turns get the tools and whether the base prompt adds its stricter line, see [ToolPolicy].
+ *   [ToolPolicy.Current] is the chat's. Its stricter line is part of the base prompt, so [ToolPolicy.AlwaysStrict] never
+ *   runs without it.
  */
 data class BenchTrigger(
     val thinking: Boolean,
@@ -64,12 +70,18 @@ data class BenchTrigger(
     val greedy: Boolean = false,
     val reasoningBudget: Int? = null,
     val adaptiveReasoning: Boolean = false,
+    val toolPolicy: ToolPolicy = ToolPolicy.Current,
 ) {
     init {
         require(repetitions in 1..MaxRepetitions) { "repetitions must be 1 to $MaxRepetitions, got $repetitions" }
         require(reasoningBudget == null || reasoningBudget > 0) { "reasoning budget must be positive, got $reasoningBudget" }
         require(!adaptiveReasoning || reasoningBudget == null) { "an adaptive budget takes no fixed one" }
+        require(basePrompt || !toolPolicy.strictPrompt) { "the strict tool line rides in the base prompt" }
     }
+
+    /** The system messages of the run: the base prompt as its toggles and [toolPolicy] say, no user instructions. */
+    fun systemPrompt(clock: Clock = Clock.systemDefaultZone()): SystemPrompt =
+        SystemPrompt(base = basePrompt, examples = examples, strict = toolPolicy.strictPrompt, clock = clock)
 
     /** How the run budgets reasoning, as logged and saved: "adaptive", "fixed" ([reasoningBudget]) or "default", the split. */
     val reasoningBudgetMode: String
@@ -140,6 +152,8 @@ sealed interface BenchStatus {
  * [basePrompt] absent is on and [examples] absent off, what a chat sends. [examples] without the base prompt is off.
  * [toolGrammar] absent is on, what a chat sends. [greedy] absent is off, the chat's sampling. [reasoningBudget] absent,
  * not positive or without thinking is the chat's split. [adaptiveReasoning] needs thinking and wins over a fixed budget.
+ * [toolPolicy] absent or unknown is [ToolPolicy.Current], the chat's; [ToolPolicy.AlwaysStrict] without the base prompt
+ * is [ToolPolicy.Always], its line having nowhere to go.
  */
 fun benchTrigger(
     debug: Boolean,
@@ -152,10 +166,12 @@ fun benchTrigger(
     greedy: Boolean? = null,
     reasoningBudget: Int? = null,
     adaptiveReasoning: Boolean? = null,
+    toolPolicy: String? = null,
 ): BenchTrigger? {
     if (!debug || bench != "agent") return null
     val base = basePrompt ?: true
     val think = thinking ?: defaultThinking
+    val policy = ToolPolicy.of(toolPolicy) ?: ToolPolicy.Current
     return BenchTrigger(
         think,
         base,
@@ -164,6 +180,7 @@ fun benchTrigger(
         greedy = greedy == true,
         reasoningBudget = reasoningBudget?.takeIf { think && it > 0 && adaptiveReasoning != true },
         adaptiveReasoning = think && adaptiveReasoning == true,
+        toolPolicy = if (policy.strictPrompt && !base) ToolPolicy.Always else policy,
     )
 }
 
@@ -528,6 +545,7 @@ data class BenchSummary(
         if (trigger.greedy) put("greedy", true)
         put("reasoning_budget", trigger.reasoningBudget)
         put("reasoning_budget_mode", trigger.reasoningBudgetMode)
+        put("tool_policy", trigger.toolPolicy.storageName)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
@@ -559,6 +577,7 @@ data class BenchSummary(
         add(
             "thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}" +
                 " · tool grammar ${onOff(trigger.toolGrammar)}" + (if (trigger.greedy) " · greedy" else "") +
+                (if (trigger.toolPolicy != ToolPolicy.Current) " · tools ${trigger.toolPolicy.storageName}" else "") +
                 (if (trigger.repetitions > 1) " · repetitions ${trigger.repetitions}" else "") +
                 when {
                     trigger.adaptiveReasoning -> " · reasoning adaptive"

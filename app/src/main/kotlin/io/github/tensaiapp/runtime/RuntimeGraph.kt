@@ -43,6 +43,7 @@ import io.github.tensaiapp.agent.WebSearchTool
 import io.github.tensaiapp.agent.WikipediaTool
 import io.github.tensaiapp.agent.UiConfirmationGate
 import io.github.tensaiapp.agent.ToolRegistry
+import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.compat.DeviceProfiler
 import io.github.tensaiapp.data.BackendPreference
 import io.github.tensaiapp.data.BackendRepository
@@ -476,8 +477,11 @@ object RuntimeGraph {
      */
     val agentRuntime: AgentRuntime by lazy { agentRuntimeOn(toolRegistry, confirmationGate) }
 
-    /** An [AgentRuntime] on [inferenceQueue]: the chat's [agentRuntime], or the debug agent bench's, which refuses what it must not run. */
-    fun agentRuntimeOn(registry: ToolRegistry, gate: ConfirmationGate): AgentRuntime =
+    /**
+     * An [AgentRuntime] on [inferenceQueue]: the chat's [agentRuntime], or the debug agent bench's, which refuses what it
+     * must not run and may try another [toolPolicy].
+     */
+    fun agentRuntimeOn(registry: ToolRegistry, gate: ConfirmationGate, toolPolicy: ToolPolicy = ToolPolicy.Current): AgentRuntime =
         AgentRuntime(
             registry = registry,
             gate = gate,
@@ -486,6 +490,7 @@ object RuntimeGraph {
                 withTimeoutOrNull(5_000) { inferenceQueue.state.first { it is QueueState.ModelReady } } != null
             },
             countTokens = { text -> inferenceQueue.countTokens(listOf(text))?.firstOrNull() },
+            toolPolicy = toolPolicy,
         )
 
     /**

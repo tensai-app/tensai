@@ -91,6 +91,36 @@
       "max_tokens": 96
     },
     {
+      "id": "song-autumn-fr",
+      "prompt": "Écris une chanson sur l'automne.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "rap-city",
+      "prompt": "Write a rap verse about the city at night.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "dialogue-couch",
+      "prompt": "Write a short dialogue between a cat and a dog arguing over the couch.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "poem-sister-fr",
+      "prompt": "Écris un poème pour les 30 ans de ma sœur.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
+      "id": "story-dragon-fr",
+      "prompt": "Raconte-moi une histoire sur un petit dragon qui a peur du noir.",
+      "expected": "none",
+      "max_tokens": 96
+    },
+    {
       "id": "time-now",
       "prompt": "What time is it right now?",
       "expected": "datetime"

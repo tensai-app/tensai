@@ -46,6 +46,11 @@
     <string name="bench_repetitions_sub">Per prompt, for pass rates</string>
     <string name="bench_repetitions_less">Fewer repetitions</string>
     <string name="bench_repetitions_more">More repetitions</string>
+    <string name="bench_tool_policy">Tool policy</string>
+    <string name="bench_tool_policy_sub">Current skips tools on a creative first turn, Always never does, Strict adds a stricter prompt line</string>
+    <string name="bench_tool_policy_current">Current</string>
+    <string name="bench_tool_policy_always">Always</string>
+    <string name="bench_tool_policy_strict">Strict</string>
     <!-- %d is prompts times repetitions. -->
     <plurals name="bench_run_calls">
         <item quantity="one">Run agent bench · %d call</item>

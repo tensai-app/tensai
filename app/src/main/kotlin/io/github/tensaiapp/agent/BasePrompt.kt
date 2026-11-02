@@ -26,18 +26,24 @@ object BasePrompt {
     /** The tools a line of the prompt names: with all of them offered, every rule is there (what Settings shows). */
     val ToolsNamed = setOf(AskUserTool.NAME, WebSearchTool.NAME, "web_fetch", "datetime")
 
+    /** The stricter tool rule of [ToolPolicy.AlwaysStrict]. */
+    const val StrictLine = "Call a tool only for live data, a computation you cannot do reliably, or an action."
+
     private val dateFormat = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.ENGLISH)
 
     /**
      * The text for a request offering [tools] (by name), `null` for a plain chat, in a conversation
      * started on [startedOn]. [examples]: the few-shot examples under the rules, debug builds only (an
-     * experiment, measured with the agent bench before it ships).
+     * experiment, measured with the agent bench before it ships). [strict]: [StrictLine] under the first tool rule,
+     * debug builds only too ([ToolPolicy.AlwaysStrict]).
      */
-    fun render(tools: Set<String>?, startedOn: LocalDate, examples: Boolean = false): String = buildList {
+    fun render(tools: Set<String>?, startedOn: LocalDate, examples: Boolean = false, strict: Boolean = false): String = buildList {
         add("You are tensai, an assistant running on the user's phone.")
         add("Reply in the language of the user's last message.")
         if (!tools.isNullOrEmpty()) {
             add("Answer directly when you can. Call a tool only when the answer needs one.")
+            // A constant in a release, as the examples below.
+            if (strict && BuildConfig.DEBUG) add(StrictLine)
             add("Write stories, poems, letters and other texts yourself, with no tool.")
             add("Never invent a tool result. If a tool fails, say so.")
             if (AskUserTool.NAME in tools) add("Call ask_user only when the request is genuinely ambiguous.")
@@ -78,11 +84,13 @@ object BasePrompt {
  *
  * @param base whether [BasePrompt] goes first: always, except in the debug agent bench's A/B.
  * @param examples [BasePrompt]'s few-shot examples, see [BasePrompt.render].
+ * @param strict [BasePrompt]'s stricter tool line, see [BasePrompt.render].
  * @param clock today, for a conversation that has no start time yet (a draft).
  */
 class SystemPrompt(
     private val base: Boolean = true,
     private val examples: Boolean = false,
+    private val strict: Boolean = false,
     private val clock: Clock = Clock.systemDefaultZone(),
 ) {
     /**
@@ -92,7 +100,7 @@ class SystemPrompt(
      */
     fun build(tools: Set<String>?, startedAt: Long?, global: String?, chat: String?): String? {
         val startedOn = Instant.ofEpochMilli(startedAt ?: clock.millis()).atZone(clock.zone).toLocalDate()
-        return assemble(if (base) BasePrompt.render(tools, startedOn, examples) else null, global, chat)
+        return assemble(if (base) BasePrompt.render(tools, startedOn, examples, strict) else null, global, chat)
     }
 
     companion object {

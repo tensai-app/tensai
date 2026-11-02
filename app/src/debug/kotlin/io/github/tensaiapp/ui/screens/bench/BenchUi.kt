@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import io.github.tensaiapp.R
+import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.bench.BenchRun
 import io.github.tensaiapp.bench.BenchRunConfig
 import io.github.tensaiapp.bench.BenchVerdict
@@ -365,7 +366,8 @@ internal fun ConfigChip(label: String, on: Boolean, strikeOff: Boolean = false) 
 /**
  * The config chips of [config], label and state: think, base vN, ex, gram, greedy, then "reason N" with the reasoning
  * cap the decodes got, when they had one ("reason adaptive" when each prompt had its own), off when a reply reasoned
- * past it ([BenchRunConfig.reasoningCapExceeded]).
+ * past it ([BenchRunConfig.reasoningCapExceeded]), then "tools always" or "tools always-strict" for a run not on the
+ * chat's tool policy.
  */
 internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = listOfNotNull(
     "think" to config.thinking,
@@ -376,6 +378,7 @@ internal fun configChips(config: BenchRunConfig): List<Pair<String, Boolean>> = 
     config.sampling.reasoningMaxTokens?.takeIf { config.thinking }?.let {
         (if (config.reasoningBudgetMode == "adaptive") "reason adaptive" else "reason $it") to (config.reasoningCapExceeded != true)
     },
+    config.toolPolicy?.takeIf { it != ToolPolicy.Current.storageName }?.let { "tools $it" to true },
 )
 
 /** "Qwen3-1.7B Q4_K_M · CPU", what the run ran on. A run saved before [backendName] has its full label cut down too. */

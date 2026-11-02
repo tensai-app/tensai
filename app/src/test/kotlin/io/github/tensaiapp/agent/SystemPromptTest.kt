@@ -110,6 +110,26 @@ class SystemPromptTest {
         assertTrue(SystemPrompt(clock = clock).build(null, started, null, null)!!.contains("Tuesday, 20 October 2026"))
     }
 
+    // Debug builds only: BuildConfig.DEBUG gates StrictLine, so the strict half fails under testReleaseUnitTest.
+    @Test
+    fun theTextAChatSendsIsUnchangedAndTheStrictLineFollowsTheFirstToolRuleOnlyWithTools() {
+        val chat = "You are tensai, an assistant running on the user's phone.\n" +
+            "Reply in the language of the user's last message.\n" +
+            "Answer directly when you can. Call a tool only when the answer needs one.\n" +
+            "Write stories, poems, letters and other texts yourself, with no tool.\n" +
+            "Never invent a tool result. If a tool fails, say so.\n" +
+            "For the current date or time, call datetime; for another place, pass its IANA timezone."
+        assertEquals(chat, BasePrompt.render(setOf("datetime"), day))
+        assertEquals(chat, SystemPrompt(clock = clock).build(setOf("datetime"), null, null, null))
+
+        val strict = BasePrompt.render(setOf("datetime"), day, strict = true)
+        assertEquals(chat.lines().toMutableList().apply { add(3, BasePrompt.StrictLine) }, strict.lines())
+        assertEquals(strict, SystemPrompt(strict = true, clock = clock).build(setOf("datetime"), null, null, null))
+        // No tool, no tool rule to make stricter: the plain text, whatever the policy.
+        assertEquals(BasePrompt.render(null, day), BasePrompt.render(null, day, strict = true))
+        assertEquals(BasePrompt.render(emptySet(), day), BasePrompt.render(emptySet(), day, strict = true))
+    }
+
     @Test
     fun examplesAreOffByDefaultAndOnlyNameOfferedTools() {
         assertFalse(BasePrompt.render(setOf("datetime", "calculate"), day).contains("Examples:"))

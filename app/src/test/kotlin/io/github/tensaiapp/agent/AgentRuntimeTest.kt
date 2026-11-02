@@ -145,6 +145,23 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun aPolicyThatAlwaysOffersTheToolsKeepsThemOnACreativeFirstTurn() = runBlocking {
+        for (policy in listOf(ToolPolicy.Always, ToolPolicy.AlwaysStrict)) {
+            val gen = ScriptedGenerator(reply("Once upon a time"))
+            var named: Set<String>? = null
+            val tools = ToolRegistry(listOf(FakeTool("web_search")))
+
+            AgentRuntime(tools, toolPolicy = policy).run(DecodeRequest(listOf(ChatMessage(MessageRole.User, "Write a long story about a lighthouse keeper."))), gen) { names ->
+                named = names
+                "base"
+            }.toList()
+
+            assertEquals(policy.storageName, listOf("web_search"), gen.requests.single().tools.map { it.name })
+            assertEquals(policy.storageName, setOf("web_search"), named)
+        }
+    }
+
+    @Test
     fun aCreativeAskAfterAnAssistantReplyKeepsItsTools() = runBlocking {
         val history = listOf(
             ChatMessage(MessageRole.User, "hi"),

@@ -81,6 +81,8 @@ data class BenchRun(
  *   [reasoningBudget] says which. "adaptive": each prompt had its own cap, see [BenchTrial.reasoningCap].
  * @param reasoningCapExceeded a reply reasoned past that cap ([BenchResult.reasoningOverCap]): the template does not
  *   delimit reasoning, so nothing enforced it. `null` with no cap, and for a run saved before the check.
+ * @param toolPolicy the run's [BenchTrigger.toolPolicy] by [io.github.tensaiapp.agent.ToolPolicy.storageName], `null` for a
+ *   run saved before it, which ran "current".
  * @param prefixWarmed the tool prefix was warmed before the first prompt (its timings are left out of the medians either way).
  */
 @Serializable
@@ -95,6 +97,7 @@ data class BenchRunConfig(
     @SerialName("base_prompt_version") val basePromptVersion: Int,
     val examples: Boolean,
     @SerialName("tool_grammar") val toolGrammar: Boolean,
+    @SerialName("tool_policy") val toolPolicy: String? = null,
     val repetitions: Int = 1,
     @SerialName("reasoning_budget") val reasoningBudget: Int? = null,
     @SerialName("reasoning_budget_mode") val reasoningBudgetMode: String? = null,

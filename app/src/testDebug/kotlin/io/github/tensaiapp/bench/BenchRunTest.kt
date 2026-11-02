@@ -115,6 +115,7 @@ class BenchRunTest {
         assertEquals("run-5", run.id)
         assertEquals(1, run.config.repetitions)
         assertNull(run.config.quant)
+        assertNull(run.config.toolPolicy)
         assertFalse(run.config.sampling.greedy)
         assertFalse(run.config.sampling.seeded)
         assertFalse(run.partial)
@@ -181,6 +182,17 @@ class BenchRunTest {
         assertNull(sampling.seeds)
         assertFalse(sampling.seeded)
         assertNull(BenchSampling.of(SamplingConfig(enableThinking = false)).reasoningMaxTokens)
+    }
+
+    @Test
+    fun theToolPolicyIsSavedAndOnlyAnotherThanTheChatsShowsAChip() {
+        val strict = config.copy(toolPolicy = "always-strict")
+        val run = run(1, trial("a", BenchVerdict.Correct)).copy(config = strict)
+
+        assertEquals("always-strict", BenchRunJson.decode(BenchRunJson.encode(run)).config.toolPolicy)
+        assertTrue("tools always-strict" to true in configChips(strict))
+        assertTrue(configChips(config.copy(toolPolicy = "current")).none { it.first.startsWith("tools") })
+        assertTrue(configChips(config).none { it.first.startsWith("tools") })
     }
 
     @Test

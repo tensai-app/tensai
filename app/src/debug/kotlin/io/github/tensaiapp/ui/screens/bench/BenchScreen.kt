@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tensaiapp.R
+import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.bench.AgentBench
 import io.github.tensaiapp.bench.AgentBenchPreparing
 import io.github.tensaiapp.bench.AgentBenchProgress
@@ -336,6 +337,7 @@ private object LastRunSettings {
     val reasoningBudget = mutableStateOf<Int?>(null)
     val adaptiveReasoning = mutableStateOf(false)
     val repetitions = mutableIntStateOf(1)
+    val toolPolicy = mutableStateOf(ToolPolicy.Current)
 }
 
 /**
@@ -364,6 +366,8 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
     var reasoningBudget by LastRunSettings.reasoningBudget
     var adaptiveReasoning by LastRunSettings.adaptiveReasoning
     var repetitions by LastRunSettings.repetitions
+    var toolPolicy by LastRunSettings.toolPolicy
+    val shownPolicy = if (toolPolicy.strictPrompt && !basePrompt) ToolPolicy.Always else toolPolicy
 
     Eyebrow(stringResource(R.string.decode_eyebrow_loaded))
     BenchCard {
@@ -433,6 +437,29 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
             }
             Stepper(repetitions, 1..BenchTrigger.MaxRepetitions) { repetitions = it }
         }
+        RowDivider()
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text(stringResource(R.string.bench_tool_policy), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(R.string.bench_tool_policy_sub), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // The strict line is part of the base prompt: Always without it.
+            BenchSegmented(
+                options = ToolPolicy.entries.map { policy ->
+                    val label = when (policy) {
+                        ToolPolicy.Current -> R.string.bench_tool_policy_current
+                        ToolPolicy.Always -> R.string.bench_tool_policy_always
+                        ToolPolicy.AlwaysStrict -> R.string.bench_tool_policy_strict
+                    }
+                    SegmentOption(stringResource(label), enabled = basePrompt || !policy.strictPrompt)
+                },
+                selected = ToolPolicy.entries.indexOf(shownPolicy),
+                onSelect = { toolPolicy = ToolPolicy.entries[it] },
+                mono = true,
+                fitLabels = true,
+            )
+        }
     }
 
     Spacer(Modifier.height(12.dp))
@@ -442,7 +469,17 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
         TensaiButton(
             text = prompts?.let { pluralStringResource(R.plurals.bench_run_calls, it * repetitions, it * repetitions) } ?: stringResource(R.string.bench_run_plain),
             onClick = {
-                val trigger = BenchTrigger(thinking, basePrompt, examples && basePrompt, toolGrammar, repetitions, greedy, reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets }, thinking && adaptiveReasoning)
+                val trigger = BenchTrigger(
+                    thinking,
+                    basePrompt,
+                    examples && basePrompt,
+                    toolGrammar,
+                    repetitions,
+                    greedy,
+                    reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets },
+                    thinking && adaptiveReasoning,
+                    shownPolicy,
+                )
                 AgentBench.start(trigger, context)
             },
             icon = Icons.Rounded.PlayArrow,

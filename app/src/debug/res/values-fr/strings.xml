@@ -44,6 +44,11 @@
     <string name="bench_repetitions_sub">Par prompt, pour les taux de réussite</string>
     <string name="bench_repetitions_less">Moins de répétitions</string>
     <string name="bench_repetitions_more">Plus de répétitions</string>
+    <string name="bench_tool_policy">Politique d\'outils</string>
+    <string name="bench_tool_policy_sub">Actuelle retire les outils d\'un premier tour créatif, Toujours jamais, Stricte ajoute une ligne de prompt plus stricte</string>
+    <string name="bench_tool_policy_current">Actuelle</string>
+    <string name="bench_tool_policy_always">Toujours</string>
+    <string name="bench_tool_policy_strict">Stricte</string>
     <plurals name="bench_run_calls">
         <item quantity="one">Lancer le banc agent · %d appel</item>
         <item quantity="many">Lancer le banc agent · %d appels</item>
