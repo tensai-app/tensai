@@ -49,7 +49,7 @@ class SessionRepositoryTest {
      * TEN-81 it is a per-call parameter (see [SessionRepository.restore]'s KDoc for why the caller
      * has to own it), so the tests that only need "it worked" say so once, here.
      */
-    private val restored: suspend (String) -> SessionRestoreOutcome = { SessionRestoreOutcome.Restored }
+    private val restored: suspend (String, Boolean) -> SessionRestoreOutcome = { _, _ -> SessionRestoreOutcome.Restored }
 
     @After
     fun tearDown() {
@@ -183,7 +183,7 @@ class SessionRepositoryTest {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
         var engineCalled = false
 
-        val result = repository.restore("c1", key.copy(modelId = "different-model")) {
+        val result = repository.restore("c1", key.copy(modelId = "different-model")) { _, _ ->
             engineCalled = true
             SessionRestoreOutcome.Restored
         }
@@ -219,6 +219,18 @@ class SessionRepositoryTest {
         assertTrue("a mismatch must not delete the row", dao.getByConversation("c1") != null)
     }
 
+    /** TEN-196: a cache saved without the tool prefix says so on restore, and a later save with it says otherwise. */
+    @Test
+    fun restoreHandsTheEngineWhetherTheSessionWasSavedWithoutTools() = runBlocking {
+        val handed = mutableListOf<Boolean>()
+        repository.save("c1", key) { path -> File(path).writeText("creative"); SessionSaveOutcome.Wrote(10, withoutTools = true) }
+        repository.restore("c1", key) { _, withoutTools -> handed += withoutTools; SessionRestoreOutcome.Restored }
+        repository.save("c1", key) { path -> File(path).writeText("tools"); SessionSaveOutcome.Wrote(20) }
+        repository.restore("c1", key) { _, withoutTools -> handed += withoutTools; SessionRestoreOutcome.Restored }
+
+        assertEquals(listOf(true, false), handed)
+    }
+
     @Test
     fun restoreReturnsCorruptedAndDeletesTheRowWhenTheFileIsMissing() = runBlocking {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
@@ -241,7 +253,7 @@ class SessionRepositoryTest {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
         val entityPath = dao.getByConversation("c1")!!.filePath
 
-        val result = repository.restore("c1", key) { SessionRestoreOutcome.EngineRefused }
+        val result = repository.restore("c1", key) { _, _ -> SessionRestoreOutcome.EngineRefused }
 
         assertEquals(RestoreResult.Failed, result)
         assertNull("a definitively unusable session must be dropped", dao.getByConversation("c1"))
@@ -252,7 +264,7 @@ class SessionRepositoryTest {
     fun restoreReturnsFailedRatherThanThrowingWhenTheEngineThrows() = runBlocking {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
 
-        val result = repository.restore("c1", key) { throw RuntimeException("boom") }
+        val result = repository.restore("c1", key) { _, _ -> throw RuntimeException("boom") }
 
         assertEquals(RestoreResult.Failed, result)
     }
@@ -273,7 +285,7 @@ class SessionRepositoryTest {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
         val entityPath = dao.getByConversation("c1")!!.filePath
 
-        val result = repository.restore("c1", key) { SessionRestoreOutcome.NotAttempted }
+        val result = repository.restore("c1", key) { _, _ -> SessionRestoreOutcome.NotAttempted }
 
         assertEquals(RestoreResult.NotAttempted, result)
         assertNotNull(
@@ -291,7 +303,7 @@ class SessionRepositoryTest {
     @Test
     fun aSessionLeftAloneByABusyQueueIsStillRestorableOnTheNextAttempt() = runBlocking {
         repository.save("c1", key) { path -> File(path).writeText("state"); SessionSaveOutcome.Wrote(10) }
-        repository.restore("c1", key) { SessionRestoreOutcome.NotAttempted }
+        repository.restore("c1", key) { _, _ -> SessionRestoreOutcome.NotAttempted }
 
         val result = repository.restore("c1", key, restored)
 
@@ -755,7 +767,7 @@ class SessionRepositoryTest {
         // The engine is mid-read when the purge lands. The restore itself succeeds — POSIX keeps
         // the open file alive — and the conversation resumes, which is correct: Clear deletes
         // files, it does not reach into RAM.
-        val result = repository.restore("c1", key) {
+        val result = repository.restore("c1", key) { _, _ ->
             repository.purgeAll()
             SessionRestoreOutcome.Restored
         }
@@ -832,7 +844,7 @@ class SessionRepositoryTest {
 
         val job = launch(Dispatchers.IO) {
             try {
-                outcome = repository.restore("c1", key) {
+                outcome = repository.restore("c1", key) { _, _ ->
                     inRestore.complete(Unit)
                     awaitCancellation()
                 }

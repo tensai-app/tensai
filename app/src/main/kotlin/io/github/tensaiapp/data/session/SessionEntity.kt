@@ -37,6 +37,9 @@ import androidx.room.PrimaryKey
  *   backend ran it, only on [modelId]/[nCtx]/[kvCacheType].
  * @param chatTemplate the forced chat format the state was prefilled under (TEN-159), empty for the file's own
  *   template, part of the mismatch check: a different template renders a different prompt.
+ * @param withoutTools the request that filled the saved cache had no tools (a creative turn, tools off), so the
+ *   state holds no tool prefix (TEN-196). Handed back to the queue on restore: its next turn with tools puts the
+ *   prefix back from its own file instead of prefilling it. `false` when unknown, as for every row saved before.
  * @param tokenCount number of tokens included in the saved state, as reported by
  *   [io.github.tensaiapp.engine.LlamaKtEngine.saveSession].
  * @param sizeBytes size of the file at [filePath] on disk, in bytes — feeds
@@ -55,6 +58,7 @@ data class SessionEntity(
     val kvCacheType: String,
     val backend: String,
     val chatTemplate: String = "",
+    val withoutTools: Boolean = false,
     val tokenCount: Int,
     val sizeBytes: Long,
     val createdAt: Long,

@@ -41,7 +41,6 @@ class TensaiDbMigration17To18SqlTest {
         assertEquals(17, TensaiDbMigrations.MIGRATION_17_18.startVersion)
         assertEquals(18, TensaiDbMigrations.MIGRATION_17_18.endVersion)
         assertTrue(TensaiDbMigrations.MIGRATION_17_18 in TensaiDbMigrations.ALL)
-        assertEquals(TensaiDbMigrations.MIGRATION_17_18, TensaiDbMigrations.ALL.last())
     }
 
     @Test

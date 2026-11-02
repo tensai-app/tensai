@@ -328,6 +328,10 @@ class InferenceQueue(private val engine: InferenceEngine) {
     @Volatile
     private var residentPrefix: PrefixKey? = null
 
+    /** The session [restoreSession] put in the cache was saved without tools, see [holdsNoToolPrefix]. Read while [residentPrefix] is `null`. */
+    @Volatile
+    private var restoredWithoutTools = false
+
     /**
      * Loads the model described by [config], implicitly unloading and
      * releasing whatever model is currently loaded first (there is never
@@ -518,17 +522,22 @@ class InferenceQueue(private val engine: InferenceEngine) {
     private suspend fun releaseLoadedLocked() {
         val previous = loadedModel
         prefixOnly = false
-        residentPrefix = null
         loadedModel = null
         loadedInfo = null
         loadedConfig = null
-        if (previous == null) return
-        withContext(NonCancellable) {
-            try {
-                onBeforeModelSwap?.invoke()
-            } finally {
-                runCatching { previous.free() }
+        try {
+            if (previous == null) return
+            withContext(NonCancellable) {
+                try {
+                    onBeforeModelSwap?.invoke()
+                } finally {
+                    runCatching { previous.free() }
+                }
             }
+        } finally {
+            // After the hook: its save reads [holdsNoToolPrefix] (TEN-196).
+            residentPrefix = null
+            restoredWithoutTools = false
         }
     }
 
@@ -604,7 +613,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         var acquired = false
         // The cache held a warmed prefix that was not written out when this call took the queue (see [prefixWritten]).
         var wasPrefixOnly = false
-        // The last request that filled the cache had no tools: it holds no tool prefix at all.
+        // The cache holds no tool prefix at all, see [holdsNoToolPrefix].
         var heldNoTools = false
         val model = underLockWithoutWarmUp {
             val current = _state.value
@@ -619,7 +628,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
                 activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
                 wasPrefixOnly = prefixOnly && !prefixWritten
                 prefixOnly = false
-                heldNoTools = residentPrefix?.tools?.isEmpty() == true
+                heldNoTools = holdsNoToolPrefix()
                 residentPrefix = request.prefixKey()
                 _state.value = QueueState.Generating(current.info)
                 loadedModel
@@ -776,7 +785,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
         if (prefixOnly) return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
         val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionSaveOutcome.NotAttempted
         try {
-            SessionSaveOutcome.Wrote(llama.saveSession(path))
+            SessionSaveOutcome.Wrote(llama.saveSession(path), withoutTools = holdsNoToolPrefix())
         } catch (e: CancellationException) {
             // Ahead of the catch below, which reported a cancelled dump as `-1` — indistinguishable
             // from an engine that tried and failed, and swallowed on the way (TEN-73). This is the
@@ -818,10 +827,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
      *
      * Cancels a running [warmUp] first (TEN-88) and waits for it to wind down: a restore replaces
      * the whole cache, so there is nothing of the warm-up left worth finishing.
+     *
+     * [withoutTools] is the session's `SessionEntity.withoutTools` (TEN-196): the restored cache holds no tool
+     * prefix, so the next [generate] with tools puts it back first, as it does after a turn without tools.
      */
     suspend fun restoreSession(
         path: String,
         expectedModel: LoadedModelInfo? = null,
+        withoutTools: Boolean = false,
     ): SessionRestoreOutcome = underLockWithoutWarmUp {
         val current = _state.value
         if (current !is QueueState.ModelReady) return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
@@ -834,8 +847,16 @@ class InferenceQueue(private val engine: InferenceEngine) {
         val llama = engine as? LlamaKtEngine ?: return@underLockWithoutWarmUp SessionRestoreOutcome.NotAttempted
         prefixOnly = false
         residentPrefix = null
+        // Set before the call: a cancellation can land after the native load finished, and then the flag must
+        // already describe the restored cache. A wrong `true` only re-prefills the tool prefix.
+        restoredWithoutTools = withoutTools
         try {
-            if (llama.loadSession(path)) SessionRestoreOutcome.Restored else SessionRestoreOutcome.EngineRefused
+            if (llama.loadSession(path)) {
+                SessionRestoreOutcome.Restored
+            } else {
+                restoredWithoutTools = false
+                SessionRestoreOutcome.EngineRefused
+            }
         } catch (e: CancellationException) {
             // As in [saveSession], and worse downstream: `SessionRepository.restore` reads a
             // refusal from its `restoreOnEngine` as "this session is unusable" and deletes the
@@ -843,6 +864,7 @@ class InferenceQueue(private val engine: InferenceEngine) {
             // have taken a good session with it (TEN-73).
             throw e
         } catch (e: Exception) {
+            restoredWithoutTools = false
             SessionRestoreOutcome.EngineRefused
         }
     }
@@ -927,6 +949,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * reuses it as it is. `false` when unknown: after a restore, a load, or with nothing in the cache.
      */
     fun holdsPrefixOf(request: DecodeRequest): Boolean = residentPrefix == request.prefixKey()
+
+    /**
+     * Whether the cache holds no tool prefix at all: the last request that filled it had no tools, or the session
+     * [restoreSession] put there was saved so (TEN-196). What a save records as `SessionEntity.withoutTools`, and
+     * what has [generate] put the prefix back before a request with tools. Read under [mutex] (from [generate],
+     * [saveSession] or the swap hook): the two fields it reads change together only under the lock.
+     */
+    fun holdsNoToolPrefix(): Boolean = residentPrefix?.tools?.isEmpty() ?: restoredWithoutTools
 
     /**
      * Whether the cache is empty or holds at most what [warmToolPrefix] put there, so a restore of a conversation's

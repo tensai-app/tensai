@@ -310,7 +310,7 @@ class SessionRepository(
             tempFile.delete()
             return SaveResult.Failed(e)
         }
-        val tokenCount = when (outcome) {
+        val wrote = when (outcome) {
             // TEN-78: the queue was never in a position to ask the engine. Nothing was written and
             // nothing broke — reporting this as a failure is what cancelled a perfectly good
             // incoming restore every time a reply happened to be streaming.
@@ -322,8 +322,9 @@ class SessionRepository(
                 tempFile.delete()
                 return SaveResult.Failed(IllegalStateException("Session save reported failure"))
             }
-            is SessionSaveOutcome.Wrote -> outcome.tokenCount
+            is SessionSaveOutcome.Wrote -> outcome
         }
+        val tokenCount = wrote.tokenCount
         if (tokenCount < 0) {
             tempFile.delete()
             return SaveResult.Failed(IllegalStateException("Session save reported failure (returned $tokenCount)"))
@@ -369,6 +370,7 @@ class SessionRepository(
                         nCtx = key.nCtx,
                         kvCacheType = key.kvCacheType.name,
                         chatTemplate = key.chatTemplate,
+                        withoutTools = wrote.withoutTools,
                         backend = key.backend,
                         tokenCount = tokenCount,
                         sizeBytes = sizeBytes,
@@ -398,7 +400,7 @@ class SessionRepository(
      * caller is the only one who knows which loaded model it read. It closes over that model so the
      * queue can re-assert it under its own mutex (TEN-81) — see this class's KDoc.
      *
-     * @param restoreOnEngine hands the state file to the engine. Its
+     * @param restoreOnEngine hands the state file to the engine, with [SessionEntity.withoutTools] (TEN-196). Its
      *   [SessionRestoreOutcome.EngineRefused] is the *only* answer that self-heals the session off
      *   disk; [SessionRestoreOutcome.NotAttempted] leaves it strictly alone. See
      *   [RestoreResult.NotAttempted].
@@ -406,7 +408,7 @@ class SessionRepository(
     suspend fun restore(
         conversationId: String,
         key: SessionModelKey,
-        restoreOnEngine: suspend (path: String) -> SessionRestoreOutcome,
+        restoreOnEngine: suspend (path: String, withoutTools: Boolean) -> SessionRestoreOutcome,
     ): RestoreResult {
         val epochAtStart = purgeEpoch.get()
         val entity = dao.getByConversation(conversationId) ?: return RestoreResult.NotFound
@@ -424,7 +426,7 @@ class SessionRepository(
         }
 
         val outcome = try {
-            restoreOnEngine(entity.filePath)
+            restoreOnEngine(entity.filePath, entity.withoutTools)
         } catch (e: CancellationException) {
             // The same swallow as [save]'s, except this one would destroy data on its way past
             // (TEN-73): a refusal falls into the self-healing branch below, which deletes this

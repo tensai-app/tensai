@@ -321,6 +321,16 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v18 -> v19 (TEN-196): `sessions.withoutTools`, whether a saved state holds no tool prefix. `DEFAULT 0`
+     * because SQLite needs one to add a NOT NULL column, and unknown, what every existing row is, reads as `false`.
+     */
+    val MIGRATION_18_19 = object : Migration(18, 19) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `sessions` ADD COLUMN `withoutTools` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -340,5 +350,6 @@ object TensaiDbMigrations {
         MIGRATION_15_16,
         MIGRATION_16_17,
         MIGRATION_17_18,
+        MIGRATION_18_19,
     )
 }

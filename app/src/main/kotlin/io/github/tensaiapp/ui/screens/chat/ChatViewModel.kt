@@ -23,6 +23,7 @@ import io.github.tensaiapp.data.models.ModelRepository
 import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.data.session.SessionModelKey
 import io.github.tensaiapp.data.session.SessionRepository
+import io.github.tensaiapp.data.session.SessionRestoreOutcome
 import io.github.tensaiapp.engine.ContextBudget
 import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
@@ -1479,8 +1480,10 @@ class ChatViewModel(
         // once this one reports: a save picked up off the tracker meanwhile (`onStop`) would put this
         // conversation's state in the other's file. Its `ownsCache` sees the owner gone (TEN-180).
         ActiveSessionTracker.current.value?.first?.takeIf { it != conversationId }?.let(ActiveSessionTracker::clearIf)
-        sessionRepository.restore(conversationId, key) { path ->
-            inferenceQueue.restoreSession(path, expectedModel = expectedModel)
+        sessionRepository.restore(conversationId, key) { path, withoutTools ->
+            inferenceQueue.restoreSession(path, expectedModel = expectedModel, withoutTools = withoutTools).also {
+                if (it == SessionRestoreOutcome.Restored) log("session restored, saved without tools: $withoutTools")
+            }
         }
     }
 

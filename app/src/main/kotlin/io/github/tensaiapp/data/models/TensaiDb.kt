@@ -72,6 +72,8 @@ import io.github.tensaiapp.download.DownloadEntity
  * Version 18 added the [MemoryFactEntity] table (TEN-176): what the `memory` tool remembers about the user, see
  * [TensaiDbMigrations.MIGRATION_17_18]. A new table only.
  *
+ * Version 19 added `sessions.withoutTools` (TEN-196), see [TensaiDbMigrations.MIGRATION_18_19].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -87,7 +89,7 @@ import io.github.tensaiapp.download.DownloadEntity
         ToolCallEntity::class,
         MemoryFactEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

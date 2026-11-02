@@ -349,6 +349,72 @@ class InferenceQueueToolPrefixTest {
         assertEquals("the prefix is resident, or a conversation's own session is", List(4) { "decode" }, engine.events)
     }
 
+    /** TEN-196: the process dies after a creative turn, and only the saved session says what the cache held. */
+    @Test
+    fun aSessionSavedWithoutToolsPutsThePrefixBackBeforeTheFirstToolTurnAfterItsRestore() = inTest {
+        val asked = request.messages + ChatMessage(MessageRole.User, "hi")
+        val before = InferenceQueue(FakeEngine())
+        load(before)
+        before.generate(request.copy(messages = asked, tools = emptyList())).toList()
+        val saved = before.saveSession("/tmp/session")
+        assertEquals(SessionSaveOutcome.Wrote(7, withoutTools = true), saved)
+
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        assertEquals(SessionRestoreOutcome.Restored, queue.restoreSession("/tmp/session", info, withoutTools = true))
+        engine.usedCells = 300
+        queue.generate(request.copy(messages = asked)).toList()
+        queue.generate(request.copy(messages = asked)).toList()
+
+        assertEquals(listOf("prefix-start", "prefix-end", "decode", "decode"), engine.events)
+        assertEquals("over the restored cache, once", listOf(true), engine.replaceFlags)
+        assertEquals("a tool turn's cache is saved as one", SessionSaveOutcome.Wrote(7), queue.saveSession("/tmp/session"))
+    }
+
+    /** TEN-196: the swap hook saves the outgoing session, and has to see what its cache held. */
+    @Test
+    fun theSwapHookStillKnowsTheOutgoingCacheHoldsNoToolPrefix() = inTest {
+        val queue = InferenceQueue(FakeEngine())
+        load(queue)
+        queue.generate(request.copy(tools = emptyList())).toList()
+        var seen: Boolean? = null
+        queue.onBeforeModelSwap = { seen = queue.holdsNoToolPrefix() }
+
+        load(queue, "/models/b.gguf")
+
+        assertEquals(true, seen)
+        assertFalse("the new model's cache is unknown", queue.holdsNoToolPrefix())
+    }
+
+    /** TEN-196: a restored no-tools session belongs to the outgoing model, not the next one. */
+    @Test
+    fun aSwapForgetsThatTheRestoredSessionHeldNoToolPrefix() = inTest {
+        val queue = InferenceQueue(FakeEngine())
+        val info = load(queue)
+        queue.restoreSession("/tmp/session", info, withoutTools = true)
+        assertTrue(queue.holdsNoToolPrefix())
+
+        load(queue, "/models/b.gguf")
+
+        assertFalse(queue.holdsNoToolPrefix())
+    }
+
+    /** TEN-196: the second restore replaces the whole cache, the first one's flag goes with it. */
+    @Test
+    fun aRestoreOfAToolSessionForgetsThatThePreviousOneHeldNoToolPrefix() = inTest {
+        val engine = FakeEngine(usedCells = 300)
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        val asked = request.messages + ChatMessage(MessageRole.User, "hi")
+
+        queue.restoreSession("/tmp/session", info, withoutTools = true)
+        queue.restoreSession("/tmp/session", info)
+        queue.generate(request.copy(messages = asked)).toList()
+
+        assertEquals(listOf("decode"), engine.events)
+    }
+
     @Test
     fun aWarmUpOnAnotherModelThanTheExpectedOneIsSkipped() = inTest {
         val engine = FakeEngine()

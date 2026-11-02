@@ -141,7 +141,7 @@ object RuntimeGraph {
                     // `NotAttempted` to express from here: this hook runs under the queue's mutex
                     // with the model still resident, so the engine is always asked.
                     sessionRepository.save(conversationId, key) { path ->
-                        SessionSaveOutcome.Wrote(llamaEngine.saveSession(path))
+                        SessionSaveOutcome.Wrote(llamaEngine.saveSession(path), withoutTools = inferenceQueue.holdsNoToolPrefix())
                     }
                 }
             }

@@ -20,9 +20,10 @@ package io.github.tensaiapp.data.session
 sealed class SessionSaveOutcome {
     /**
      * The engine dumped its state. [tokenCount] is what it reported it wrote, `0` for an empty KV
-     * cache — see [SaveResult.NothingToSave] for what the repository does with that.
+     * cache, see [SaveResult.NothingToSave] for what the repository does with that. [withoutTools] is
+     * [SessionEntity.withoutTools], `false` when the caller cannot tell.
      */
-    data class Wrote(val tokenCount: Int) : SessionSaveOutcome()
+    data class Wrote(val tokenCount: Int, val withoutTools: Boolean = false) : SessionSaveOutcome()
 
     /** The engine was asked and could not do it. A verdict: something is wrong with the dump. */
     data object EngineFailed : SessionSaveOutcome()

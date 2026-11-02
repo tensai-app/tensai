@@ -2403,6 +2403,35 @@ class ChatViewModelTest {
         assertEquals("A's session went back in over the prefix", 1, engine.loadSessionCalls)
     }
 
+    /**
+     * TEN-196: A's turn had no tools, then the process died. Its restored session holds no tool prefix, and A's
+     * next turn with tools puts the prefix back from its file instead of prefilling it.
+     */
+    @Test
+    fun aSessionSavedWithoutToolsHasThePrefixPutBackOnItsFirstToolTurnAfterTheRestore() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        val conversationA = chatRepository.createConversation(modelId = null, toolsEnabled = false)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+        newViewModel(conversationB).send("hi from B")
+        awaitAssistantReply(conversationB, expectedCount = 2)
+        assertEquals("precondition: A was saved without tools", true, sessionDao.getByConversation(conversationA)?.withoutTools)
+
+        inferenceQueue.unloadModel()
+        ActiveSessionTracker.clear()
+        loadImportedModel(MODEL_ID)
+        chatRepository.setToolsEnabled(conversationA, true)
+        val warmUpsBefore = engine.toolPrefixWarmUps.size
+        newViewModel(conversationA).send("back in A")
+        awaitAssistantReply(conversationA, expectedCount = 4)
+
+        assertEquals("precondition: A's session was restored", 1, engine.loadSessionCalls)
+        val (_, replacesResident) = engine.toolPrefixWarmUps.drop(warmUpsBefore).single()
+        assertTrue("over A's restored cache", replacesResident)
+    }
+
     /** A replied with only the local tools granted, then the user granted another tier: a new chat's prefix differs from A's. */
     private suspend fun CoroutineScope.conversationInCacheThenTierChange(): String {
         agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool(), phoneTool()), grants))
