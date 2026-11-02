@@ -4,7 +4,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The creative-writing heuristic of [CreativeRequest] (TEN-191). */
+/** The creative-writing heuristic of [CreativeRequest] (TEN-191, songs, dialogues and ages TEN-199). */
 class CreativeRequestTest {
 
     @Test
@@ -22,6 +22,13 @@ class CreativeRequestTest {
             "Rédige une nouvelle de science-fiction",
             "make up a fable about a fox",
             "Write a poem of 12 lines about the sea",
+            "Write a song about summer",
+            "Écris une chanson sur l'automne.",
+            "Write a rap verse about the city at night.",
+            "Write a short dialogue between a cat and a dog arguing over the couch.",
+            "Écris un poème pour les 30 ans de ma sœur.",
+            "Write a poem for my dad's 60th birthday",
+            "Raconte-moi une histoire sur un petit dragon qui a peur du noir.",
         ).forEach { assertTrue(it, CreativeRequest.matches(it)) }
     }
 
@@ -48,7 +55,11 @@ class CreativeRequestTest {
             "Make up a story and set a timer for 10 minutes",
             "Tell me the lyrics of Bohemian Rhapsody",
             "I'm writing an essay, what is 15% of 2340?",
-            "Write a song about summer",
+            "Tell me the lyrics of the song Yesterday",
+            "Écris les paroles d'une chanson de Brel",
+            "Write a song and remind me to practice it",
+            "Play a song by Daft Punk",
+            "Write a poem with 3 rhymes about the sea",
         ).forEach { assertFalse(it, CreativeRequest.matches(it)) }
     }
 }
