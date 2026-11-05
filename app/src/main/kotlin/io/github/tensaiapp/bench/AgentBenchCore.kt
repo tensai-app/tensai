@@ -773,8 +773,8 @@ class BenchRunner(
 }
 
 /**
- * Hands the KV cache over to the bench: the conversation [owner] names (`(id, key)`, as
- * [io.github.tensaiapp.runtime.ActiveSessionTracker] holds it) has its session saved with [save], then dropped with
+ * Hands the KV cache over to the bench: the conversation [owner] names (`(id, key)` of what
+ * [io.github.tensaiapp.runtime.ActiveSessionTracker] holds) has its session saved with [save], then dropped with
  * [forget], so no later save writes the bench's tokens as its session. `false` when the save did not put its
  * state on disk: the bench must not touch the cache then.
  */

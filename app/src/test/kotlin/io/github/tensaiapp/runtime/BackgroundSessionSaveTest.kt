@@ -230,8 +230,8 @@ class BackgroundSessionSaveTest {
                     saveSessionAfterBackgroundedGeneration(
                         queueState = states,
                         isForeground = isForeground,
-                        activeSession = { activeConversationId?.let { it to key } },
-                        save = { conversationId, sessionKey -> saved += conversationId to sessionKey },
+                        activeSession = { activeConversationId?.let { ActiveSession(it, key, generation = 1) } },
+                        save = { active -> saved += active.conversationId to active.key },
                     )
                 }
                 // An emit into a MutableSharedFlow with no subscribers is dropped, not buffered, so

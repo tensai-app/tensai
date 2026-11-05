@@ -62,6 +62,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -517,7 +519,7 @@ class ChatViewModel(
     val canStop: Flow<Boolean> =
         combine(inferenceQueue.state, ActiveSessionTracker.current, _generatingHere, _conversationId, chatTurns.running) { state, active, here, id, turns ->
             // An agent turn is stoppable between its generations too: a tool runs while the queue is idle.
-            (id != null && id in turns) || (state is QueueState.Generating && (here || (id != null && active?.first == id)))
+            (id != null && id in turns) || (state is QueueState.Generating && (here || (id != null && active?.conversationId == id)))
         }
 
     /**
@@ -692,7 +694,7 @@ class ChatViewModel(
         if (_conversationId.value != id) return@withLock
         // Before the reset, and the pointer cleared with it: a reply of ours still streaming would
         // otherwise leave the deleted id in ActiveSessionTracker for the next save to pick up.
-        if (ActiveSessionTracker.current.value?.first == id) {
+        if (ActiveSessionTracker.current.value?.conversationId == id) {
             inferenceQueue.cancelActive()
             ActiveSessionTracker.clear()
         }
@@ -968,7 +970,7 @@ class ChatViewModel(
                 history.filter { it.role == "assistant" }.sumOf { toolCallTokens[it.id] ?: 0 },
         )
         if (info != null) lastWindow = info.nCtxEffective
-        val owner = ActiveSessionTracker.current.value?.first
+        val owner = ActiveSessionTracker.current.value?.conversationId
         val cacheUsed = if (info != null && (owner == null || owner == id)) inferenceQueue.currentKvTokenCount() ?: 0 else null
         val breakdown = contextBreakdown(
             length = info?.nCtxEffective ?: lastWindow,
@@ -1049,7 +1051,7 @@ class ChatViewModel(
         _contextUsage.value = if (info == null || length <= 0) {
             ContextUsageState.NoModel
         } else {
-            val owner = ActiveSessionTracker.current.value?.first
+            val owner = ActiveSessionTracker.current.value?.conversationId
             val used = if (owner == null || owner == _conversationId.value) {
                 inferenceQueue.currentKvTokenCount() ?: 0
             } else {
@@ -1088,7 +1090,10 @@ class ChatViewModel(
         // conversation's warm-up, after this conversation's user has already been kept waiting.
         inferenceQueue.cancelWarmUp()
         syncSessionForConversationSwitch(conversationId)
-        reportActiveSession(conversationId)
+        // Not reported here: the sync may have left the cache holding another conversation's state
+        // (a blocked switch, a restore that did not run), and a save picked up before this turn's
+        // prefill would write it under this conversation's name. The generation reports this
+        // conversation as it takes the queue, see [reportActiveSession].
         refreshContextUsage()
         // The model this reply is generated on, which is what a warm-up behind it must find loaded.
         val model = inferenceQueue.state.value.residentModel
@@ -1109,7 +1114,7 @@ class ChatViewModel(
         }
         val assistantId = chatRepository.startAssistantMessage(conversationId)
         val request = decodeRequestFor(conversation, history, agent = false)
-        val finished = streamInto(assistantId, request, turn.stopSignal)
+        val finished = streamInto(assistantId, request, turn.stopSignal, ownedGenerator(conversationId, turn.stopSignal))
         if (model != null && finished != null && worthWarmingUp(finished)) {
             warmUpAfterReply(conversationId, model)
         }
@@ -1281,14 +1286,15 @@ class ChatViewModel(
     private suspend fun saveConversationInCache(request: DecodeRequest): Pair<String, Int>? {
         val resident = inferenceQueue.currentKvTokenCount() ?: return null
         if (resident == 0 || inferenceQueue.holdsOnlyWarmedPrefix() || inferenceQueue.holdsPrefixOf(request)) return null
-        val (outgoingConversationId, outgoingKey) = ActiveSessionTracker.current.value ?: return null
+        val outgoing = ActiveSessionTracker.current.value ?: return null
+        val (outgoingConversationId, outgoingKey) = outgoing
         if (outgoingConversationId == _conversationId.value) return null
         val (_, key) = resolveSessionKey() ?: return null
         if (outgoingKey != key) return null
         val result = sessionRepository.save(
             outgoingConversationId,
             outgoingKey,
-            ownsCache = { ActiveSessionTracker.current.value == (outgoingConversationId to outgoingKey) },
+            ownsCache = { ActiveSessionTracker.current.value == outgoing },
             saveOnEngine = inferenceQueue::saveSession,
         )
         return when (result) {
@@ -1306,8 +1312,8 @@ class ChatViewModel(
      *
      * Two checks before any work, both against a window the reply left open. The cache must still
      * be this conversation's: [ActiveSessionTracker] is what [reportActiveSession] filled in when
-     * this turn started, so anything else there means another conversation has taken the engine
-     * since, and prefilling this one's history would only evict what that one is building (and, with
+     * this turn's generation took the queue, so anything else there means another conversation has
+     * taken the engine since, and prefilling this one's history would only evict what that one is building (and, with
      * no id reported at all, there is nothing to say whose cache it is). And the history must still
      * end on the assistant's reply: a [send] that stored its message in the meantime has moved the
      * end of the conversation, and a prompt built on it would be the wrong prefix. [send] cancels
@@ -1326,7 +1332,7 @@ class ChatViewModel(
         if (!AppForegroundTracker.isForeground.value) return
         warmUpJob?.cancel()
         warmUpJob = scope.launch {
-            if (ActiveSessionTracker.current.value?.first != conversationId) return@launch
+            if (ActiveSessionTracker.current.value?.conversationId != conversationId) return@launch
             val conversation = chatRepository.getConversation(conversationId) ?: return@launch
             val history = chatRepository.observeMessages(conversationId).first()
             if (history.lastOrNull()?.role != "assistant") return@launch
@@ -1435,13 +1441,13 @@ class ChatViewModel(
             return
         }
 
-        val (outgoingConversationId, outgoingKey) = ActiveSessionTracker.current.value ?: return
+        val outgoing = ActiveSessionTracker.current.value ?: return
+        val (outgoingConversationId, outgoingKey) = outgoing
         if (outgoingConversationId == conversationId) return
 
         val (incomingInfo, incomingKey) = resolveSessionKey() ?: return
         if (outgoingKey != incomingKey) return
 
-        val outgoing = outgoingConversationId to outgoingKey
         val saveResult = sessionRepository.save(
             outgoingConversationId,
             outgoingKey,
@@ -1479,7 +1485,7 @@ class ChatViewModel(
         // The cache stops being the outgoing conversation's before the restore can replace it, not
         // once this one reports: a save picked up off the tracker meanwhile (`onStop`) would put this
         // conversation's state in the other's file. Its `ownsCache` sees the owner gone (TEN-180).
-        ActiveSessionTracker.current.value?.first?.takeIf { it != conversationId }?.let(ActiveSessionTracker::clearIf)
+        ActiveSessionTracker.current.value?.conversationId?.takeIf { it != conversationId }?.let(ActiveSessionTracker::clearIf)
         sessionRepository.restore(conversationId, key) { path, withoutTools ->
             inferenceQueue.restoreSession(path, expectedModel = expectedModel, withoutTools = withoutTools).also {
                 if (it == SessionRestoreOutcome.Restored) log("session restored, saved without tools: $withoutTools")
@@ -1487,10 +1493,36 @@ class ChatViewModel(
         }
     }
 
-    /** Reports this conversation as the one currently bound to the loaded model — see [ActiveSessionTracker]. */
-    private suspend fun reportActiveSession(conversationId: String) {
+    /**
+     * Reports this conversation as the one currently bound to the loaded model, see [ActiveSessionTracker]. Run by
+     * each generation of a turn as it takes the queue ([InferenceQueue.generate]'s `onStart`): only then is the cache
+     * this conversation's whatever the switch before it did, and no save can come between the report and the prefill.
+     * A generation the queue refuses reports nothing, and the tracker stays on the conversation whose state the cache
+     * still holds. See [ownedGenerator] for a generation that takes the queue and decodes nothing.
+     */
+    private fun reportActiveSession(conversationId: String) {
         val (_, key) = resolveSessionKey() ?: return
         ActiveSessionTracker.report(conversationId, key)
+    }
+
+    /**
+     * The generator of one turn of [conversationId]: [InferenceQueue.generate] reporting it the cache's owner as each
+     * generation takes the queue ([reportActiveSession]). A turn whose generations took the queue and produced
+     * nothing (an exhausted context budget, a blank prompt, a failure or a stop before the first token) may have left
+     * the previous owner's state in the cache, so the report is taken back: a save lost is the cost, a session
+     * overwritten with another conversation's state is what it avoids.
+     */
+    private fun ownedGenerator(conversationId: String, stopSignal: GenerationStopSignal): ReplyGenerator {
+        var started = false
+        var decoded = false
+        return ReplyGenerator { request ->
+            inferenceQueue.generate(request, stopSignal) {
+                started = true
+                reportActiveSession(conversationId)
+            }
+                .onEach { if (it !is DecodeEvent.Done && it !is DecodeEvent.Error) decoded = true }
+                .onCompletion { if (started && !decoded) ActiveSessionTracker.clearIf(conversationId) }
+        }
     }
 
     /**
@@ -1523,8 +1555,14 @@ class ChatViewModel(
      * @return the generation's [DecodeStats] if it ended on its own, `null` if it was stopped or
      *   failed (or this coroutine was cancelled, in which case nothing is returned at all), what
      *   [generateReply] decides on a warm-up from (TEN-88).
+     * @param generator the turn's [ownedGenerator], which reports who owns the cache.
      */
-    private suspend fun streamInto(assistantId: String, request: DecodeRequest, stopSignal: GenerationStopSignal): DecodeStats? {
+    private suspend fun streamInto(
+        assistantId: String,
+        request: DecodeRequest,
+        stopSignal: GenerationStopSignal,
+        generator: ReplyGenerator,
+    ): DecodeStats? {
         val parser = ReplyStreamSplitter()
         var stats: DecodeStats? = null
         var failed = false
@@ -1538,7 +1576,7 @@ class ChatViewModel(
         // object could not be trusted to mean that.
         _generatingHere.value = true
         try {
-            inferenceQueue.generate(request, stopSignal).collect { event ->
+            generator.generate(request).collect { event ->
                 when (event) {
                     is DecodeEvent.Token -> {
                         parser.accept(event.text)
@@ -1704,7 +1742,7 @@ class ChatViewModel(
 
         _generatingHere.value = true
         try {
-            agentRuntime.run(request, ReplyGenerator { inferenceQueue.generate(it, stopSignal) }, system).collect { event ->
+            agentRuntime.run(request, ownedGenerator(conversationId, stopSignal), system).collect { event ->
                 when (event) {
                     AgentEvent.TurnStarted -> Unit
                     is AgentEvent.ReplyStarted -> {

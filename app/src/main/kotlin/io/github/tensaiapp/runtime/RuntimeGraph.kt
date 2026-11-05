@@ -156,15 +156,15 @@ object RuntimeGraph {
                 queueState = inferenceQueue.state,
                 isForeground = { AppForegroundTracker.isForeground.value },
                 activeSession = { ActiveSessionTracker.current.value },
-                save = { conversationId, key ->
+                save = { active ->
                     // Swallowed for the same reason the swap hook's is, plus one specific to a
                     // long-lived collector: an escaping exception would end the collection and this
                     // trigger would silently stop existing for the rest of the process.
                     runCatching {
                         sessionRepository.save(
-                            conversationId,
-                            key,
-                            ownsCache = { ActiveSessionTracker.current.value == (conversationId to key) },
+                            active.conversationId,
+                            active.key,
+                            ownsCache = { ActiveSessionTracker.current.value == active },
                             saveOnEngine = inferenceQueue::saveSession,
                         )
                     }
@@ -458,12 +458,12 @@ object RuntimeGraph {
             grants = toolSettings,
             platformTools = listOf(
                 DeviceInfoTool(AndroidDeviceInfoSource(appContext)),
-                SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.first }),
+                SearchChatsTool(database.chatSearchDao(), conversationId = { ActiveSessionTracker.current.value?.conversationId }),
                 ClipboardTool(AndroidClipboardAccess(appContext)),
                 TorchTool(AndroidTorchControl(appContext, applicationScope, AppForegroundTracker.isForeground)),
                 MemoryTool(
                     memoryDao,
-                    conversationId = { ActiveSessionTracker.current.value?.first },
+                    conversationId = { ActiveSessionTracker.current.value?.conversationId },
                     onForgotten = { memoryPrompt.invalidate() },
                 ),
                 AskUserTool(askUserGate),

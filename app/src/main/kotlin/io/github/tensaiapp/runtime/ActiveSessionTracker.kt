@@ -1,10 +1,18 @@
 package io.github.tensaiapp.runtime
 
 import io.github.tensaiapp.data.session.SessionModelKey
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+
+/**
+ * One report to [ActiveSessionTracker]: [conversationId] owns the KV cache on [key]. [generation]
+ * tells two reports of the same pair apart, so a value read before the cache went to another
+ * conversation and came back (A, then B, then A again) is not equal to the one current after it.
+ */
+data class ActiveSession(val conversationId: String, val key: SessionModelKey, val generation: Long)
 
 /**
  * The conversation currently bound to whatever model [InferenceQueue] has loaded, as last reported
@@ -22,16 +30,27 @@ import kotlinx.coroutines.flow.update
  * [clear] is called from [RuntimeGraph]'s [InferenceQueue.onBeforeModelSwap] wiring the moment a
  * swap/unload starts, specifically so a stale pointer can never mislabel a *different* model's KV
  * state as belonging to the conversation/model recorded here — see that wiring's KDoc.
+ *
+ * A save's `ownsCache` compares the whole [ActiveSession] it started from with [current], generation
+ * included: the conversation and key alone pass again once the cache went elsewhere and came back.
  */
 object ActiveSessionTracker {
-    private val _current = MutableStateFlow<Pair<String, SessionModelKey>?>(null)
+    private val _current = MutableStateFlow<ActiveSession?>(null)
+    private val generations = AtomicLong()
 
-    /** `(conversationId, modelKey)` of whatever conversation last reported itself active, or `null`. */
-    val current: StateFlow<Pair<String, SessionModelKey>?> = _current.asStateFlow()
+    /** Whatever conversation last reported itself active, or `null`. */
+    val current: StateFlow<ActiveSession?> = _current.asStateFlow()
 
-    /** Called whenever a `ChatViewModel` can resolve both its own conversation id and the model currently backing it. */
+    /**
+     * Called by a `ChatViewModel` generation as it takes the queue (`InferenceQueue.generate`'s `onStart`), with the
+     * key of the model it runs on. A report naming the current owner again keeps its generation: the cache did not
+     * change hands.
+     */
     fun report(conversationId: String, modelKey: SessionModelKey) {
-        _current.value = conversationId to modelKey
+        // A retried update skips a number, which only has to differ from the last one.
+        _current.update {
+            if (it?.conversationId == conversationId && it.key == modelKey) it else ActiveSession(conversationId, modelKey, generations.incrementAndGet())
+        }
     }
 
     fun clear() {
@@ -40,6 +59,6 @@ object ActiveSessionTracker {
 
     /** [clear], only while [conversationId] is the one reported: a report that came in since names the cache's new owner. */
     fun clearIf(conversationId: String) {
-        _current.update { if (it?.first == conversationId) null else it }
+        _current.update { if (it?.conversationId == conversationId) null else it }
     }
 }

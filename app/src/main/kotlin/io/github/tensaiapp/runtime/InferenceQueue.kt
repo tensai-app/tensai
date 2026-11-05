@@ -599,10 +599,14 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * @param stopSignal marked if — and only if — [cancelActive] is what ends *this* generation,
      *   so the collector can tell a stop the user asked for from every other way its collection
      *   can end (TEN-79). Optional: a caller with nothing to record about it passes none.
+     * @param onStart runs under [mutex] as this call takes the queue, before anything touches the
+     *   cache, and not at all for a rejected call: from here the cache is the caller's, and no
+     *   [saveSession] can land between this and the decode. Must not suspend or throw.
      */
     fun generate(
         request: DecodeRequest,
         stopSignal: GenerationStopSignal? = null,
+        onStart: (() -> Unit)? = null,
     ): Flow<DecodeEvent> = channelFlow {
         // Whether this call took the queue over — i.e. published the two writes below and so owes
         // the matching cleanup. Not `model != null`: if [state] ever says `ModelReady` over a
@@ -618,6 +622,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
         val model = underLockWithoutWarmUp {
             val current = _state.value
             if (current is QueueState.ModelReady) {
+                // Ahead of the claim below: a throw here leaves the queue as it was.
+                onStart?.invoke()
                 acquired = true
                 // Job first, state second, and the order matters: everything that offers a "stop"
                 // (`ChatScreen`'s button, `InferenceService`'s notification action) decides

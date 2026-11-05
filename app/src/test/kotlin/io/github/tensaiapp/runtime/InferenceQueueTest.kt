@@ -220,6 +220,41 @@ class InferenceQueueTest {
         assertTrue(queue.state.value is QueueState.ModelReady)
     }
 
+    /** A rejected call never took the cache: its `onStart` (the chat's owner report) must not run. */
+    @Test
+    fun aRejectedGenerateDoesNotRunItsOnStart() = runBlocking {
+        val decodeGate = CompletableDeferred<Unit>()
+        val inDecode = CompletableDeferred<Unit>()
+        val engine = FakeEngine(decodeGate = decodeGate, decodeEntered = inDecode)
+        val queue = InferenceQueue(engine)
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+        var firstStarted = 0
+        var secondStarted = 0
+
+        val firstJob = launch { queue.generate(newRequest()) { firstStarted++ }.collect { } }
+        withTimeout(2_000) { inDecode.await() }
+        val secondEvents = queue.generate(newRequest()) { secondStarted++ }.toList()
+
+        assertTrue(((secondEvents.singleOrNull() as? DecodeEvent.Error)?.cause) is QueueBusyException)
+        assertEquals(1, firstStarted)
+        assertEquals(0, secondStarted)
+        decodeGate.complete(Unit)
+        firstJob.join()
+    }
+
+    /** `onStart` runs ahead of the claim: one that throws leaves the queue ready, and the next call is served. */
+    @Test
+    fun aThrowingOnStartLeavesTheQueueReady() = runBlocking {
+        val queue = InferenceQueue(FakeEngine())
+        queue.loadModel(ModelLoadConfig(path = "/models/a.gguf"))
+
+        val thrown = runCatching { queue.generate(newRequest()) { throw IllegalStateException("onStart") }.collect { } }
+
+        assertEquals("onStart", thrown.exceptionOrNull()?.message)
+        assertTrue(queue.state.value is QueueState.ModelReady)
+        assertTrue("the next call is not rejected", queue.generate(newRequest()).toList().last() is DecodeEvent.Done)
+    }
+
     /**
      * The "Stop" contract, without a device: [InferenceQueue.cancelActive] must actually stop the
      * decode, and the queue must settle back to [QueueState.ModelReady] rather than stay stuck

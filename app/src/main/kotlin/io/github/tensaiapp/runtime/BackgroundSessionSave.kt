@@ -1,6 +1,5 @@
 package io.github.tensaiapp.runtime
 
-import io.github.tensaiapp.data.session.SessionModelKey
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -41,21 +40,22 @@ import kotlinx.coroutines.flow.Flow
  *   itself, in which case there is no conversation to attribute the KV cache to and nothing is
  *   saved.
  * @param save does the actual persisting (the app wires `SessionRepository.save` with
- *   `InferenceQueue::saveSession`). Must not throw: this collector has no supervisor of its own and
- *   would stop watching for good.
+ *   `InferenceQueue::saveSession`), for the [ActiveSession] [activeSession] read: its `ownsCache`
+ *   compares that value, generation included. Must not throw: this collector has no supervisor of
+ *   its own and would stop watching for good.
  */
 suspend fun saveSessionAfterBackgroundedGeneration(
     queueState: Flow<QueueState>,
     isForeground: () -> Boolean,
-    activeSession: () -> Pair<String, SessionModelKey>?,
-    save: suspend (conversationId: String, key: SessionModelKey) -> Unit,
+    activeSession: () -> ActiveSession?,
+    save: suspend (ActiveSession) -> Unit,
 ) {
     var wasGenerating = false
     queueState.collect { state ->
         val hadBeenGenerating = wasGenerating
         wasGenerating = state is QueueState.Generating
         if (!hadBeenGenerating || state !is QueueState.ModelReady || isForeground()) return@collect
-        val (conversationId, key) = activeSession() ?: return@collect
-        save(conversationId, key)
+        val active = activeSession() ?: return@collect
+        save(active)
     }
 }

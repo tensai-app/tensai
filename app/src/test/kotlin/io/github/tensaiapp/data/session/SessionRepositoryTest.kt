@@ -1,6 +1,7 @@
 package io.github.tensaiapp.data.session
 
 import io.github.tensaiapp.engine.KvCacheType
+import io.github.tensaiapp.runtime.ActiveSessionTracker
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
@@ -668,6 +669,32 @@ class SessionRepositoryTest {
         assertEquals("c1's own", File(entity.filePath).readText())
         assertEquals(10, entity.tokenCount)
         assertEquals(listOf("c1.llamastate"), File(storageRoot, "sessions").list()!!.toList())
+    }
+
+    @Test
+    fun aSaveWhoseOwnerLeftAndCameBackDuringTheDumpIsRefused() = runBlocking {
+        repository.save("c1", key) { path -> File(path).writeText("c1's own"); SessionSaveOutcome.Wrote(10) }
+        ActiveSessionTracker.clear()
+        ActiveSessionTracker.report("c1", key)
+        val active = ActiveSessionTracker.current.value
+
+        // `onStop` read c1. Its dump runs after a switch restored c2's session, then the user goes back to c1,
+        // whose restore finds nothing to load and leaves c2's state in the cache: c1 is reported again.
+        val result = try {
+            repository.save("c1", key, ownsCache = { ActiveSessionTracker.current.value == active }) { path ->
+                ActiveSessionTracker.clearIf("c1")
+                File(path).writeText("c2's restored state")
+                ActiveSessionTracker.report("c2", key)
+                ActiveSessionTracker.clearIf("c2")
+                ActiveSessionTracker.report("c1", key)
+                SessionSaveOutcome.Wrote(30)
+            }
+        } finally {
+            ActiveSessionTracker.clear()
+        }
+
+        assertEquals(SaveResult.OwnerChanged, result)
+        assertEquals("c1's own", File(dao.getByConversation("c1")!!.filePath).readText())
     }
 
     @Test

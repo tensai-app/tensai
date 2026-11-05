@@ -356,7 +356,7 @@ internal suspend fun deleteChats(
     chatTurns: ChatTurns = RuntimeGraph.chatTurns,
 ) {
     ids.forEach { id ->
-        if (ActiveSessionTracker.current.value?.first == id) {
+        if (ActiveSessionTracker.current.value?.conversationId == id) {
             inferenceQueue.cancelActive()
             ActiveSessionTracker.clear()
         }

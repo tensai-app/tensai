@@ -353,7 +353,7 @@ class ChatViewModelTest {
         assertEquals(
             "reportActiveSession must move the tracker to B once B's turn runs",
             conversationB,
-            ActiveSessionTracker.current.value?.first,
+            ActiveSessionTracker.current.value?.conversationId,
         )
     }
 
@@ -373,12 +373,89 @@ class ChatViewModelTest {
         awaitAssistantReply(conversationB, expectedCount = 2)
 
         val ownersDuringRestore = mutableListOf<String?>()
-        engine.duringLoad = { ownersDuringRestore += ActiveSessionTracker.current.value?.first }
+        engine.duringLoad = { ownersDuringRestore += ActiveSessionTracker.current.value?.conversationId }
         newViewModel(conversationA).send("back in A")
         awaitAssistantReply(conversationA, expectedCount = 4)
 
         assertEquals("precondition: A's session was restored", 1, ownersDuringRestore.size)
         assertNotEquals("B's id still named the cache while A's state went in", conversationB, ownersDuringRestore.single())
+    }
+
+    /**
+     * A switch whose save of the outgoing conversation fails restores nothing: A's state stays in the cache until B's
+     * generation prefills over it. Until then nothing may name B the owner, or a save picked up meanwhile (`onStop`)
+     * would write A's state into B's file, over B's own session.
+     */
+    @Test
+    fun aBlockedSwitchLeavesTheCacheOnItsOwnerUntilTheIncomingGenerationTakesIt() = runBlocking {
+        val (_, conversationB) = cacheOnAWithBSaved()
+        val savedB = sessionDao.getByConversation(conversationB)!!.tokenCount
+
+        // A system prompt gives B's turn a part to count, between the switch and the generation: the save
+        // starts there, on the owner it reads then, as `onStop` would.
+        chatRepository.setSystemPrompt(conversationB, "be brief")
+        engine.saveShouldFail = true
+        var saveInWindow: Job? = null
+        engine.tokenizer = {
+            if (saveInWindow == null) {
+                engine.saveShouldFail = false
+                saveInWindow = launch { saveLikeOnStop() }
+            }
+            it.length
+        }
+        newViewModel(conversationB).send("back in B")
+        awaitAssistantReply(conversationB, expectedCount = 4)
+        saveInWindow!!.join()
+
+        assertEquals("precondition: the switch restored nothing", 0, engine.loadSessionCalls)
+        assertEquals("B's session holds B's state", savedB, sessionDao.getByConversation(conversationB)?.tokenCount)
+        assertEquals("B's generation took the cache", conversationB, ActiveSessionTracker.current.value?.conversationId)
+    }
+
+    /**
+     * The same blocked switch, and B's generation takes the queue but decodes nothing (the context budget is
+     * exhausted before the prompt reaches the engine): A's state may still be what the cache holds, so B is not
+     * left named its owner, and a save after the turn writes nothing under B.
+     */
+    @Test
+    fun aGenerationThatDecodesNothingTakesBackItsOwnerReport() = runBlocking {
+        val (_, conversationB) = cacheOnAWithBSaved()
+        val savedB = sessionDao.getByConversation(conversationB)!!.tokenCount
+
+        engine.saveShouldFail = true
+        engine.scriptedEvents = listOf(DecodeEvent.Done(DecodeStats(0, 0f, 0L, StopReason.ContextBudgetExhausted)))
+        newViewModel(conversationB).send("back in B")
+        awaitGeneration()
+        engine.saveShouldFail = false
+        saveLikeOnStop()
+
+        assertNotEquals(conversationB, ActiveSessionTracker.current.value?.conversationId)
+        assertEquals("B's session holds B's state", savedB, sessionDao.getByConversation(conversationB)?.tokenCount)
+    }
+
+    /** B replied, then A did: B's session is on disk and the cache holds A's state, A reported its owner. */
+    private suspend fun CoroutineScope.cacheOnAWithBSaved(): Pair<String, String> {
+        loadFakeModel()
+        val conversationA = chatRepository.createConversation(modelId = null)
+        val conversationB = chatRepository.createConversation(modelId = null)
+        newViewModel(conversationB).send("hi from B")
+        awaitAssistantReply(conversationB, expectedCount = 2)
+        newViewModel(conversationA).send("hi from A")
+        awaitAssistantReply(conversationA, expectedCount = 2)
+        assertTrue("precondition: B's session is on disk", sessionDao.getByConversation(conversationB) != null)
+        assertEquals(conversationA, ActiveSessionTracker.current.value?.conversationId)
+        return conversationA to conversationB
+    }
+
+    /** `MainActivity.onStop`'s save: whoever the tracker names now, refused if the owner changes before it commits. */
+    private suspend fun saveLikeOnStop() {
+        val active = ActiveSessionTracker.current.value ?: return
+        sessionRepository.save(
+            active.conversationId,
+            active.key,
+            ownsCache = { ActiveSessionTracker.current.value == active },
+            saveOnEngine = inferenceQueue::saveSession,
+        )
     }
 
     /**
@@ -401,7 +478,7 @@ class ChatViewModelTest {
         assertEquals(
             "the tracked session must name the quantisation that is loaded",
             OLDER_MODEL_ID,
-            ActiveSessionTracker.current.value?.second?.modelId,
+            ActiveSessionTracker.current.value?.key?.modelId,
         )
 
         // Switching away is what commits that key to disk (TEN-62), which is where a wrong id
@@ -1486,7 +1563,7 @@ class ChatViewModelTest {
         assertEquals("hello there", messages[0].content)
         assertEquals("assistant", messages[1].role)
         assertEquals("the screen now follows the created row", 2, viewModel.messages.first().size)
-        assertEquals("the turn is reported against the created row", id, ActiveSessionTracker.current.value?.first)
+        assertEquals("the turn is reported against the created row", id, ActiveSessionTracker.current.value?.conversationId)
     }
 
     /**
@@ -2480,7 +2557,7 @@ class ChatViewModelTest {
 
         assertFalse("the first message reuses A's prefix as it is", engine.toolPrefixWarmUps.single().second)
         assertNull("so nothing had to be saved", sessionDao.getByConversation(conversationA))
-        assertEquals(conversationA, ActiveSessionTracker.current.value?.first)
+        assertEquals(conversationA, ActiveSessionTracker.current.value?.conversationId)
     }
 
     @Test
@@ -2488,7 +2565,7 @@ class ChatViewModelTest {
         val conversationA = conversationInCacheThenTierChange()
         // A send in another chat while the save dumps: it reports itself the owner, so what was dumped may be its
         // state and not A's (TEN-180). Nothing is written under A's name and the cache is left to the new owner.
-        engine.duringSave = { ActiveSessionTracker.report("new-owner", ActiveSessionTracker.current.value!!.second) }
+        engine.duringSave = { ActiveSessionTracker.report("new-owner", ActiveSessionTracker.current.value!!.key) }
 
         val warm = keepWarm(newViewModel(null))
         withTimeout(5_000) { engine.toolPrefixEntered.await() }
@@ -2497,7 +2574,7 @@ class ChatViewModelTest {
 
         assertFalse("the save was refused: the engine must leave the cache alone", engine.toolPrefixWarmUps.single().second)
         assertNull("nothing may be on disk as A's", sessionDao.getByConversation(conversationA))
-        assertEquals("the new owner keeps its entry", "new-owner", ActiveSessionTracker.current.value?.first)
+        assertEquals("the new owner keeps its entry", "new-owner", ActiveSessionTracker.current.value?.conversationId)
     }
 
     @Test
@@ -2528,7 +2605,7 @@ class ChatViewModelTest {
 
         assertFalse("A is not on disk: the engine must leave it alone", engine.toolPrefixWarmUps.single().second)
         assertFalse(inferenceQueue.holdsOnlyWarmedPrefix())
-        assertEquals(conversationA, ActiveSessionTracker.current.value?.first)
+        assertEquals(conversationA, ActiveSessionTracker.current.value?.conversationId)
     }
 
     @Test
@@ -2769,7 +2846,7 @@ class ChatViewModelTest {
         val viewModel = newViewModel(conversation)
         viewModel.send("hi")
         withTimeout(5_000) { awaitGeneration() }
-        assertEquals(conversation, ActiveSessionTracker.current.value?.first)
+        assertEquals(conversation, ActiveSessionTracker.current.value?.conversationId)
 
         val watcher = launch { viewModel.watchConversation() }
         chatRepository.deleteConversation(conversation)

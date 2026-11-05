@@ -260,8 +260,10 @@ class SessionRepository(
      *   [conversationId]? `false` resolves to [SaveResult.OwnerChanged]. A caller that picked
      *   [conversationId] off `ActiveSessionTracker` passes a re-read of it: a switch clears the
      *   outgoing owner before it restores another session, so a dump that may have read the restored
-     *   state always finishes with the owner already moved. The swap hook keeps the default, it
-     *   dumps under the queue's mutex with the owner it cleared itself.
+     *   state always finishes with the owner already moved. The re-read is compared with the whole
+     *   value read before the dump, its generation included: the owner may have moved and come
+     *   back in between, and the dump then holds what was restored on the way. The swap hook keeps
+     *   the default, it dumps under the queue's mutex with the owner it cleared itself.
      */
     suspend fun save(
         conversationId: String,

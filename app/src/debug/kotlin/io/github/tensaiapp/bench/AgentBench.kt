@@ -207,9 +207,17 @@ object AgentBench {
         // Never cut short by Stop: a session save that is cancelled loses its temp file and the conversation re-prefills.
         val handOver = suspend {
             withContext(NonCancellable) {
+                val owner = ActiveSessionTracker.current.value
                 handOverCache(
-                    ActiveSessionTracker.current.value,
-                    save = { id, key -> RuntimeGraph.sessionRepository.save(id, key, saveOnEngine = queue::saveSession) },
+                    owner?.let { it.conversationId to it.key },
+                    save = { id, key ->
+                        RuntimeGraph.sessionRepository.save(
+                            id,
+                            key,
+                            ownsCache = { ActiveSessionTracker.current.value == owner },
+                            saveOnEngine = queue::saveSession,
+                        )
+                    },
                     forget = ActiveSessionTracker::clearIf,
                 )
             }
