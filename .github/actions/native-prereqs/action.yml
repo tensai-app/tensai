@@ -7,14 +7,11 @@ description: >
 runs:
   using: composite
   steps:
-  # Même mécanisme que ci.yml : .gitmodules épingle llama.kt en SSH, un
-  # runner n'a pas de clé. La réécriture ne touche pas le fichier, donc rien
-  # ne change pour un clone local. Elle vaut aussi pour les imbriqués.
-  - name: Fetch submodules over HTTPS
+  # Comme ci.yml : llama.kt seul, en shallow. Ses sous-modules sont initialisés
+  # au cas par cas plus bas.
+  - name: Fetch llama.kt submodule
     shell: bash
-    run: |
-      git config --global url."https://github.com/".insteadOf "git@github.com:"
-      git submodule update --init --depth 1 third_party/llama.kt
+    run: git submodule update --init --depth 1 third_party/llama.kt
 
   # OpenCL-Headers est un include du CMakeLists (`${SRC_DIR}/../../../../
   # third_party/OpenCL-Headers`), OpenCL-ICD-Loader produit le libOpenCL.so

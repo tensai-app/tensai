@@ -70,8 +70,8 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Pas de fetch ici : sans credentials persistés il échoue sur un dépôt
-          # privé, et fetch-depth: 0 a déjà rapatrié refs/remotes/origin/main.
+          # Pas de fetch ici : fetch-depth: 0 a déjà rapatrié
+          # refs/remotes/origin/main.
           git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null \
             || { echo "::error::origin/main absent du checkout"; exit 1; }
           if ! git merge-base --is-ancestor "$SHA" origin/main; then

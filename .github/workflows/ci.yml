@@ -18,13 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # .gitmodules pins llama.kt over SSH, and a runner has no key for it.
-      # Rewriting the scheme here leaves .gitmodules alone, so nothing changes
-      # for anyone cloning locally.
-      - name: Fetch submodules over HTTPS
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --depth 1 third_party/llama.kt
+      # Only llama.kt, shallow: its own submodules are not needed for JVM tests.
+      - name: Fetch llama.kt submodule
+        run: git submodule update --init --depth 1 third_party/llama.kt
 
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:

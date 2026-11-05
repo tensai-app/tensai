@@ -3,8 +3,8 @@ name: Native
 # Le job JVM de ci.yml compile le Kotlin et fait tourner les 409 tests, mais il
 # ne touche jamais au natif : un clone frais n'en est pas capable sans régénérer
 # 134 Mo de shaders SPIR-V et libOpenCL.so, tous deux gitignorés (TEN-93).
-# Ce workflow-ci fait exactement ça, et il est filtré par chemins parce que le
-# dépôt est privé et que ~8 min de runner par commit Kotlin ne se justifient pas.
+# Ce workflow-ci fait exactement ça, et il est filtré par chemins parce que
+# ~8 min de runner par commit Kotlin ne se justifient pas.
 #
 # Les chemins retenus sont les seuls de CE dépôt qui peuvent bouger le natif :
 # le pointeur du sous-module llama.kt (où vivent le CMakeLists et les sources
@@ -101,8 +101,8 @@ jobs:
       - name: Assemble release APK (unsigned)
         run: ./gradlew --no-daemon :app:assembleRelease
 
-      # L'APK fait 215 Mo : pas d'artefact, le stockage est facturé sur un dépôt
-      # privé et « ça compile » est tout ce qu'on attend d'ici.
+      # L'APK fait 215 Mo : pas d'artefact, personne ne le télécharge et « ça
+      # compile » est tout ce qu'on attend d'ici.
       - name: Upload lint report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

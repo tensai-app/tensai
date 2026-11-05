@@ -2,11 +2,17 @@
 
 [![CI](https://github.com/tensai-app/tensai/actions/workflows/ci.yml/badge.svg)](https://github.com/tensai-app/tensai/actions/workflows/ci.yml)
 
-天才 — your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, tools and phone actions, and later a LAN API server.
+天才: your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, tools and phone actions, and later a LAN API server.
 
 Site, docs and changelog: [tensai.page](https://tensai.page).
 
-**Status: v0.3.x, working.** Signed APKs ship as GitHub releases of this repo, which stays private until the public v1.0.
+**Status: v0.3.x, pre-1.0.** It works, but expect changes between releases.
+
+## Install
+
+Download the signed APK from [GitHub Releases](https://github.com/tensai-app/tensai/releases)
+and install it. arm64-v8a only, Android 10 (API 29) or later. Models are not
+bundled: pick a GGUF from inside the app.
 
 ## Build from source
 
@@ -15,9 +21,11 @@ compiler (`g++`), and `glslc` (shaderc, packaged with the Vulkan SDK or as
 `shaderc` on most distros).
 
 ```bash
-git clone --recurse-submodules git@github.com:tensai-app/tensai.git
+git clone --recurse-submodules https://github.com/tensai-app/tensai.git
 cd tensai
 ```
+
+Already cloned without `--recurse-submodules`: `git submodule update --init --recursive`.
 
 The `cpp/` sources are vendored, but two artifacts the native build links
 against are generated rather than committed, so a fresh clone does not build:
@@ -82,4 +90,4 @@ The app consumes [llama.kt](https://github.com/tensai-app/llama.kt) (Kotlin/JNI 
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache-2.0, see [LICENSE](LICENSE).
