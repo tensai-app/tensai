@@ -2,7 +2,7 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
-      "version": "0.3.6-rc1",
+      "version": "0.3.6",
       "title": "Faster replies, fewer stray tools",
       "date": "2026-11-05",
       "intro": "With thinking on, a simple question no longer makes you wait a minute, and chats with tools reply faster. Stories, poems and songs are written straight away instead of setting off searches.",
