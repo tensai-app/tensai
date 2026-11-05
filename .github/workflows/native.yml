@@ -11,22 +11,15 @@ name: Native
 # cpp/), la config Gradle/NDK, et ce fichier. Une erreur Kotlin, elle, est déjà
 # attrapée par ci.yml. Le cron hebdomadaire rattrape la dérive de l'image du
 # runner quand rien de natif n'a bougé depuis longtemps.
+#
+# Pas de pull_request : une PR (Dependabot surtout) ne paie pas ce build. Il
+# tourne sur main après le merge, et release.yml refait le natif sur chaque tag
+# v* avec les mêmes prérequis. Une PR qui touche au natif se lance à la main
+# (workflow_dispatch sur sa branche).
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'third_party/**'
-      - '.gitmodules'
-      - 'settings.gradle.kts'
-      - 'build.gradle.kts'
-      - 'gradle.properties'
-      - 'app/build.gradle.kts'
-      - 'gradle/**'
-      - '.github/workflows/native.yml'
-      - '.github/actions/native-prereqs/**'
-      - 'app/proguard-rules.pro'
-  pull_request:
     paths:
       - 'third_party/**'
       - '.gitmodules'

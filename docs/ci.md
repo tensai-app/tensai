@@ -47,8 +47,13 @@ Ce job coûte sept à neuf minutes contre une à quatre pour le job JVM. Sur un 
 Kotlin il n'apporte rien : une erreur Kotlin est déjà attrapée par
 `:app:testDebugUnitTest`, qui compile la même variante.
 
-Il se déclenche donc sur les seuls chemins de **ce** dépôt qui peuvent bouger le
-natif :
+Il ne tourne pas sur les pull requests (Dependabot en ouvre chaque semaine) :
+seulement sur `main` après le merge, le cron hebdomadaire et `workflow_dispatch`
+(à lancer à la main sur la branche d'une PR qui touche au natif). `release.yml`
+refait le build natif sur chaque tag `v*`.
+
+Sur `main`, il se déclenche sur les seuls chemins de **ce** dépôt qui peuvent
+bouger le natif :
 
 | Chemin | Pourquoi |
 |---|---|
