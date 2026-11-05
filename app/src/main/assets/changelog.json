@@ -2,6 +2,62 @@
   "_comment": "Release notes shown in Settings > Version (TEN-193). Add the new release here at each tag, the same text as the GitHub release (see docs/ci.md, Release signée sur tag). Order does not matter, the app sorts by version.",
   "releases": [
     {
+      "version": "0.3.6-rc1",
+      "title": "Faster replies, fewer stray tools",
+      "date": "2026-11-05",
+      "intro": "With thinking on, a simple question no longer makes you wait a minute, and chats with tools reply faster. Stories, poems and songs are written straight away instead of setting off searches.",
+      "groups": [
+        {
+          "label": "Faster",
+          "items": [
+            "With thinking on, a simple question gets a short think and a real problem a long one: a one-line answer now comes in seconds instead of about a minute",
+            "Chats with tools write their replies faster on the phone's processor",
+            "After a reply that used no tool, such as a haiku, the next question no longer waits about two minutes for its first word, even after closing and reopening the app"
+          ]
+        },
+        {
+          "label": "Writing",
+          "items": [
+            "Asking for a story, poem, essay, song, rap or dialogue at the start of a chat, in English or French, gets it written directly, with no search or tool card",
+            "After two tool steps in a row fail or are refused, tensai answers with what it has instead of trying more tools"
+          ]
+        },
+        {
+          "label": "Instructions",
+          "items": [
+            "Settings > Instructions lets you write instructions that apply to every chat; each chat can also have its own in its settings",
+            "Each chat now starts with a short built-in guide for the model, so an existing chat takes a little longer on its first message after the update"
+          ]
+        },
+        {
+          "label": "Time",
+          "items": [
+            "Asking the time in another city, like Tokyo, gives that city's time instead of the phone's",
+            "Asking the time here no longer fails when the model guesses the time zone wrong"
+          ]
+        },
+        {
+          "label": "Chats",
+          "items": [
+            "Swipe a chat left to delete it, with Undo for a few seconds"
+          ]
+        },
+        {
+          "label": "Fixed",
+          "items": [
+            "A model import cut short no longer leaves a hidden file taking up storage; it is cleaned up at the next start",
+            "Switching between chats quickly or leaving the app can no longer mix up what the model remembers of each one"
+          ]
+        },
+        {
+          "label": "Privacy",
+          "items": [
+            "Engine error messages no longer include your prompt or the reply text"
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.3.5",
       "title": "Web pages can no longer act behind your back",
       "date": "2026-10-24",
