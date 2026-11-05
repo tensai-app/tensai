@@ -26,9 +26,9 @@ class MemoryContextTest {
 
     @Test
     fun theBlockIsAHeaderAndOneBulletPerFactInTheOrderGiven() {
-        val block = MemoryContext.render(listOf(fact(2, "uses Fish shell"), fact(1, "lives in Rennes")))
+        val block = MemoryContext.render(listOf(fact(2, "uses Vim"), fact(1, "lives in Lisbon")))
 
-        assertEquals("${MemoryContext.HEADER}\n- uses Fish shell\n- lives in Rennes\n[End of memory]", block)
+        assertEquals("${MemoryContext.HEADER}\n- uses Vim\n- lives in Lisbon\n[End of memory]", block)
     }
 
     @Test
@@ -120,11 +120,11 @@ class MemoryContextTest {
         val prompt = MemoryPrompt(dao)
 
         val first = prompt.blockFor("a")
-        dao.insert(MemoryFactEntity(text = "uses Fish", createdAt = 2))
+        dao.insert(MemoryFactEntity(text = "uses Vim", createdAt = 2))
 
         assertEquals(first, prompt.blockFor("a"))
-        assertTrue(prompt.blockFor("b")!!.contains("uses Fish"))
-        assertTrue("a draft reads the current facts", prompt.blockFor(null)!!.contains("uses Fish"))
+        assertTrue(prompt.blockFor("b")!!.contains("uses Vim"))
+        assertTrue("a draft reads the current facts", prompt.blockFor(null)!!.contains("uses Vim"))
     }
 
     @Test
@@ -155,7 +155,7 @@ class MemoryContextTest {
     fun aForgottenFactLeavesTheHeldBlocksOnceInvalidated() = runBlocking {
         val dao = FakeMemoryDao()
         val id = dao.insert(MemoryFactEntity(text = "likes tea", createdAt = 1))
-        dao.insert(MemoryFactEntity(text = "uses Fish", createdAt = 2))
+        dao.insert(MemoryFactEntity(text = "uses Vim", createdAt = 2))
         val prompt = MemoryPrompt(dao)
         assertTrue(prompt.blockFor("a")!!.contains("likes tea"))
 
@@ -165,7 +165,7 @@ class MemoryContextTest {
 
         val block = prompt.blockFor("a")!!
         assertTrue(!block.contains("likes tea"))
-        assertTrue(block.contains("uses Fish"))
+        assertTrue(block.contains("uses Vim"))
     }
 
     @Test

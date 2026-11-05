@@ -10,7 +10,7 @@ import org.junit.Test
 /** `weather` and `wikipedia` (TEN-181) against recorded-shape Open-Meteo and Wikimedia JSON. */
 class WeatherWikipediaToolTest {
 
-    private val geocoding = """{"results":[{"id":2983990,"name":"Rennes","latitude":48.11198,"longitude":-1.67429,"country":"France","admin1":"Brittany"}]}"""
+    private val geocoding = """{"results":[{"id":3031582,"name":"Bordeaux","latitude":44.84044,"longitude":-0.5805,"country":"France","admin1":"Nouvelle-Aquitaine"}]}"""
 
     private val forecast = """
         {"current":{"temperature_2m":14.3,"apparent_temperature":12.0,"relative_humidity_2m":81,"precipitation":0.0,"weather_code":61,"wind_speed_10m":18.4},
@@ -24,39 +24,39 @@ class WeatherWikipediaToolTest {
 
     @Test fun weatherGeocodesThenReadsTheForecast() {
         val http = FakeHttp(json(geocoding), json(forecast))
-        val result = run(WeatherTool(http), """{"place":"Rennes"}""")
+        val result = run(WeatherTool(http), """{"place":"Bordeaux"}""")
 
         assertFalse(result.text, result.isError)
         assertEquals(
-            "Rennes, Brittany, France (Open-Meteo) \u00b7 forecast for today, Sat 2026-10-17:\n" +
+            "Bordeaux, Nouvelle-Aquitaine, France (Open-Meteo) \u00b7 forecast for today, Sat 2026-10-17:\n" +
                 "now: 14.3C, feels 12, light rain, wind 18.4 km/h, humidity 81%\n" +
                 "rain, 9.1 to 15.2C, rain 2.1 mm (60%)",
             result.text,
         )
         assertEquals("Open-Meteo", result.destination)
-        assertTrue(http.urls[0].startsWith("https://geocoding-api.open-meteo.com/v1/search?name=Rennes&count=1"))
-        assertTrue(http.urls[1].contains("latitude=48.11198&longitude=-1.67429"))
+        assertTrue(http.urls[0].startsWith("https://geocoding-api.open-meteo.com/v1/search?name=Bordeaux&count=1"))
+        assertTrue(http.urls[1].contains("latitude=44.84044&longitude=-0.5805"))
         assertTrue(http.urls[1].endsWith("forecast_days=16"))
     }
 
     @Test fun weatherRetriesOnceOn503ThenGivesUp() {
         val recovered = FakeHttp(status(503), json(forecast))
-        assertFalse(run(WeatherTool(recovered), """{"place":"48.11,-1.67"}""").isError)
+        assertFalse(run(WeatherTool(recovered), """{"place":"38.72,-9.13"}""").isError)
         assertEquals(2, recovered.urls.size)
 
         val down = FakeHttp(status(503), status(503))
-        assertTrue(run(WeatherTool(down), """{"place":"48.11,-1.67"}""").text.contains("HTTP 503"))
+        assertTrue(run(WeatherTool(down), """{"place":"38.72,-9.13"}""").text.contains("HTTP 503"))
         assertEquals(2, down.urls.size)
     }
 
     @Test fun weatherTakesCoordinatesWithoutGeocoding() {
         val http = FakeHttp(json(forecast))
-        val result = run(WeatherTool(http), """{"place":"48.11, -1.67"}""")
+        val result = run(WeatherTool(http), """{"place":"38.72, -9.13"}""")
 
         assertFalse(result.isError)
         assertEquals(1, http.urls.size)
-        assertTrue(http.urls.single().contains("latitude=48.11&longitude=-1.67"))
-        assertTrue(result.text.startsWith("48.11, -1.67 (Open-Meteo) \u00b7 forecast for today"))
+        assertTrue(http.urls.single().contains("latitude=38.72&longitude=-9.13"))
+        assertTrue(result.text.startsWith("38.72, -9.13 (Open-Meteo) \u00b7 forecast for today"))
     }
 
     @Test fun weatherCoordinatesAtTheBoundsAndTextThatIsNotCoordinates() {
@@ -117,7 +117,7 @@ class WeatherWikipediaToolTest {
     @Test fun anUnknownDayIsRefusedBeforeAnyRequest() {
         val http = FakeHttp()
         for (bad in listOf("next week", "2026-13-40", "yesterday", "3")) {
-            val result = run(WeatherTool(http), """{"place":"Rennes","day":"$bad"}""")
+            val result = run(WeatherTool(http), """{"place":"Bordeaux","day":"$bad"}""")
             assertTrue(bad, result.isError)
             assertTrue(result.text.contains("day must be today, tomorrow"))
         }
@@ -147,10 +147,10 @@ class WeatherWikipediaToolTest {
     }
 
     @Test fun weatherFailuresAreTypedMessages() {
-        assertTrue(run(WeatherTool(FakeHttp(IOException("down"))), """{"place":"Rennes"}""").text.contains("network error"))
-        assertTrue(run(WeatherTool(FakeHttp(status(429))), """{"place":"Rennes"}""").text.contains("rate limiting"))
-        assertTrue(run(WeatherTool(FakeHttp(json("<html>"))), """{"place":"Rennes"}""").text.contains("format"))
-        val result = run(WeatherTool(FakeHttp(json(geocoding), json("""{"current":{"temperature_2m":"x"}}"""))), """{"place":"Rennes"}""")
+        assertTrue(run(WeatherTool(FakeHttp(IOException("down"))), """{"place":"Bordeaux"}""").text.contains("network error"))
+        assertTrue(run(WeatherTool(FakeHttp(status(429))), """{"place":"Bordeaux"}""").text.contains("rate limiting"))
+        assertTrue(run(WeatherTool(FakeHttp(json("<html>"))), """{"place":"Bordeaux"}""").text.contains("format"))
+        val result = run(WeatherTool(FakeHttp(json(geocoding), json("""{"current":{"temperature_2m":"x"}}"""))), """{"place":"Bordeaux"}""")
         assertFalse(result.text.isEmpty())
     }
 
@@ -257,7 +257,7 @@ class WeatherWikipediaToolTest {
 
         override suspend fun current(): LocationOutcome {
             fetched++
-            return LocationOutcome.Found(LocationFix(48.111983, -1.674291, 1200f, nowMs - fixAgeMs))
+            return LocationOutcome.Found(LocationFix(38.716671, -9.133329, 1200f, nowMs - fixAgeMs))
         }
     }
 
@@ -272,8 +272,8 @@ class WeatherWikipediaToolTest {
 
             assertFalse(result.text, result.isError)
             assertEquals(1, http.urls.size)
-            assertTrue(http.urls.single().startsWith("https://api.open-meteo.com/v1/forecast?latitude=48.11&longitude=-1.67"))
-            assertTrue(result.text, result.text.startsWith("your location (approx. 48.11,-1.67) (Open-Meteo)"))
+            assertTrue(http.urls.single().startsWith("https://api.open-meteo.com/v1/forecast?latitude=38.72&longitude=-9.13"))
+            assertTrue(result.text, result.text.startsWith("your location (approx. 38.72,-9.13) (Open-Meteo)"))
             assertEquals(1, location.fetched)
         }
     }
@@ -330,7 +330,7 @@ class WeatherWikipediaToolTest {
     @Test fun aNamedCityNeverTouchesTheLocation() {
         val http = FakeHttp(json(geocoding), json(forecast))
         val location = FakeLocation(nowMs = clock.millis())
-        val result = run(hereTool(http, location), """{"place":"Rennes"}""")
+        val result = run(hereTool(http, location), """{"place":"Bordeaux"}""")
 
         assertFalse(result.isError)
         assertEquals(2, http.urls.size)

@@ -57,7 +57,7 @@ const val LocationBlockedText =
 internal fun roundCoordinate(degrees: Double): Double = Math.round(degrees * 100.0) / 100.0
 
 /**
- * The answer: `{"latitude": 48.11, "longitude": -1.67, "accuracy_m": 1500, "fix_time": "2026-10-17 14:03", "note": ...}`
+ * The answer: `{"latitude": 38.72, "longitude": -9.13, "accuracy_m": 1500, "fix_time": "2026-10-17 14:03", "note": ...}`
  * with the time in [zone]. `accuracy_m` is left out when unknown. The note says the position is approximate and
  * not for web searches.
  */

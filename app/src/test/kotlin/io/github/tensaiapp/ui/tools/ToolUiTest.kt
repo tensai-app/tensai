@@ -281,7 +281,7 @@ class ToolUiTest {
 
     @Test
     fun inputsMarkCodeLikeValues() {
-        val inputs = ToolArgsView.inputs("""{"query":"best pizza in Rennes","expression":"12 * (3 + 4)","limit":5}""")
+        val inputs = ToolArgsView.inputs("""{"query":"best pizza in Lisbon","expression":"12 * (3 + 4)","limit":5}""")
 
         // Order is the JSON parser's: Android's keeps the model's, the JVM stand-in used here does not.
         val byKey = inputs.associateBy { it.key }

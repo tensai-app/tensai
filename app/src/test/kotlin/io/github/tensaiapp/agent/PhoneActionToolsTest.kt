@@ -117,7 +117,7 @@ class PhoneActionToolsTest {
     @Test
     fun eventConvertsLocalTimesToEpochMillis() {
         val tool = CreateEventTool(FakePhone()) { paris }
-        val s = spec(tool, """{"title":"Dentist","start":"2026-10-17T14:00","end":"2026-10-17T15:30","location":"Rennes","description":"checkup"}""")
+        val s = spec(tool, """{"title":"Dentist","start":"2026-10-17T14:00","end":"2026-10-17T15:30","location":"Lisbon","description":"checkup"}""")
 
         assertEquals("android.intent.action.INSERT", s.action)
         assertEquals("content://com.android.calendar/events", s.data)
@@ -127,7 +127,7 @@ class PhoneActionToolsTest {
         assertEquals(1_792_238_400_000L, s.extras["beginTime"])
         assertEquals(1_792_238_400_000L + 90 * 60_000, s.extras["endTime"])
         assertEquals(false, s.extras["allDay"])
-        assertEquals("Rennes", s.extras["eventLocation"])
+        assertEquals("Lisbon", s.extras["eventLocation"])
         assertEquals("checkup", s.extras["description"])
     }
 

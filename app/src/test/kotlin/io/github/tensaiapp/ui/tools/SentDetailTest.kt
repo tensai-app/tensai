@@ -10,7 +10,7 @@ class SentDetailTest {
     @Test fun eachNetworkToolShowsItsMainArgument() {
         assertEquals("kotlin coroutines", ToolUiCatalog.sentDetail("web_search", """{"query":"kotlin coroutines","limit":3}"""))
         assertEquals("Kotlin", ToolUiCatalog.sentDetail("wikipedia", """{"query":"Kotlin","lang":"fr"}"""))
-        assertEquals("Rennes", ToolUiCatalog.sentDetail("weather", """{"place":"Rennes"}"""))
+        assertEquals("Lisbon", ToolUiCatalog.sentDetail("weather", """{"place":"Lisbon"}"""))
         assertEquals("https://example.com/a?b=1", ToolUiCatalog.sentDetail("web_fetch", """{"url":"https://example.com/a?b=1"}"""))
     }
 

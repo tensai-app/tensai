@@ -48,11 +48,11 @@ class MemoryToolTest {
 
     @Test
     fun rememberStoresTheFactWithItsSource() {
-        val result = run("""{"action":"remember","text":"  The user   prefers Fish\nshell "}""")
+        val result = run("""{"action":"remember","text":"  The user   prefers Vim\neditor "}""")
 
         assertEquals("remembered (id 1)", result.text)
         val row = dao.rows.single()
-        assertEquals("The user prefers Fish shell", row.text)
+        assertEquals("The user prefers Vim editor", row.text)
         assertEquals("conv-1", row.sourceConversationId)
     }
 
@@ -146,20 +146,20 @@ class MemoryToolTest {
         val args = """{"action":"forget","id":1}"""
         runBlocking { tool.confirmTarget("c1", args) }
         dao.rows.clear()
-        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Rennes", createdAt = clock)
+        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Lisbon", createdAt = clock)
 
         val result = runBlocking { withContext(ToolCallContext("c1")) { tool.execute(args) } }
 
         assertTrue(result.isError)
         assertTrue(result.text, result.text.contains("changed since the user confirmed it"))
-        assertEquals(listOf("Lives in Rennes"), dao.rows.map { it.text })
+        assertEquals(listOf("Lives in Lisbon"), dao.rows.map { it.text })
     }
 
     @Test
     fun aForgetCardThatFoundNothingDeletesNothing() {
         val args = """{"action":"forget","id":1}"""
         runBlocking { tool.confirmTarget("c1", args) }
-        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Rennes", createdAt = clock)
+        dao.rows += MemoryFactEntity(id = 1, text = "Lives in Lisbon", createdAt = clock)
 
         val result = runBlocking { withContext(ToolCallContext("c1")) { tool.execute(args) } }
 
