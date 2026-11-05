@@ -1,10 +1,30 @@
-# tensai
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tensai-app/.github/main/profile/tensai-mark.png" width="96" alt="tensai">
+</p>
 
-[![CI](https://github.com/tensai-app/tensai/actions/workflows/ci.yml/badge.svg)](https://github.com/tensai-app/tensai/actions/workflows/ci.yml)
+<h1 align="center">tensai</h1>
 
-天才: your phone, your AI. Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, tools and phone actions, and later a LAN API server.
+<p align="center">
+  <a href="https://github.com/tensai-app/tensai/releases/latest"><img src="https://img.shields.io/github/v/release/tensai-app/tensai?label=release&color=7c5cff" alt="Latest release"></a>
+  <a href="https://github.com/tensai-app/tensai/releases"><img src="https://img.shields.io/github/downloads/tensai-app/tensai/total?label=downloads" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tensai-app/tensai?label=license" alt="License"></a>
+  <img src="https://img.shields.io/badge/android-10%2B-3ddc84" alt="Android 10+">
+  <a href="https://github.com/tensai-app/tensai/actions/workflows/ci.yml"><img src="https://github.com/tensai-app/tensai/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
-Site and changelog: [tensai.page](https://tensai.page). Docs: [tensai.page/docs](https://tensai.page/docs/).
+<p align="center"><b>天才: your phone, your AI.</b><br>A local AI agent for Android. Any GGUF model, fully on-device.</p>
+
+<p align="center">
+  <a href="https://github.com/tensai-app/tensai/releases/latest">Download</a> |
+  <a href="https://tensai.page">Site</a> |
+  <a href="https://tensai.page/docs/">Docs</a> |
+  <a href="https://tensai.page/changelog/">Changelog</a> |
+  <a href="https://github.com/tensai-app/llama.kt">llama.kt</a>
+</p>
+
+---
+
+Open-source Android app that turns a phone into a local AI agent: runs any GGUF model fully on-device ([llama.kt](https://github.com/tensai-app/llama.kt) / llama.cpp), chat UI, tools and phone actions, and later a LAN API server.
 
 **Status: pre-1.0, latest release v0.3.6.** It works, but expect changes between releases.
 
