@@ -37,14 +37,13 @@ pas capable. Il tourne donc sur tous les commits, pour une à quatre minutes.
   `:llama-kt:buildCMakeDebug`. Mesuré : 0 erreur, 49 avertissements, 3
   informations.
 
-L'APK fait 226 Mo (215 Mio) : il n'est pas uploadé en artefact, le stockage est
-facturé sur un dépôt privé et « ça compile » est tout ce qu'on attend d'ici. Seul
-le rapport de lint l'est, en cas d'échec.
+L'APK fait 226 Mo (215 Mio) : il n'est pas uploadé en artefact, personne ne le
+télécharge et « ça compile » est tout ce qu'on attend d'ici. Seul le rapport de
+lint l'est, en cas d'échec.
 
 #### Pourquoi un filtre de chemins
 
-Le dépôt est privé, les minutes sont comptées, et ce job coûte sept à neuf
-minutes contre une à quatre pour le job JVM. Sur un commit qui ne touche que du
+Ce job coûte sept à neuf minutes contre une à quatre pour le job JVM. Sur un commit qui ne touche que du
 Kotlin il n'apporte rien : une erreur Kotlin est déjà attrapée par
 `:app:testDebugUnitTest`, qui compile la même variante.
 
@@ -118,20 +117,14 @@ Ce que le cache **ne** couvre pas, et qui domine le coût du job : la compilatio
 CMake elle-même, quatre à cinq minutes, refaite à chaque run puisque `.cxx/`
 n'est pas conservé.
 
-### Le sous-module, et pourquoi l'URL est réécrite
+### Le sous-module
 
-`.gitmodules` pointe `llama.kt` en SSH (`git@github.com:…`). Un runner n'a pas
-de clé pour ça. Les deux workflows réécrivent le schéma au vol :
+`.gitmodules` pointe `llama.kt` en HTTPS, comme ses propres sous-modules : un
+runner les récupère sans clé ni PAT. Les deux workflows l'initialisent à la main :
 
 ```bash
-git config --global url."https://github.com/".insteadOf "git@github.com:"
 git submodule update --init --depth 1 third_party/llama.kt
 ```
-
-Ça ne touche ni `.gitmodules` ni le dépôt : rien ne change pour un clone local.
-`llama.kt` est public, donc pas de PAT. `tensai` est **privé**, mais
-`actions/checkout` s'authentifie tout seul avec le `GITHUB_TOKEN` du job. La
-réécriture est globale, donc elle vaut aussi pour les sous-modules imbriqués.
 
 **Aucun des deux jobs n'utilise `submodules: recursive`**, et ils n'initialisent
 pas la même chose :
@@ -196,8 +189,6 @@ révélés muets là-dessus (TEN-55) :
 timeout 300 adb shell am instrument -w \
   io.github.tensaiapp.test/androidx.test.runner.AndroidJUnitRunner
 ```
-
-Détails et suites à faire tourner : `docs/device-qa-queue.md` §10.
 
 ### Release signée sur tag, `release.yml`
 
@@ -287,8 +278,8 @@ Mesuré ici, sur un clone neuf, en bornant les cœurs avec `taskset` :
 | `lintDebug`, après `assembleDebug` | 48 s | — | 57 s |
 
 Le natif est dominé par le link LTO, qui est séquentiel : passer de 4 à 2 vCPU ne
-coûte que 40 secondes. C'est la bonne nouvelle de la mesure, parce qu'un dépôt
-privé n'a droit qu'au runner 2 vCPU.
+coûte que 40 secondes. Les runs mesurés plus bas ont tourné sur le runner 2 vCPU
+d'un dépôt privé ; public, le runner standard en a 4.
 
 Estimé d'abord à ~9 min au miss et ~7 min au hit, à partir des mesures locales
 ci-dessus. **Le premier run réel a démenti cette estimation d'un facteur deux**,
@@ -336,6 +327,10 @@ travail passe par des PR, chaque changement étant alors vu deux fois — on
 approche alors des 40 %. `cancel-in-progress` limite la casse sur les pushes
 rapprochés.
 
+Ce quota de 2000 minutes est celui d'un dépôt privé : public, les runners
+standard ne sont plus décomptés. Le chiffre reste l'ordre de grandeur du temps de
+runner consommé.
+
 Ce chiffre a été annoncé à 200 minutes avant le premier run réel, sur la foi des
 mesures locales. Il est faux d'un facteur deux pour la raison expliquée plus
 haut, et c'est celui-ci qui fait foi.
@@ -366,7 +361,7 @@ visible. À ne tenter que si le quota le force, et avec un ticket à part.
 ## Ce qui reste invérifiable hors CI
 
 Rejoué à la main depuis un clone neuf, dans l'ordre du workflow et en exécutant
-ses propres blocs `run:` : réécriture d'URL, init sélectif des sous-modules,
+ses propres blocs `run:` : init sélectif des sous-modules,
 résolution du NDK et de `glslc`, lecture du SHA `llama.cpp` par `ls-tree`,
 génération des shaders, `build-opencl.sh`, `assembleDebug`, `lintDebug`. Les deux
 chemins, miss et hit, avec le cache simulé par une archive. `actionlint` et
@@ -385,6 +380,3 @@ Pas rejouable ici, et donc à surveiller au premier run réel :
   `cmake` et de `g++`.
 - **Le temps de build sur le runner**, dont les chiffres ci-dessus sont une
   extrapolation depuis une machine locale bridée.
-
-Le badge du README ne s'affiche que pour quelqu'un d'authentifié ayant accès au
-dépôt, tant que `tensai` est privé.
