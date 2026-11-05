@@ -8,6 +8,22 @@ updates:
       - /.github/actions/native-prereqs
     schedule:
       interval: monthly
+    commit-message:
+      prefix: ci(deps)
     groups:
       actions:
         patterns: ["*"]
+
+  # Versions live in gradle/libs.versions.toml. Majors stay separate PRs and
+  # are never auto-merged (ticket + device test). llama.kt and llama.cpp are
+  # bumped by hand, there is no gitsubmodule entry.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build(deps)
+    groups:
+      gradle-minor-patch:
+        update-types: [minor, patch]
