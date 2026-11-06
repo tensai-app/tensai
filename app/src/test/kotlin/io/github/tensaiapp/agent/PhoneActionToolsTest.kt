@@ -174,16 +174,16 @@ class PhoneActionToolsTest {
     @Test
     fun smsKeepsTheDialableCharacters() {
         val tool = DraftSmsTool(FakePhone(), NoContacts)
-        val s = spec(tool, """{"body":"on my way","number":"+33 6 12-34-56-78"}""")
+        val s = spec(tool, """{"body":"on my way","number":"+33 6 39-98-10-78"}""")
 
         assertEquals("android.intent.action.SENDTO", s.action)
         assertEquals("sms", s.scheme)
-        assertEquals("+33612345678", s.schemeSpecificPart)
+        assertEquals("+33639981078", s.schemeSpecificPart)
         assertEquals("on my way", s.extras["sms_body"])
         assertEquals("", spec(tool, """{"body":"hi"}""").schemeSpecificPart)
         assertEquals("+3361", spec(tool, """{"body":"hi","number":"+33*61#"}""").schemeSpecificPart)
         assertTrue(failure(tool, """{"body":"hi","number":"mum"}""").contains("not a phone number"))
-        assertTrue(failure(tool, """{"number":"0612345678"}""").contains("body is required"))
+        assertTrue(failure(tool, """{"number":"0639981078"}""").contains("body is required"))
     }
 
     @Test

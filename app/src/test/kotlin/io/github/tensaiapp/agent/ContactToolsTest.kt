@@ -58,20 +58,20 @@ class ContactToolsTest {
 
     private fun phone(number: String, type: PhoneType = PhoneType.Mobile) = ContactPhone(number, type)
 
-    private val jade = Contact("Jade Martin", listOf(phone("06 12 34 56 78"), phone("02 99 00 11 22", PhoneType.Home)), listOf("jade@example.com", "jm@work.example"))
-    private val jadeP = Contact("Jade Petit", listOf(phone("06 99 99 99 99")), emptyList())
-    private val zoe = Contact("Zoé Lefèvre", listOf(phone("07 11 22 33 44")), listOf("zoe@example.com"))
-    private val sam = Contact("Sam", listOf(phone("06 00 00 00 01"), phone("06 00 00 00 02")), emptyList())
-    private val book = listOf(jade, jadeP, zoe, sam, Contact("Samuel Roy", listOf(phone("06 55 55 55 55")), emptyList()))
+    private val jade = Contact("Jade Martin", listOf(phone("06 39 98 10 78"), phone("06 39 98 11 22", PhoneType.Home)), listOf("jade@example.com", "jm@work.example"))
+    private val jadeP = Contact("Jade Petit", listOf(phone("06 39 98 12 99")), emptyList())
+    private val zoe = Contact("Zoé Lefèvre", listOf(phone("06 39 98 13 44")), listOf("zoe@example.com"))
+    private val sam = Contact("Sam", listOf(phone("06 39 98 14 01"), phone("06 39 98 15 02")), emptyList())
+    private val book = listOf(jade, jadeP, zoe, sam, Contact("Samuel Roy", listOf(phone("06 39 98 16 55")), emptyList()))
 
     // name or number
 
     @Test
     fun numbersAreNotNames() {
-        assertTrue(looksLikePhoneNumber("0612345678"))
-        assertTrue(looksLikePhoneNumber("+33 6 12-34-56-78"))
+        assertTrue(looksLikePhoneNumber("0639981078"))
+        assertTrue(looksLikePhoneNumber("+33 6 39-98-10-78"))
         assertTrue(looksLikePhoneNumber("(02) 99.00.11.22"))
-        assertTrue(looksLikePhoneNumber("0612345678, 0699999999"))
+        assertTrue(looksLikePhoneNumber("0639981078, 0639981299"))
         assertFalse(looksLikePhoneNumber("Jade"))
         assertFalse(looksLikePhoneNumber("Jade 2"))
         assertFalse(looksLikePhoneNumber("1-800-FLOWERS"))
@@ -103,7 +103,7 @@ class ContactToolsTest {
 
     @Test
     fun aBareFirstNameIsAmbiguousEvenWithAnExactContact() = runBlocking {
-        val two = listOf(Contact("Jade", listOf(phone("06 00 00 00 99", PhoneType.Other)), listOf("j@example.com")), jade)
+        val two = listOf(Contact("Jade", listOf(phone("06 39 98 17 99", PhoneType.Other)), listOf("j@example.com")), jade)
         val phone = FakePhone()
         val sms = DraftSmsTool(phone, FakeContacts(two)).execute("""{"body":"hi","to":"Jade"}""")
         val mail = DraftEmailTool(phone, FakeContacts(two)).execute("""{"to":"jade"}""")
@@ -121,9 +121,9 @@ class ContactToolsTest {
 
     @Test
     fun aLabelFromTheListResolvesTheContactAndItsType() = runBlocking {
-        val bare = Contact("Jade", listOf(phone("06 00 00 00 01", PhoneType.Other)), listOf("bare@example.com"))
-        val heart = Contact("Jade \uD83D\uDC9C", listOf(phone("06 00 00 00 02")), listOf("heart@example.com"))
-        val x = Contact("Jade X", listOf(phone("06 00 00 00 03", PhoneType.Other)), emptyList())
+        val bare = Contact("Jade", listOf(phone("06 39 98 14 01", PhoneType.Other)), listOf("bare@example.com"))
+        val heart = Contact("Jade \uD83D\uDC9C", listOf(phone("06 39 98 15 02")), listOf("heart@example.com"))
+        val x = Contact("Jade X", listOf(phone("06 39 98 18 03", PhoneType.Other)), emptyList())
         val book = listOf(bare, heart, x)
         val phone = FakePhone()
         val sms = DraftSmsTool(phone, FakeContacts(book))
@@ -136,7 +136,7 @@ class ContactToolsTest {
         sms.execute("""{"body":"hi","to":"Jade \u00B7 other"}""")
         sms.execute("""{"body":"hi","to":"Jade X \u00B7 other"}""")
 
-        assertEquals(listOf("0600000002", "0600000001", "0600000003"), phone.started.map { it.schemeSpecificPart })
+        assertEquals(listOf("0639981502", "0639981401", "0639981803"), phone.started.map { it.schemeSpecificPart })
         // a different contact, not a symbol-blind match
         assertFalse(normalizeName("Jade \uD83D\uDC9C") == normalizeName("Jade"))
 
@@ -153,33 +153,33 @@ class ContactToolsTest {
         DraftSmsTool(phone, FakeContacts(listOf(jade))).execute("""{"body":"hi","to":"Jade Martin \u00B7 home"}""")
         DraftSmsTool(phone, FakeContacts(listOf(jade))).execute("""{"body":"hi","to":"Jade Martin \u00B7 mobile/home"}""")
 
-        assertEquals("0299001122", phone.started[0].schemeSpecificPart)
+        assertEquals("0639981122", phone.started[0].schemeSpecificPart)
         // two types listed: no pick by type, the mobile rule applies
-        assertEquals("0612345678", phone.started[1].schemeSpecificPart)
+        assertEquals("0639981078", phone.started[1].schemeSpecificPart)
     }
 
     @Test
     fun aTaggedLabelStillWorks() = runBlocking {
-        val a = Contact(1, "Jade Martin", listOf(phone("06 12 34 56 42")), emptyList())
-        val b = Contact(2, "Jade Martin", listOf(phone("06 98 76 54 31")), emptyList())
+        val a = Contact(1, "Jade Martin", listOf(phone("06 39 98 19 42")), emptyList())
+        val b = Contact(2, "Jade Martin", listOf(phone("06 39 98 20 31")), emptyList())
         val phone = FakePhone()
         DraftSmsTool(phone, FakeContacts(listOf(a, b))).execute("""{"body":"hi","to":"Jade Martin \u202631 \u00B7 mobile"}""")
 
-        assertEquals("0698765431", phone.started.single().schemeSpecificPart)
+        assertEquals("0639982031", phone.started.single().schemeSpecificPart)
     }
 
     @Test
     fun aFullNameQueryPicksItsExactContact() = runBlocking {
-        val two = listOf(Contact("Jade", listOf(phone("06 00 00 00 99", PhoneType.Other)), emptyList()), jade)
+        val two = listOf(Contact("Jade", listOf(phone("06 39 98 17 99", PhoneType.Other)), emptyList()), jade)
         val phone = FakePhone()
         DraftSmsTool(phone, FakeContacts(two)).execute("""{"body":"hi","to":"Jade Martin"}""")
 
-        assertEquals("0612345678", phone.started.single().schemeSpecificPart)
+        assertEquals("0639981078", phone.started.single().schemeSpecificPart)
     }
 
     @Test
     fun aFullNameSharedByTwoContactsStaysAmbiguous() {
-        val twins = listOf(Contact("Jade Martin", listOf(phone("06 12 34 56 42")), emptyList()), Contact("Jade Martin", listOf(phone("06 98 76 54 31")), emptyList()))
+        val twins = listOf(Contact("Jade Martin", listOf(phone("06 39 98 19 42")), emptyList()), Contact("Jade Martin", listOf(phone("06 39 98 20 31")), emptyList()))
 
         assertEquals(2, pickContacts("jade martin", twins).size)
     }
@@ -189,7 +189,7 @@ class ContactToolsTest {
         val phone = FakePhone()
         DraftSmsTool(phone, FakeContacts(listOf(jade))).execute("""{"body":"hi","to":"jade"}""")
 
-        assertEquals("0612345678", phone.started.single().schemeSpecificPart)
+        assertEquals("0639981078", phone.started.single().schemeSpecificPart)
     }
 
     @Test
@@ -201,8 +201,8 @@ class ContactToolsTest {
     @Test
     fun twoContactsOfTheSameNameStayTwo() {
         val twice = listOf(
-            Contact(1, "Zoé Lefèvre", listOf(phone("07 11 22 33 44")), emptyList()),
-            Contact(2, "zoe lefevre", listOf(phone("07 99 88 77 66")), emptyList()),
+            Contact(1, "Zoé Lefèvre", listOf(phone("06 39 98 13 44")), emptyList()),
+            Contact(2, "zoe lefevre", listOf(phone("06 39 98 21 66")), emptyList()),
         )
 
         assertEquals(2, matchContacts("zoe", twice).size)
@@ -212,7 +212,7 @@ class ContactToolsTest {
     fun theSameNumberWrittenTwoWaysIsOne() {
         val both = Contact(
             1, "Zoé",
-            listOf(phone("+33 6 12 34 56 78"), phone("06 12 34 56 78"), ContactPhone("0612345678", PhoneType.Mobile, "+33612345678"), phone("06 00 00 00 00", PhoneType.Work)),
+            listOf(phone("+33 6 39 98 10 78"), phone("06 39 98 10 78"), ContactPhone("0639981078", PhoneType.Mobile, "+33639981078"), phone("06 39 98 22 00", PhoneType.Work)),
             listOf("Zoe@Example.com", "zoe@example.com"),
         )
         val hit = matchContacts("zoe", listOf(both)).single()
@@ -223,9 +223,9 @@ class ContactToolsTest {
 
     @Test
     fun collidingNamesGetATagAndTheTagWorksOnTheRetry() = runBlocking {
-        val a = Contact(1, "Jade Martin", listOf(phone("06 12 34 56 42")), listOf("jade@home.example"))
-        val b = Contact(2, "Jade Martin", listOf(phone("06 98 76 54 31")), listOf("jade@corp.example"))
-        val c = Contact(3, "Jade Petit", listOf(phone("06 11 11 11 11")), emptyList())
+        val a = Contact(1, "Jade Martin", listOf(phone("06 39 98 19 42")), listOf("jade@home.example"))
+        val b = Contact(2, "Jade Martin", listOf(phone("06 39 98 20 31")), listOf("jade@corp.example"))
+        val c = Contact(3, "Jade Petit", listOf(phone("06 39 98 23 11")), emptyList())
         val phone = FakePhone()
         val sms = DraftSmsTool(phone, FakeContacts(listOf(a, b, c)))
         val ambiguous = sms.execute("""{"body":"hi","to":"jade"}""")
@@ -235,10 +235,10 @@ class ContactToolsTest {
                 "Ask the user which one with ask_user, then retry with the name exactly as listed.",
             ambiguous.text,
         )
-        assertFalse(ambiguous.text.contains("06 12 34 56 42"))
+        assertFalse(ambiguous.text.contains("06 39 98 19 42"))
 
         sms.execute("""{"body":"hi","to":"Jade Martin \u202631"}""")
-        assertEquals("0698765431", phone.started.single().schemeSpecificPart)
+        assertEquals("0639982031", phone.started.single().schemeSpecificPart)
 
         val mail = DraftEmailTool(phone, FakeContacts(listOf(a, b, c)))
         assertTrue(mail.execute("""{"to":"jade martin"}""").text.contains("Jade Martin @home.example; Jade Martin @corp.example"))
@@ -252,19 +252,19 @@ class ContactToolsTest {
     fun smsGivenANumberNeverTouchesTheContacts() = runBlocking {
         val contacts = FakeContacts(book)
         val phone = FakePhone()
-        val result = DraftSmsTool(phone, contacts).execute("""{"body":"hi","to":"06 12 34 56 78"}""")
+        val result = DraftSmsTool(phone, contacts).execute("""{"body":"hi","to":"06 39 98 10 78"}""")
 
         assertFalse(result.text, result.isError)
-        assertEquals("0612345678", phone.started.single().schemeSpecificPart)
+        assertEquals("0639981078", phone.started.single().schemeSpecificPart)
         assertEquals(0, contacts.asked)
     }
 
     @Test
     fun smsStillReadsTheOldNumberKey() = runBlocking {
         val phone = FakePhone()
-        DraftSmsTool(phone, FakeContacts(book)).execute("""{"body":"hi","number":"0612345678"}""")
+        DraftSmsTool(phone, FakeContacts(book)).execute("""{"body":"hi","number":"0639981078"}""")
 
-        assertEquals("0612345678", phone.started.single().schemeSpecificPart)
+        assertEquals("0639981078", phone.started.single().schemeSpecificPart)
     }
 
     @Test
@@ -274,14 +274,14 @@ class ContactToolsTest {
         val mobile = DraftSmsTool(phone, FakeContacts(listOf(jade))).execute("""{"body":"salut","number":"Jade"}""")
 
         assertFalse(result.text, result.isError)
-        assertEquals("0711223344", phone.started[0].schemeSpecificPart)
+        assertEquals("0639981344", phone.started[0].schemeSpecificPart)
         assertEquals("salut", phone.started[0].extras["sms_body"])
         // two numbers, one mobile: the mobile
-        assertEquals("0612345678", phone.started[1].schemeSpecificPart)
+        assertEquals("0639981078", phone.started[1].schemeSpecificPart)
         // the model reads who was picked, not the number
         val told = JSONObject(mobile.text)
         assertEquals("Jade Martin, mobile", told.getString("to"))
-        assertFalse(mobile.text.contains("0612345678"))
+        assertFalse(mobile.text.contains("0639981078"))
     }
 
     @Test
@@ -313,7 +313,7 @@ class ContactToolsTest {
         val result = DraftSmsTool(FakePhone(), FakeContacts(listOf(sam))).execute("""{"body":"hi","to":"sam"}""")
 
         assertTrue(result.isError)
-        assertTrue(result.text, result.text.startsWith("Sam has several numbers: mobile 06 00 00 00 01; mobile 06 00 00 00 02."))
+        assertTrue(result.text, result.text.startsWith("Sam has several numbers: mobile 06 39 98 14 01; mobile 06 39 98 15 02."))
         assertTrue(result.text.contains("ask_user"))
     }
 
@@ -418,7 +418,7 @@ class ContactToolsTest {
         assertFalse(result.isError)
         assertEquals("Jade Martin", contact.getString("name"))
         assertEquals("mobile", contact.getJSONArray("phones").getJSONObject(0).getString("type"))
-        assertEquals("06 12 34 56 78", contact.getJSONArray("phones").getJSONObject(0).getString("number"))
+        assertEquals("06 39 98 10 78", contact.getJSONArray("phones").getJSONObject(0).getString("number"))
         assertEquals("home", contact.getJSONArray("phones").getJSONObject(1).getString("type"))
         assertEquals("jade@example.com", contact.getJSONArray("emails").getString(0))
         assertFalse(JSONObject(result.text).has("more"))

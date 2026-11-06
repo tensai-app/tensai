@@ -88,7 +88,7 @@ internal fun normalizeName(text: String): String =
 internal fun looksLikePhoneNumber(text: String): Boolean =
     text.any { it.isDigit() } && text.all { it.isDigit() || it in "+-().,; *#/" }
 
-/** The last 9 digits of a number, its E.164 form when known: "+33 6 12 34 56 78" and "06 12 34 56 78" are one. */
+/** The last 9 digits of a number, its E.164 form when known: "+33 6 39 98 10 78" and "06 39 98 10 78" are one. */
 private fun numberKey(phone: ContactPhone): String = (phone.normalized ?: phone.number).filter(Char::isDigit).takeLast(9)
 
 /**
