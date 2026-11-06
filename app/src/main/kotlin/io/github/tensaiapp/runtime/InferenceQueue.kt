@@ -306,7 +306,8 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * last minutes) and so *cannot* exclude anyone by itself. Every operation that takes the engine
      * for its own purposes looks here under the lock instead, and when it finds one, leaves the
      * lock, cancels it and tries again: [generate],
-     * [loadModel], [unloadModel], [saveSession] and [restoreSession]. The warm-up's own cleanup
+     * [loadModel], [unloadModel], [saveSession] and [restoreSession]. [countTokens] looks too, and
+     * declines rather than cancel it (TEN-181). The warm-up's own cleanup
      * clears this *inside* the job being joined, so a joiner that wakes up sees it cleared; clearing
      * it after the join would have a retry loop spin against a job that is already complete, the
      * shape [liveGenerationJobLocked] documents.
@@ -744,9 +745,13 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * there is nothing to count with: no model loaded, or a generation running (the engine thread is
      * busy with it and the answer would wait out the reply). Counting is the model's own, so the
      * figures are only comparable with [LoadedModelInfo.modelId]'s.
+     *
+     * A running [warmUp] declines it too (TEN-181), and is left running: the count would queue behind
+     * its prefill *while holding [mutex]*, and the unload, load or save meant to cancel the warm-up
+     * would wait for the lock, so for the whole warm-up, before they could see it.
      */
     suspend fun countTokens(texts: List<String>): List<Int>? = mutex.withLock {
-        if (_state.value !is QueueState.ModelReady) return@withLock null
+        if (_state.value !is QueueState.ModelReady || activeWarmUp != null) return@withLock null
         val model = loadedModel ?: return@withLock null
         texts.map { model.tokenize(it) }
     }
@@ -1008,13 +1013,21 @@ class InferenceQueue(private val engine: InferenceEngine) {
     }
 
     /**
-     * Stops the running [warmUp], if any. Does not wait: collect [warmUp] to completion for that.
-     * For a caller that knows the engine is about to be wanted before the queue finds out ,
-     * `ChatViewModel` calls it before saving the outgoing conversation of a switch, and when the
-     * screen is left. A no-op when nothing is warming up.
+     * Stops the running [warmUp], if any, and waits for it to stop. For a caller that knows the engine
+     * is about to be wanted before the queue finds out: `ChatViewModel` calls it at the start of a send,
+     * before the switch sync saves the outgoing conversation. A no-op when nothing is warming up.
+     *
+     * Waits since TEN-181: [countTokens] declines while [activeWarmUp] is set, and a send counts the
+     * prompt's fixed parts right after this. The wait is bounded by the engine's interrupt, not by
+     * the warm-up: the prefill checks it between 128-token chunks (and between graph nodes on the CPU
+     * backend), and [generate] would wait the same time anyway. The one longer stop is a
+     * [warmToolPrefix] inside its file read, which cannot be interrupted.
      */
-    fun cancelWarmUp() {
-        activeWarmUp?.cancel()
+    suspend fun cancelWarmUp() {
+        activeWarmUp?.let {
+            it.cancel()
+            it.join()
+        }
     }
 
     /**

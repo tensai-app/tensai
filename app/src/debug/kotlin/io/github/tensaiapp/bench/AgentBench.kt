@@ -18,7 +18,6 @@ import io.github.tensaiapp.ui.screens.chat.replySampling
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,7 +64,6 @@ object AgentBench {
     const val EXTRA_REASONING_BUDGET = "reasoning_budget"
     const val EXTRA_ADAPTIVE_REASONING = "adaptive_reasoning"
     const val EXTRA_TOOL_POLICY = "tool_policy"
-    private const val WarmRetryMs = 500L
 
     private val _status = MutableStateFlow<BenchStatus>(BenchStatus.Idle)
 
@@ -225,9 +223,8 @@ object AgentBench {
         if (!handOver()) return fail("could not save the open conversation's session, bench not run")
         var warmed = queue.warmToolPrefix(runner.prefixRequest(), expectedModel = info, replaceSaved = queue.currentKvTokenCount())
         if (warmed != WarmUpOutcome.Warmed) {
-            // Most likely the chat's own warm-up holding the engine: stopped, then once more.
+            // Most likely the chat's own warm-up holding the engine: stopped (and waited for), then once more.
             queue.cancelWarmUp()
-            delay(WarmRetryMs)
             warmed = queue.warmToolPrefix(runner.prefixRequest(), expectedModel = info, replaceSaved = queue.currentKvTokenCount())
         }
 

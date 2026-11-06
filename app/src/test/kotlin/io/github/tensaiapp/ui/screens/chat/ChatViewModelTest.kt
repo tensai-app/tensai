@@ -70,6 +70,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.yield
@@ -81,6 +82,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -2822,6 +2824,37 @@ class ChatViewModelTest {
         assertEquals(listOf("first", "a long answer", "second", "a long answer"), messages.map { it.content })
     }
 
+    /**
+     * TEN-181: a send counts the prompt's fixed parts right after cancelling the warm-up, and the queue
+     * declines to count while one is registered. A warm-up that takes a moment to stop must not leave
+     * the new system prompt uncounted, the sheet would read it as template overhead (TEN-190).
+     */
+    @Test
+    fun aSendRightAfterCancellingASlowToStopWarmUpCountsTheFixedParts() = runBlocking {
+        loadFakeModel()
+        engine.scriptedEvents = finishedReply(WarmUpMinTokens)
+        engine.warmUpHangs = true
+        val conversation = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(conversation)
+
+        viewModel.send("first")
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        chatRepository.setSystemPrompt(conversation, "be brief")
+        engine.warmUpHangs = false
+        val stop = CompletableDeferred<Unit>().also { engine.warmUpStop = it }
+        viewModel.send("second")
+        // One thread, no clock: every other coroutine runs as far as it can before the warm-up stops,
+        // which is past the fixed parts' count unless the send waits for the stop.
+        repeat(100) { yield() }
+        stop.complete(Unit)
+        withTimeout(5_000) { awaitGeneration() }
+
+        assertEquals("precondition: the warm-up was interrupted by the send", 1, engine.warmUpInterrupted)
+        val systemPrompt = engine.lastRequest!!.messages.first { it.role == MessageRole.System }.content
+        assertTrue("precondition: the new prompt is in the request", "be brief" in systemPrompt)
+        assertNotNull("counted before the decode", partTokens.get(MODEL_ID, systemPrompt))
+    }
+
     @Test
     fun leavingTheConversationInterruptsItsWarmUp() = runBlocking {
         loadFakeModel()
@@ -3442,6 +3475,9 @@ class ChatViewModelTest {
         /** Holds a warm-up open until it is cancelled, the only way to interrupt one that is running. */
         var warmUpHangs = false
 
+        /** Holds a cancelled warm-up until completed, like a prefill finishing its chunk before it sees the interrupt. */
+        var warmUpStop: CompletableDeferred<Unit>? = null
+
         /** How many warm-ups ended by being cancelled while they ran. */
         var warmUpInterrupted = 0
             private set
@@ -3501,6 +3537,7 @@ class ChatViewModelTest {
                         awaitCancellation()
                     } catch (e: CancellationException) {
                         warmUpInterrupted++
+                        warmUpStop?.let { withContext(NonCancellable) { it.await() } }
                         throw e
                     }
                 }

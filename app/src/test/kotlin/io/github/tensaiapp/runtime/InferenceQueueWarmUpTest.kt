@@ -15,6 +15,7 @@ import io.github.tensaiapp.engine.ModelLoadConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -23,8 +24,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -160,6 +164,48 @@ class InferenceQueueWarmUpTest {
         assertEquals(listOf("warm-start", "warm-cancelled", "save"), engine.events)
     }
 
+    /**
+     * The context sheet opening behind an after-reply warm-up (TEN-181): counting would queue behind the
+     * prefill on the engine thread while holding the queue's lock. It declines at once instead, like
+     * mid-generation, and the warm-up carries on.
+     */
+    @Test
+    fun countingTokensDuringAWarmUpDeclinesAtOnceAndLeavesItRunning() = inTest {
+        val engine = FakeEngine(hold = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        val info = load(engine, queue)
+
+        val outcome = async { queue.warm(info) }
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        val counted = withTimeout(1_000) { queue.countTokens(listOf("some text")) }
+
+        assertNull(counted)
+        assertEquals("the count never reached the engine, the warm-up was not stopped", listOf("warm-start"), engine.events)
+        engine.hold!!.complete(Unit)
+        assertEquals(WarmUpOutcome.Warmed, outcome.await())
+    }
+
+    /**
+     * The notification's Unload (and the same for a save on `onStop`) while the sheet counts during a
+     * warm-up: it must cancel the warm-up, not wait for a lock the count holds until the warm-up ends.
+     */
+    @Test
+    fun anUnloadWhileTheSheetCountsDuringAWarmUpStillCancelsIt() = inTest {
+        val engine = FakeEngine(hold = CompletableDeferred())
+        val queue = InferenceQueue(engine)
+        val info = load(engine, queue)
+
+        val outcome = async { queue.warm(info) }
+        withTimeout(5_000) { engine.warmUpEntered.await() }
+        // Undispatched: it takes the lock, if it is going to, before the unload asks for it.
+        val counted = async(start = CoroutineStart.UNDISPATCHED) { queue.countTokens(listOf("some text")) }
+        withTimeout(5_000) { queue.unloadModel() }
+
+        assertNull(counted.await())
+        assertEquals(WarmUpOutcome.Interrupted, outcome.await())
+        assertEquals(listOf("warm-start", "warm-cancelled", "free"), engine.events)
+    }
+
     @Test
     fun onlyOneWarmUpRunsAtATime() = inTest {
         val engine = FakeEngine(hold = CompletableDeferred())
@@ -249,6 +295,9 @@ class InferenceQueueWarmUpTest {
     ) : LlamaKtEngine {
         val events = mutableListOf<String>()
         val warmUpEntered = CompletableDeferred<Unit>()
+
+        // The engine's one thread: a warm-up and a tokenize never run at once, the second waits.
+        private val engineThread = Mutex()
         val decodeEntered = CompletableDeferred<Unit>()
 
         override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
@@ -266,7 +315,7 @@ class InferenceQueueWarmUpTest {
                 emit(DecodeEvent.Done(DecodeStats(tokensGenerated = 0, tokPerSec = 0f, ttftMs = 0)))
             }
 
-            override suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean {
+            override suspend fun warmUp(messages: List<ChatMessage>, enableThinking: Boolean): Boolean = engineThread.withLock {
                 events += "warm-start"
                 warmUpEntered.complete(Unit)
                 if (warmUpThrows) throw IllegalStateException("prefill broke")
@@ -279,10 +328,13 @@ class InferenceQueueWarmUpTest {
                     }
                 }
                 events += "warm-end"
-                return warmUpResult
+                warmUpResult
             }
 
-            override suspend fun tokenize(text: String): Int = 0
+            override suspend fun tokenize(text: String): Int = engineThread.withLock {
+                events += "tokenize"
+                0
+            }
 
             override suspend fun free() {
                 events += "free"
