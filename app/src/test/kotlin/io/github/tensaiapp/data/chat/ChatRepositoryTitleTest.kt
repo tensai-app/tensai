@@ -78,7 +78,10 @@ class ChatRepositoryTitleTest {
             conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
         }
 
-        override suspend fun updateConversation(conversation: ConversationEntity) = insertConversation(conversation)
+        override suspend fun updateUpdatedAt(id: String, updatedAt: Long) = patch(id) { it.copy(updatedAt = updatedAt) }
+
+        override suspend fun updateTitle(id: String, title: String, updatedAt: Long) =
+            patch(id) { it.copy(title = title, updatedAt = updatedAt) }
 
         override suspend fun updateSamplingJson(id: String, samplingJson: String?) = patch(id) { it.copy(samplingJson = samplingJson) }
 

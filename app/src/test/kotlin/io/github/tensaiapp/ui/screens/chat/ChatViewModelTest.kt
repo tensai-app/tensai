@@ -1484,7 +1484,7 @@ class ChatViewModelTest {
     fun aCorruptedSamplingBlobStillGeneratesOnTheDefaults() = runBlocking {
         loadFakeModel()
         val conversation = chatRepository.createConversation(modelId = null)
-        chatDao.updateConversation(chatDao.getConversation(conversation)!!.copy(samplingJson = "{\"temperature\":0.4,"))
+        chatDao.updateSamplingJson(conversation, "{\"temperature\":0.4,")
 
         newViewModel(conversation).send("hi")
         val reply = awaitAssistantReply(conversation, expectedCount = 2).last()
@@ -2916,10 +2916,10 @@ class ChatViewModelTest {
             conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
         }
 
-        override suspend fun updateConversation(conversation: ConversationEntity) {
-            conversations[conversation.id] = conversation
-            conversationsFlow.value = conversations.values.sortedByDescending { it.updatedAt }
-        }
+        override suspend fun updateUpdatedAt(id: String, updatedAt: Long) = patch(id) { it.copy(updatedAt = updatedAt) }
+
+        override suspend fun updateTitle(id: String, title: String, updatedAt: Long) =
+            patch(id) { it.copy(title = title, updatedAt = updatedAt) }
 
         override suspend fun updateSamplingJson(id: String, samplingJson: String?) = patch(id) { it.copy(samplingJson = samplingJson) }
 

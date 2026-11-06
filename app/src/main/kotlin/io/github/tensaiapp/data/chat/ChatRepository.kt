@@ -83,16 +83,17 @@ class ChatRepository(private val dao: ChatDao, private val now: () -> Long = Sys
     suspend fun appendUserMessage(conversationId: String, content: String) {
         val isFirstMessage = dao.messageCount(conversationId) == 0
         insertMessage(conversationId, MessageRole.User, content)
-        val conversation = dao.getConversation(conversationId) ?: return
-        val title = if (isFirstMessage) truncateTitle(content) else conversation.title
-        dao.updateConversation(conversation.copy(title = title, updatedAt = System.currentTimeMillis()))
+        if (isFirstMessage) {
+            dao.updateTitle(conversationId, truncateTitle(content), System.currentTimeMillis())
+        } else {
+            dao.updateUpdatedAt(conversationId, System.currentTimeMillis())
+        }
     }
 
     /** Inserts an empty assistant message and returns its id — the streaming decode fills it in via [updateAssistantMessage]. */
     suspend fun startAssistantMessage(conversationId: String): String {
         val id = insertMessage(conversationId, MessageRole.Assistant, "")
-        val conversation = dao.getConversation(conversationId) ?: return id
-        dao.updateConversation(conversation.copy(updatedAt = System.currentTimeMillis()))
+        dao.updateUpdatedAt(conversationId, System.currentTimeMillis())
         return id
     }
 

@@ -36,6 +36,43 @@ class ChatRepositorySettingsTest {
         assertEquals("be terse", row.systemPrompt)
     }
 
+    /**
+     * A reply starting while the sheet saves (TEN-179): [ChatRepository.startAssistantMessage] runs on
+     * every ReplyStarted and bumps `updatedAt`, which must not write back the settings it would have
+     * read before the save.
+     */
+    @Test
+    fun replyStartingDuringASettingsSaveKeepsTheSetting() = runBlocking {
+        val id = repository.createConversation(modelId = null)
+
+        val jobs = listOf(
+            launch { repository.startAssistantMessage(id) },
+            launch { repository.setSystemPrompt(id, "be terse") },
+            launch { repository.setToolsEnabled(id, false) },
+        )
+        jobs.forEach { it.join() }
+
+        val row = repository.getConversation(id)!!
+        assertEquals("be terse", row.systemPrompt)
+        assertFalse(row.toolsEnabled)
+    }
+
+    /** Same race through the first message, which also writes the title. */
+    @Test
+    fun firstMessageDuringASettingsSaveKeepsTheSettingAndTitlesTheConversation() = runBlocking {
+        val id = repository.createConversation(modelId = null)
+
+        val jobs = listOf(
+            launch { repository.appendUserMessage(id, "hello there") },
+            launch { repository.setEnableThinking(id, false) },
+        )
+        jobs.forEach { it.join() }
+
+        val row = repository.getConversation(id)!!
+        assertFalse(row.enableThinking)
+        assertEquals("hello there", row.title)
+    }
+
     @Test
     fun resetTuningPersistsBothFieldsAndKeepsThePrompt() = runBlocking {
         val id = repository.createConversation(modelId = null)

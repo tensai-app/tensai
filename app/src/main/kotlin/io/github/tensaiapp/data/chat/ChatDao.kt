@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
-import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -44,8 +43,17 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertConversation(conversation: ConversationEntity)
 
-    @Update
-    suspend fun updateConversation(conversation: ConversationEntity)
+    /*
+     * The message path's writes to the conversation row: its own columns only, never the whole row.
+     * A reply starts while the settings sheet is open, and a row read before a setting is saved and
+     * written back after would undo it (TEN-179). No-ops when the conversation does not exist.
+     */
+
+    @Query("UPDATE conversations SET updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateUpdatedAt(id: String, updatedAt: Long)
+
+    @Query("UPDATE conversations SET title = :title, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String, updatedAt: Long)
 
     /*
      * Per-column updates for the settings sheet. Each is one SQL statement, so two settings written
