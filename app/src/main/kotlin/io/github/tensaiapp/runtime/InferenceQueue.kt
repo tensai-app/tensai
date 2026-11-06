@@ -12,6 +12,7 @@ import io.github.tensaiapp.engine.LoadedModel
 import io.github.tensaiapp.engine.LoadedModelInfo
 import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ModelLoadConfig
+import io.github.tensaiapp.engine.ModelLoadException
 import io.github.tensaiapp.engine.ToolDefinition
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -56,8 +57,11 @@ sealed class QueueState {
     /** No model loaded, nothing running. */
     data object Idle : QueueState()
 
-    /** A model load is in progress. [progress] is in 0.0–1.0. */
-    data class Loading(val progress: Float, val stage: LoadStage = LoadStage.Weights) : QueueState()
+    /**
+     * A model load is in progress. [progress] is in 0.0–1.0. [modelId] is the
+     * [ModelLoadConfig.modelId] being loaded, `null` for a bare-path load: see [modelInUseId].
+     */
+    data class Loading(val progress: Float, val stage: LoadStage = LoadStage.Weights, val modelId: String? = null) : QueueState()
 
     /** A model is loaded and idle, ready to [InferenceQueue.generate]. */
     data class ModelReady(val info: LoadedModelInfo) : QueueState()
@@ -86,18 +90,26 @@ val QueueState.residentModel: LoadedModelInfo?
  * than an expression each caller writes out. `null` when nothing is loaded, and also when what is
  * loaded came in without an id (a bare-path load — see [LoadedModelInfo.modelId]).
  *
- * It exists because of the one caller that must never get this wrong:
- * [io.github.tensaiapp.data.models.ModelRepository]'s `currentLoadedModelId`, whose
- * in-use guard is the only thing standing between a mid-generation delete and an `unlink` of a
- * `.gguf` llama.cpp still has mmapped (TEN-76). Wiring that guard to an expression matching
- * `ModelReady` alone left it blind for the whole duration of a reply. Wire it to this instead, so
- * the guard and the tests that pin it read the same derivation.
+ * It was written for [io.github.tensaiapp.data.models.ModelRepository]'s in-use guard, the only
+ * thing standing between a mid-generation delete and an `unlink` of a `.gguf` llama.cpp still has
+ * mmapped (TEN-76): an expression matching `ModelReady` alone left it blind for the whole duration
+ * of a reply. The guard now goes through [InferenceQueue.unlessInUse], which also counts a load
+ * (TEN-177), see [modelInUseId].
  *
  * Was the display *name* until TEN-80, which is a weaker thing to compare: two quantisations of
  * one model share a GGUF name, so the guard refused to delete either while one was loaded.
  */
 val InferenceQueue.residentModelId: String?
     get() = state.value.residentModel?.modelId
+
+/**
+ * The [io.github.tensaiapp.data.models.ModelEntity.id] of the model resident *or being loaded*
+ * (TEN-177): the one whose file must not be deleted. [residentModelId] alone reads "nothing" for
+ * the whole of a load, and a delete then would leave the model loading from an unlinked file, or
+ * failing to.
+ */
+val QueueState.modelInUseId: String?
+    get() = residentModel?.modelId ?: (this as? QueueState.Loading)?.modelId
 
 /**
  * Thrown (as [DecodeEvent.Error]) when [InferenceQueue.generate] is called
@@ -207,8 +219,15 @@ enum class WarmUpOutcome {
  * anything. Releasing the *model* is a different matter and is this class's
  * job — see [unloadModel]. Whoever constructed the engine closes it, once,
  * when nobody is using it any more (see `LlamaKtEngineImpl.close`).
+ *
+ * @param modelFileExists whether a [ModelLoadConfig.path] is there to load, asked before the
+ *   resident model is released (TEN-177). `true` by default for engines whose paths are not files
+ *   (the tests' fakes); `RuntimeGraph` checks the file.
  */
-class InferenceQueue(private val engine: InferenceEngine) {
+class InferenceQueue(
+    private val engine: InferenceEngine,
+    private val modelFileExists: (path: String) -> Boolean = { true },
+) {
 
     private val mutex = Mutex()
 
@@ -366,8 +385,9 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * really is a swap still cancels it on the branch below.
      *
      * On failure, the previous model has already been released and [state]
-     * falls back cleanly to [QueueState.Idle] — it does not attempt to
-     * restore the previous model.
+     * falls back cleanly to [QueueState.Idle], it does not attempt to
+     * restore the previous model. Except for a missing file, refused before
+     * anything is released (TEN-177): the previous model stays loaded.
      */
     /**
      * Whether [loadModel] with [config] would be the no-op dedup (this exact config is already
@@ -451,7 +471,10 @@ class InferenceQueue(private val engine: InferenceEngine) {
      * can still be unloaded. The caller's coroutine is ending either way.
      */
     private suspend fun performLoadLocked(config: ModelLoadConfig): LoadedModelInfo {
-        _state.value = QueueState.Loading(0f, LoadStage.Preparing)
+        // Before the release: a model deleted while this load waited for the lock would otherwise cost
+        // the resident one (its session saved, its weights freed) for a load that cannot succeed.
+        if (!modelFileExists(config.path)) throw ModelLoadException("Model file not found: ${config.path}")
+        _state.value = QueueState.Loading(0f, LoadStage.Preparing, config.modelId)
 
         try {
             releaseLoadedLocked()
@@ -469,12 +492,12 @@ class InferenceQueue(private val engine: InferenceEngine) {
                     // that reports no stages.
                     val stage = (_state.value as? QueueState.Loading)?.stage
                         ?.takeIf { it != LoadStage.Preparing } ?: LoadStage.Weights
-                    _state.value = QueueState.Loading(progress, stage)
+                    _state.value = QueueState.Loading(progress, stage, config.modelId)
                     config.onProgress?.invoke(progress)
                 },
                 onStage = { stage ->
                     val progress = (_state.value as? QueueState.Loading)?.progress ?: 0f
-                    _state.value = QueueState.Loading(progress, stage)
+                    _state.value = QueueState.Loading(progress, stage, config.modelId)
                     config.onStage?.invoke(stage)
                 },
             )
@@ -539,6 +562,23 @@ class InferenceQueue(private val engine: InferenceEngine) {
             // After the hook: its save reads [holdsNoToolPrefix] (TEN-196).
             residentPrefix = null
             restoredWithoutTools = false
+        }
+    }
+
+    /**
+     * Runs [block] unless [modelId] is resident or loading, and answers whether it ran (TEN-177):
+     * [io.github.tensaiapp.data.models.ModelRepository.deleteModel]'s check and unlink as one step.
+     * Under [mutex], which a load holds from start to end, so a load of [modelId] has either ended
+     * (the model is resident, refused) or starts once the file is gone, and then fails before it
+     * releases whatever is resident (see [performLoadLocked]). One already loading is refused at once
+     * rather than waited for.
+     */
+    suspend fun unlessInUse(modelId: String, block: suspend () -> Unit): Boolean {
+        if (_state.value.modelInUseId == modelId) return false
+        return mutex.withLock {
+            if (_state.value.modelInUseId == modelId) return@withLock false
+            block()
+            true
         }
     }
 

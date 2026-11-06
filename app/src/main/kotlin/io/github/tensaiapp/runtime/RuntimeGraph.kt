@@ -230,7 +230,7 @@ object RuntimeGraph {
         )
     }
 
-    val inferenceQueue: InferenceQueue by lazy { InferenceQueue(llamaEngine) }
+    val inferenceQueue: InferenceQueue by lazy { InferenceQueue(llamaEngine, modelFileExists = { File(it).exists() }) }
 
     /**
      * Process-wide scope for observers that must outlive any single
@@ -305,7 +305,7 @@ object RuntimeGraph {
             modelDao = database.modelDao(),
             readMetadata = llamaEngine::readMetadata,
             kvShapeVersion = llamaEngine::kvShapeVersion,
-            currentLoadedModelId = { inferenceQueue.residentModelId },
+            unlessInUse = inferenceQueue::unlessInUse,
         )
     }
 

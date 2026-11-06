@@ -78,6 +78,7 @@ import io.github.tensaiapp.data.models.ModelRepository
 import io.github.tensaiapp.runtime.LoadPlan
 import io.github.tensaiapp.runtime.LoadPolicy
 import io.github.tensaiapp.runtime.RuntimeGraph
+import io.github.tensaiapp.runtime.modelInUseId
 import io.github.tensaiapp.runtime.residentModel
 import io.github.tensaiapp.ui.components.TensaiBadge
 import io.github.tensaiapp.ui.components.TensaiButton
@@ -100,6 +101,7 @@ import io.github.tensaiapp.ui.theme.TensaiMono
 import io.github.tensaiapp.ui.theme.tensaiTints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -128,6 +130,9 @@ fun ModelDetailScreen(
     val model = models?.find { it.id == modelId }
     val queueState by RuntimeGraph.inferenceQueue.state.collectAsState()
     val isLoaded = queueState.residentModel?.modelId == modelId
+    // Loading counts for Delete (TEN-177), not for the "Loaded" badge and actions.
+    val inUse = queueState.modelInUseId == modelId
+    val deleting = modelId in repository.deleting.collectAsState().value
     val allSessions by RuntimeGraph.sessionRepository.observeSessions().collectAsState(initial = emptyList())
     val sessions = remember(allSessions, modelId) { sessionsOfModel(modelId, allSessions) }
 
@@ -171,8 +176,10 @@ fun ModelDetailScreen(
         wasDownloading = activeDownload != null
     }
 
+    // On applicationScope, like Unload: the delete can wait for the queue (TEN-177), and leaving the
+    // screen meanwhile must not drop it. This screen only reacts, if it is still there.
     suspend fun removeModel(name: String): Boolean = try {
-        repository.deleteModel(modelId)
+        RuntimeGraph.applicationScope.async { repository.deleteModel(modelId) }.await()
         true
     } catch (e: ModelInUseException) {
         snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, name))
@@ -460,7 +467,13 @@ fun ModelDetailScreen(
                                 )
                             }
                             TensaiButton(
-                                text = stringResource(if (exists) R.string.model_delete else R.string.model_detail_remove_from_library),
+                                text = stringResource(
+                                    when {
+                                        deleting -> R.string.model_detail_deleting
+                                        exists -> R.string.model_delete
+                                        else -> R.string.model_detail_remove_from_library
+                                    },
+                                ),
                                 onClick = {
                                     // A missing file has nothing left to lose: no confirmation.
                                     if (exists) {
@@ -470,13 +483,15 @@ fun ModelDetailScreen(
                                     }
                                 },
                                 variant = TensaiButtonVariant.Text,
-                                enabled = !isLoaded,
+                                enabled = !inUse && !deleting,
                                 contentColor = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            if (isLoaded) {
+                            if (inUse) {
                                 Text(
-                                    text = stringResource(R.string.model_detail_unload_first),
+                                    text = stringResource(
+                                        if (isLoaded) R.string.model_detail_unload_first else R.string.model_detail_wait_for_load,
+                                    ),
                                     fontSize = 12.sp,
                                     textAlign = TextAlign.Center,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

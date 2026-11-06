@@ -215,7 +215,7 @@ class InferenceService : Service() {
 
         when (state) {
             is QueueState.Loading -> {
-                // QueueState.Loading carries only progress, not a model name/path — the
+                // QueueState.Loading carries progress and an id, not a model name/path: the
                 // queue only learns the model's name once loadModel() returns. Showing a
                 // generic label here is a deliberate scope call for TEN-27; surfacing the
                 // requested model's name during Loading would mean threading it through

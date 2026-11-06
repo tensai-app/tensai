@@ -68,7 +68,7 @@ class ModelRepositoryTest {
             modelDao = db.modelDao(),
             readMetadata = engine::readMetadata,
             kvShapeVersion = engine::kvShapeVersion,
-            currentLoadedModelId = { null },
+            unlessInUse = { _, block -> block(); true },
             storageRoot = storageRoot,
         )
     }

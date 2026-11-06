@@ -10,23 +10,27 @@ import io.github.tensaiapp.engine.LoadedModel
 import io.github.tensaiapp.engine.LoadedModelInfo
 import io.github.tensaiapp.engine.MessageRole
 import io.github.tensaiapp.engine.ModelLoadConfig
+import io.github.tensaiapp.engine.ModelLoadException
+import io.github.tensaiapp.runtime.residentModelId
 import io.github.tensaiapp.runtime.InferenceQueue
 import io.github.tensaiapp.runtime.QueueState
-import io.github.tensaiapp.runtime.residentModelId
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -42,10 +46,9 @@ import org.junit.Test
  * screen mid-reply, tap delete, and the guard waved through an `unlink` of a multi-gigabyte
  * `.gguf` that llama.cpp still had mmapped. Irreversible, unwarned, and a full re-download.
  *
- * So these tests wire [ModelRepository] through
- * [io.github.tensaiapp.runtime.residentModelId] — the same one-liner `RuntimeGraph`
- * wires — and drive a *real* [InferenceQueue] into `Generating` against a gated fake engine. Point
- * that property back at `ModelReady` alone and
+ * So these tests wire [ModelRepository] through `queue::unlessInUse`, as `RuntimeGraph` does, and
+ * drive a *real* [InferenceQueue] into `Generating` (and, since TEN-177, `Loading`) against a gated
+ * fake engine. Point the guard back at `ModelReady` alone and
  * [theResidentModelCannotBeDeletedWhileItIsGenerating] fails, deleting the file for good measure.
  *
  * `ModelRepository` is built against a bare `ContextWrapper(null)`, safe because `storageRoot` is
@@ -66,14 +69,14 @@ class ModelDeleteGuardTest {
         storageRoot = Files.createTempDirectory("tensai-delete-guard-test").toFile()
         modelDao = FakeModelDao()
         engine = FakeEngine()
-        queue = InferenceQueue(engine)
+        queue = InferenceQueue(engine, modelFileExists = { File(it).exists() })
         repository = ModelRepository(
             context = ContextWrapper(null),
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
             // The wiring under test — identical to `RuntimeGraph`'s.
-            currentLoadedModelId = { queue.residentModelId },
+            unlessInUse = queue::unlessInUse,
             storageRoot = storageRoot,
         )
     }
@@ -160,6 +163,105 @@ class ModelDeleteGuardTest {
         assertTrue("the resident model was touched", resident.exists())
     }
 
+    /**
+     * TEN-177: a load is not a state the model is resident in yet, and the guard read it as "nothing
+     * loaded". Start loading a model, go back, open it, Delete: the file was unlinked under the load.
+     */
+    @Test
+    fun theModelBeingLoadedCannotBeDeleted() = runBlocking {
+        val weights = importedModel()
+        engine.loadGate = CompletableDeferred()
+        val load = launch { queue.loadModel(ModelLoadConfig(path = weights.path, modelId = MODEL_ID)) }
+        withTimeout(TIMEOUT_MS) { engine.loadEntered.await() }
+
+        // Released whatever happens: the queue runs the engine's load uncancellably, so a failed
+        // assertion would otherwise leave the test waiting on it for good.
+        try {
+            try {
+                withTimeout(TIMEOUT_MS) { repository.deleteModel(MODEL_ID) }
+                fail("deleteModel returned instead of refusing: the guard was blind during Loading")
+            } catch (e: ModelInUseException) {
+                // expected, and at once: not after waiting the load out
+            }
+
+            assertTrue("the .gguf was unlinked while it was being loaded", weights.exists())
+            assertEquals(1, modelDao.rowCount())
+        } finally {
+            engine.loadGate!!.complete(Unit)
+        }
+        load.join()
+    }
+
+    /** The contrast: a load of one model does not lock another, nor does an idle queue. */
+    @Test
+    fun anotherModelIsStillDeletableWhileOneLoadsAndAnyWhenIdle() = runBlocking {
+        val loading = importedModel()
+        val other = importedModel(id = "model-2", name = "other-model", fileName = "other.gguf")
+        val third = importedModel(id = "model-3", name = "third-model", fileName = "third.gguf")
+        engine.loadGate = CompletableDeferred()
+        val load = launch { queue.loadModel(ModelLoadConfig(path = loading.path, modelId = MODEL_ID)) }
+        withTimeout(TIMEOUT_MS) { engine.loadEntered.await() }
+
+        // Waits for the load to end: the check and the unlink share the queue's lock.
+        val deletion = async { repository.deleteModel("model-2") }
+        try {
+            assertNull("the delete went through in the middle of a load", withTimeoutOrNull(200) { deletion.await() })
+        } finally {
+            engine.loadGate!!.complete(Unit)
+        }
+        withTimeout(TIMEOUT_MS) { deletion.await() }
+        load.join()
+        assertFalse(other.exists())
+        assertTrue(loading.exists())
+
+        queue.unloadModel()
+        repository.deleteModel("model-3")
+        assertFalse(third.exists())
+    }
+
+    /**
+     * TEN-177's race: the check and the unlink were not one step, so a load could start between them
+     * and load from a file about to be unlinked. A load asked for while a delete of the same model runs
+     * must wait until the delete is over (and then find no file), never start in the middle of it.
+     */
+    @Test
+    fun aLoadAskedForDuringADeleteOfThatModelWaitsForIt() = runBlocking {
+        val weights = importedModel()
+        modelDao.deleteGate = CompletableDeferred()
+        val deletion = launch { repository.deleteModel(MODEL_ID) }
+        withTimeout(TIMEOUT_MS) { modelDao.deleteEntered.await() }
+
+        val load = async { runCatching { queue.loadModel(ModelLoadConfig(path = weights.path, modelId = MODEL_ID)) } }
+        try {
+            assertNull(
+                "the load reached the engine while the delete was still under way",
+                withTimeoutOrNull(300) { engine.loadEntered.await() },
+            )
+        } finally {
+            modelDao.deleteGate!!.complete(Unit)
+        }
+        deletion.join()
+        load.await()
+        assertFalse(weights.exists())
+    }
+
+    /**
+     * The other end of that race: a load of a model deleted while the load waited for the lock fails
+     * before it releases the resident model, which would otherwise be unloaded for nothing.
+     */
+    @Test
+    fun aLoadOfADeletedModelKeepsTheResidentOne() = runBlocking {
+        val resident = importedModel()
+        val deleted = importedModel(id = "model-2", name = "other-model", fileName = "other.gguf")
+        queue.loadModel(ModelLoadConfig(path = resident.path, modelId = MODEL_ID))
+        repository.deleteModel("model-2")
+
+        val failure = runCatching { queue.loadModel(ModelLoadConfig(path = deleted.path, modelId = "model-2")) }
+
+        assertTrue(failure.exceptionOrNull() is ModelLoadException)
+        assertEquals("the resident model was released for a load that could not happen", MODEL_ID, queue.residentModelId)
+    }
+
     /** Writes a fake `.gguf` under [storageRoot] and inserts the row [ModelRepository] reads. */
     private suspend fun importedModel(
         id: String = MODEL_ID,
@@ -207,6 +309,10 @@ class ModelDeleteGuardTest {
 
         fun rowCount(): Int = models.size
 
+        /** Holds [delete] once entered, after the unlink, until completed. */
+        var deleteGate: CompletableDeferred<Unit>? = null
+        val deleteEntered = CompletableDeferred<Unit>()
+
         override fun observeAll(): Flow<List<ModelEntity>> = flow
 
         override suspend fun getById(id: String): ModelEntity? = models[id]
@@ -244,6 +350,8 @@ class ModelDeleteGuardTest {
         }
 
         override suspend fun delete(model: ModelEntity) {
+            deleteEntered.complete(Unit)
+            deleteGate?.await()
             models.remove(model.id)
             flow.value = models.values.toList()
         }
@@ -260,7 +368,17 @@ class ModelDeleteGuardTest {
         /** Completed on entering the decode: the signal a test waits on instead of polling. */
         val inDecode = CompletableDeferred<Unit>()
 
-        override suspend fun loadModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
+        /** Holds a load inside the engine until completed, so the queue stays on [QueueState.Loading]. */
+        var loadGate: CompletableDeferred<Unit>? = null
+        val loadEntered = CompletableDeferred<Unit>()
+
+        override suspend fun loadModel(config: ModelLoadConfig): LoadedModel {
+            loadEntered.complete(Unit)
+            loadGate?.await()
+            return loadedModel(config)
+        }
+
+        private fun loadedModel(config: ModelLoadConfig): LoadedModel = object : LoadedModel {
             override val metadata = LoadedModelInfo(
                 name = MODEL_NAME,
                 nCtxEffective = config.nCtx,

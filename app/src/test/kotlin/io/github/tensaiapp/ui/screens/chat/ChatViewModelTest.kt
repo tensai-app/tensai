@@ -56,7 +56,6 @@ import io.github.tensaiapp.runtime.AppForegroundTracker
 import io.github.tensaiapp.runtime.InferenceQueue
 import io.github.tensaiapp.runtime.PartTokenCache
 import io.github.tensaiapp.runtime.QueueState
-import io.github.tensaiapp.runtime.residentModelId
 import io.github.tensaiapp.ui.tools.ToolCallState
 import io.github.tensaiapp.ui.TechnicalJargon
 import java.io.File
@@ -165,8 +164,8 @@ class ChatViewModelTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            // Wired exactly as `RuntimeGraph` wires it — see `residentModelId` (TEN-76, TEN-80).
-            currentLoadedModelId = { inferenceQueue.residentModelId },
+            // Wired exactly as `RuntimeGraph` wires it, see `InferenceQueue.unlessInUse` (TEN-76, TEN-80, TEN-177).
+            unlessInUse = inferenceQueue::unlessInUse,
             storageRoot = storageRoot,
         )
         sessionRepository = SessionRepository(

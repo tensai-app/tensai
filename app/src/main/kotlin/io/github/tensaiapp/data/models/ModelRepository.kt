@@ -11,8 +11,12 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 
 /**
@@ -46,7 +50,7 @@ class InsufficientStorageException(
     val freeBytes: Long,
 ) : ModelImportFailure("\"$fileName\" needs $neededBytes bytes, $freeBytes free")
 
-/** [ModelRepository.deleteModel] was called for a model that is currently loaded. */
+/** [ModelRepository.deleteModel] was called for a model that is loaded or being loaded. */
 class ModelInUseException(message: String) : Exception(message)
 
 /** Disk usage snapshot for the Models screen's storage indicator. */
@@ -62,24 +66,25 @@ data class StorageUsage(val modelsBytes: Long, val freeBytes: Long, val totalByt
  * @param kvShapeVersion the revision of the native KV-shape derivation the engine currently
  *   carries — see [KvCacheShapeBackfill] for why this is asked of the library rather than written
  *   down here.
- * @param currentLoadedModelId the [ModelEntity.id] of whatever model is currently loaded in the
- *   queue, or `null` if none is — used by [deleteModel]'s in-use guard. Wire this to
- *   [io.github.tensaiapp.runtime.residentModelId] and nothing else: a *generating* model
- *   is every bit as resident as an idle one, and a derivation matching `QueueState.ModelReady`
+ * @param unlessInUse runs its block unless the [ModelEntity.id] it is given is loaded or loading,
+ *   and answers whether it ran: [deleteModel]'s in-use guard. Wire this to
+ *   [io.github.tensaiapp.runtime.InferenceQueue.unlessInUse] and nothing else: a *generating*
+ *   model is every bit as resident as an idle one, and a derivation matching `QueueState.ModelReady`
  *   alone leaves this guard blind for the whole duration of a reply, which is how TEN-76 could
- *   unlink a multi-gigabyte `.gguf` llama.cpp still had mmapped. This compared by
- *   [ModelEntity.displayName] until TEN-80, for want of anything better on `LoadedModelInfo`, and
- *   the false positive that bought was not as harmless as it looked: two quantisations of the same
- *   model share a GGUF display name, so importing a Q4 and a Q8 to compare them — the ordinary
- *   reason to hold two — made the loaded one lock the other against deletion, with a message
- *   naming a model the user could see was not the one they meant.
+ *   unlink a multi-gigabyte `.gguf` llama.cpp still had mmapped. A *loading* one too, and a check
+ *   made outside the queue's lock could pass just before a load of the same model starts (TEN-177).
+ *   This compared by [ModelEntity.displayName] until TEN-80, for want of anything better on
+ *   `LoadedModelInfo`, and the false positive that bought was not as harmless as it looked: two
+ *   quantisations of the same model share a GGUF display name, so importing a Q4 and a Q8 to compare
+ *   them (the ordinary reason to hold two) made the loaded one lock the other against deletion,
+ *   with a message naming a model the user could see was not the one they meant.
  */
 class ModelRepository(
     private val context: Context,
     private val modelDao: ModelDao,
     private val readMetadata: suspend (path: String) -> GgufInfo,
     private val kvShapeVersion: () -> Long,
-    private val currentLoadedModelId: () -> String?,
+    private val unlessInUse: suspend (modelId: String, block: suspend () -> Unit) -> Boolean,
     // Root under which imported GGUFs are stored. Defaults to the app's real filesDir; tests MUST
     // pass a temp dir — this class deletes/overwrites files under `models/`, and pointing it at the
     // real filesDir (as an instrumented test's targetContext does) makes those deletes destroy the
@@ -247,19 +252,32 @@ class ModelRepository(
         modelDao.setChatTemplateOverride(id, choice?.id)
     }
 
+    private val _deleting = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Ids whose [deleteModel] is under way. It waits for the queue's lock (TEN-177), seconds behind a
+     * load or a session save, and the UI shows it pending meanwhile.
+     */
+    val deleting: StateFlow<Set<String>> = _deleting.asStateFlow()
+
     /**
      * Deletes [id]'s file and row. Throws [ModelInUseException] (without deleting anything) if
-     * the model is currently loaded — by [ModelEntity.id], so it is exactly this file that is
+     * the model is currently loaded or loading, by [ModelEntity.id], so it is exactly this file that is
      * refused and not merely one sharing its name (see this class's KDoc). No-op if [id] doesn't
      * exist.
      */
     suspend fun deleteModel(id: String) = withContext(Dispatchers.IO) {
         val entity = modelDao.getById(id) ?: return@withContext
-        if (currentLoadedModelId() == entity.id) {
-            throw ModelInUseException("Cannot delete \"${entity.shownName}\" while it is loaded")
+        _deleting.update { it + id }
+        val deleted = try {
+            unlessInUse(entity.id) {
+                File(entity.filePath).delete()
+                modelDao.delete(entity)
+            }
+        } finally {
+            _deleting.update { it - id }
         }
-        File(entity.filePath).delete()
-        modelDao.delete(entity)
+        if (!deleted) throw ModelInUseException("Cannot delete \"${entity.shownName}\" while it is loaded")
     }
 
     private fun queryDisplayName(uri: Uri): String? = context.contentResolver

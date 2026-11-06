@@ -525,6 +525,8 @@
     <string name="model_detail_reimport">Re-import</string>
     <string name="model_detail_remove_from_library">Remove from library</string>
     <string name="model_detail_unload_first">Unload it first</string>
+    <string name="model_detail_wait_for_load">Loading: unload it once it is loaded</string>
+    <string name="model_detail_deleting">Deleting…</string>
     <string name="models_filter_all">All</string>
     <!-- Backend names, not translated: filter chips and the card badge. -->
     <string name="models_filter_vulkan" translatable="false">Vulkan</string>

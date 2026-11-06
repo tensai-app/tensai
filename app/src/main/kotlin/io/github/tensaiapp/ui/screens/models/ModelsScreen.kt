@@ -72,6 +72,7 @@ import io.github.tensaiapp.ui.theme.tensaiColors
 import io.github.tensaiapp.ui.theme.tensaiTints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -152,7 +153,8 @@ fun ModelsScreen(
     fun deleteModel(model: ModelEntity) {
         scope.launch {
             try {
-                repository.deleteModel(model.id)
+                // On applicationScope: it can wait for the queue, and must outlive this screen (TEN-177).
+                RuntimeGraph.applicationScope.async { repository.deleteModel(model.id) }.await()
             } catch (e: ModelInUseException) {
                 snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, model.shownName))
             }

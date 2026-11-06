@@ -448,6 +448,8 @@
     <string name="model_detail_reimport">Réimporter</string>
     <string name="model_detail_remove_from_library">Retirer de la bibliothèque</string>
     <string name="model_detail_unload_first">Le décharger d\'abord</string>
+    <string name="model_detail_wait_for_load">Chargement en cours : le décharger une fois chargé</string>
+    <string name="model_detail_deleting">Suppression…</string>
     <string name="models_filter_all">Tous</string>
     <string name="models_filter_empty_vulkan">Aucun modèle Vulkan</string>
     <string name="models_filter_empty_cpu">Aucun modèle CPU</string>

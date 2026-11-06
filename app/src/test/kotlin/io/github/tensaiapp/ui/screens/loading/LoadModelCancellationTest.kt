@@ -84,7 +84,7 @@ class LoadModelCancellationTest {
             modelDao = modelDao,
             readMetadata = { throw UnsupportedOperationException("not needed by these tests") },
             kvShapeVersion = { throw UnsupportedOperationException("not needed by these tests") },
-            currentLoadedModelId = { null },
+            unlessInUse = { _, block -> block(); true },
             storageRoot = storageRoot,
         )
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
