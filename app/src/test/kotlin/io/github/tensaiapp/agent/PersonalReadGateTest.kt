@@ -64,10 +64,10 @@ class PersonalReadGateTest {
     private val registry = ToolRegistry(listOf(notifications, clipboard, memory, searchChats) + network + phone, grants = { ToolTier.entries.toSet() })
 
     /** The conversation after the user asked for something and [tool] answered. */
-    private fun after(tool: Tool, result: String = "result"): ConversationTrust =
+    private fun after(tool: Tool, result: String = "result", args: String = "{}"): ConversationTrust =
         listOf(
             ChatMessage(MessageRole.User, "check https://example.com/page and my messages"),
-            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", tool.name, "{}"))),
+            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", tool.name, args))),
             ChatMessage(MessageRole.Tool, result, toolCallId = "c1"),
         ).fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
 
@@ -152,5 +152,58 @@ class PersonalReadGateTest {
 
         assertTrue(trust.readPersonal)
         assertTrue(network.first { it.name == "weather" }.asksFirst("""{"place":"Paris"}""", trust))
+    }
+
+    /** TEN-216: a clipboard `get` can be a password or a code just copied: nothing sends or opens unasked after it. */
+    @Test
+    fun afterAClipboardGetANetworkOrPhoneToolAsks() {
+        val trust = after(clipboard, result = "123456", args = """{"action":"get"}""")
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+        assertTrue(AgentRuntime(registry).requiresConfirmation("draft_sms", """{"to":"Bob","body":"x"}""", trust))
+    }
+
+    @Test
+    fun aClipboardSetAloneChangesNothing() {
+        val trust = after(clipboard, args = """{"action":"set","text":"x"}""")
+
+        assertFalse(trust.readPersonal)
+        assertFalse(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+        assertFalse(clipboard.asksFirst("""{"action":"set","text":"y"}""", trust))
+    }
+
+    /** Folded from the replayed history: a `get` in an earlier turn still counts in a later one. */
+    @Test
+    fun aClipboardGetInAnEarlierTurnStillCounts() {
+        val trust = listOf(
+            ChatMessage(MessageRole.User, "what did I copy?"),
+            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", clipboard.name, """{"action":"get"}"""))),
+            ChatMessage(MessageRole.Tool, "hunter2", toolCallId = "c1"),
+            ChatMessage(MessageRole.Assistant, "You copied a password."),
+            ChatMessage(MessageRole.User, "search the web for it"),
+        ).fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"hunter2"}""", trust))
+    }
+
+    /** Each result is read against its own call, by id: a `set` and a `get` in one reply count apart. */
+    @Test
+    fun eachResultIsReadAgainstItsOwnCall() {
+        val reply = listOf(
+            ChatMessage(MessageRole.User, "copy this, then tell me what was there"),
+            ChatMessage(
+                MessageRole.Assistant,
+                "",
+                toolCalls = listOf(ToolCall("c1", clipboard.name, """{"action":"set","text":"x"}"""), ToolCall("c2", clipboard.name, """{"action":"get"}""")),
+            ),
+        ).fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
+
+        val afterSet = reply.with(ChatMessage(MessageRole.Tool, "copied", toolCallId = "c1"), registry::find)
+        val afterGet = afterSet.with(ChatMessage(MessageRole.Tool, "x", toolCallId = "c2"), registry::find)
+
+        assertFalse(afterSet.readPersonal)
+        assertTrue(afterGet.readPersonal)
     }
 }

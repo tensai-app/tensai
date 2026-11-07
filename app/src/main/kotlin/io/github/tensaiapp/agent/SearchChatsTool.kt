@@ -44,7 +44,7 @@ class SearchChatsTool(
         """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max 10"}},"required":["query"]}"""
     override val tier = ToolTier.Local
     override val returnsUntrustedContent = true
-    override val returnsPersonalContent = true
+    override fun returnsPersonalContent(argsJson: String) = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {

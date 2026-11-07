@@ -29,8 +29,9 @@ interface ClipboardAccess {
  * Known risk, partly addressed: `get` and `set` run without asking, so text from a web page or a file the model read
  * could steer it into copying something to or from the clipboard. What `get` read cannot leave the phone unseen:
  * `web_fetch` asks for any link neither the user nor a search gave, and `open_url` always asks. What `get` reads was
- * copied from anywhere, so it counts as [returnsUntrustedContent]: any later `remember` in the conversation asks.
- * Confirming `get` itself is a later decision.
+ * copied from anywhere, so it counts as [returnsUntrustedContent]: any later `remember` in the conversation asks. It
+ * can be a password or a code just copied, so it is a personal read too ([returnsPersonalContent], TEN-216): no search
+ * or phone action runs unasked after it. Confirming `get` itself is a later decision.
  */
 class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val name = "clipboard"
@@ -40,9 +41,14 @@ class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val tier = ToolTier.Local
     override val returnsUntrustedContent = true
 
+    /** A `get` only: a `set` reads nothing. */
+    override fun returnsPersonalContent(argsJson: String): Boolean = action(argsJson) == "get"
+
     /** A `set` after the user's messages were read asks (TEN-211): the clipboard is a way out of the conversation. */
     override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean =
-        trust.readPersonal && runCatching { JSONObject(argsJson).stringArg("action") }.getOrNull() == "set"
+        trust.readPersonal && action(argsJson) == "set"
+
+    private fun action(argsJson: String): String? = runCatching { JSONObject(argsJson).stringArg("action") }.getOrNull()
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {

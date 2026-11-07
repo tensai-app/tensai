@@ -3,6 +3,7 @@ package io.github.tensaiapp.agent
 import io.github.tensaiapp.data.memory.MemoryContext
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.ToolCall
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -78,8 +79,8 @@ class ConversationTrust private constructor(
     private val userUrls: Set<String>,
     private val searchUrls: Set<String>,
     val readUntrusted: Boolean,
-    /** The tool of each call id seen, so a `tool` message is read against the call it answers. */
-    private val callTools: Map<String, String>,
+    /** Each call seen, by id, so a `tool` message is read against the call it answers, its arguments included. */
+    private val calls: Map<String, ToolCall>,
     /**
      * A [ToolTier.PersonalData] result (the user's messages, a code in a notification) is in the conversation (TEN-211),
      * or a [Tool.returnsPersonalContent] one that can repeat them (TEN-215).
@@ -92,22 +93,23 @@ class ConversationTrust private constructor(
     /** The conversation once [message] is in it. [find] is the registered tool of a name. */
     fun with(message: ChatMessage, find: (String) -> Tool?): ConversationTrust = when (message.role) {
         MessageRole.User ->
-            ConversationTrust(userUrls + FetchUrls.inUserText(MemoryContext.withoutBlock(message.content)), searchUrls, readUntrusted, callTools, readPersonal)
+            ConversationTrust(userUrls + FetchUrls.inUserText(MemoryContext.withoutBlock(message.content)), searchUrls, readUntrusted, calls, readPersonal)
         MessageRole.Assistant -> {
-            val calls = message.toolCalls.orEmpty()
-            if (calls.isEmpty()) this else ConversationTrust(userUrls, searchUrls, readUntrusted, callTools + calls.map { it.id to it.name }, readPersonal)
+            val made = message.toolCalls.orEmpty()
+            if (made.isEmpty()) this else ConversationTrust(userUrls, searchUrls, readUntrusted, calls + made.associateBy { it.id }, readPersonal)
         }
         MessageRole.Tool -> {
-            val tool = message.toolCallId?.let(callTools::get)?.let(find)
-            if (tool == null) {
+            val call = message.toolCallId?.let(calls::get)
+            val tool = call?.let { find(it.name) }
+            if (call == null || tool == null) {
                 this
             } else {
                 ConversationTrust(
                     userUrls,
                     if (tool.name == WebSearchTool.NAME) searchUrls + FetchUrls.inSearchResult(message.content) else searchUrls,
                     readUntrusted || tool.returnsUntrustedContent,
-                    callTools,
-                    readPersonal || tool.tier == ToolTier.PersonalData || tool.returnsPersonalContent,
+                    calls,
+                    readPersonal || tool.tier == ToolTier.PersonalData || tool.returnsPersonalContent(call.argumentsJson),
                 )
             }
         }
@@ -154,10 +156,11 @@ interface Tool {
 
     /**
      * What the tool returns can hold the user's personal data without being a [ToolTier.PersonalData] tool (TEN-215):
-     * `search_chats` finds past replies that quoted a message or a code. Read by [ConversationTrust.with] like that tier:
-     * afterwards nothing that sends or opens runs unasked, see [asksFirst].
+     * `search_chats` finds past replies that quoted a message or a code, a clipboard `get` a password just copied
+     * (TEN-216). Per call, from its [argsJson]. Read by [ConversationTrust.with] like that tier: afterwards nothing that
+     * sends or opens runs unasked, see [asksFirst].
      */
-    val returnsPersonalContent: Boolean get() = false
+    fun returnsPersonalContent(argsJson: String): Boolean = false
 
     /**
      * What the call [callId] acts on, read by [UiConfirmationGate] before the card shows (TEN-169), so the user
