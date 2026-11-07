@@ -19,6 +19,7 @@ import io.github.tensaiapp.agent.LocationTool
 import io.github.tensaiapp.agent.ReadCalendarTool
 import io.github.tensaiapp.agent.ReadNotificationsTool
 import io.github.tensaiapp.agent.ReadSmsTool
+import io.github.tensaiapp.agent.ReplyNotificationTool
 import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.NotificationBuffer
 import io.github.tensaiapp.agent.NotificationBufferFile
@@ -472,6 +473,9 @@ object RuntimeGraph {
         )
     }
 
+    /** The shade, through the listener, for `read_notifications` and `reply_notification`; excluded apps left out. */
+    private val notificationAccess by lazy { AndroidNotificationAccess(appContext) { toolSettings.excludedNotificationApps.first() } }
+
     /** The built-in tools, filtered by the tiers granted in Settings. Settings lists them per tier. */
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry.default(
@@ -487,11 +491,8 @@ object RuntimeGraph {
                     onForgotten = { memoryPrompt.invalidate() },
                 ),
                 AskUserTool(askUserGate),
-                ReadNotificationsTool(
-                    AndroidNotificationAccess(appContext) { toolSettings.excludedNotificationApps.first() },
-                    notificationBuffer,
-                    excluded = { toolSettings.excludedNotificationApps.first() },
-                ),
+                ReadNotificationsTool(notificationAccess, notificationBuffer, excluded = { toolSettings.excludedNotificationApps.first() }),
+                ReplyNotificationTool(notificationAccess, notificationBuffer),
             ) + phoneActionTools() + webTools(),
         )
     }

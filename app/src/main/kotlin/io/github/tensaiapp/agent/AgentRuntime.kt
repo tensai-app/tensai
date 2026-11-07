@@ -59,6 +59,9 @@ enum class ToolPolicy(val storageName: String, val creativeWithoutTools: Boolean
 /**
  * Asked before a call that [Tool.requiresConfirmation] runs. The chat's "tensai wants to ..." card is
  * [UiConfirmationGate] (TEN-174); the wait is not counted against the tool's timeout.
+ *
+ * A gate that asks the user calls [Tool.confirmTarget] before approving: `reply_notification` sends only to what its
+ * card showed, and refuses a call approved without one (TEN-213).
  */
 fun interface ConfirmationGate {
     /** `true` to run [call], `false` to refuse: the model is told so. */

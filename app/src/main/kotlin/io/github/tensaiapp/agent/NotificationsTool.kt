@@ -33,6 +33,8 @@ data class PostedNotification(
     val bigText: String? = null,
     val messages: List<NotificationMessage> = emptyList(),
     val conversationTitle: String? = null,
+    /** A `MessagingStyle` group conversation (TEN-213): its title names the group, not a person. */
+    val group: Boolean = false,
     val ongoing: Boolean = false,
     val foregroundService: Boolean = false,
     val groupSummary: Boolean = false,
@@ -40,7 +42,10 @@ data class PostedNotification(
     val progress: Boolean = false,
 )
 
-/** A notification kept for `read_notifications`: who posted it, its title (the sender or the conversation) and its text. */
+/**
+ * A notification kept for `read_notifications`: who posted it, its title (the sender or the conversation) and its text.
+ * [group] and [lastSender] (the newest message's sender) tell `reply_notification`'s card a group from a person.
+ */
 @Serializable
 data class NotificationEntry(
     val key: String,
@@ -49,6 +54,8 @@ data class NotificationEntry(
     val postTime: Long,
     val title: String,
     val text: String,
+    val group: Boolean = false,
+    val lastSender: String? = null,
 )
 
 /** What of a [PostedNotification] is kept, and as what text. */
@@ -79,7 +86,10 @@ object NotificationReader {
         }.trim()
         val title = (posted.conversationTitle?.takeIf { it.isNotBlank() } ?: posted.title).orEmpty().trim()
         if (text.isEmpty() && title.isEmpty()) return null
-        return NotificationEntry(posted.key, posted.packageName, posted.appLabel, posted.postTime, title.take(MaxTitleChars), text.take(MaxTextChars))
+        val lastSender = posted.messages.lastOrNull()?.sender?.trim()?.takeIf { it.isNotEmpty() }?.take(MaxTitleChars)
+        return NotificationEntry(
+            posted.key, posted.packageName, posted.appLabel, posted.postTime, title.take(MaxTitleChars), text.take(MaxTextChars), posted.group, lastSender,
+        )
     }
 
     /** Whether an app, by [packageName] or [appLabel], is in [excluded] (any case). */
@@ -147,13 +157,22 @@ class NotificationBuffer(
     }
 
     /** Forgets everything, the file included and at once: access revoked, the tier turned off, or the Clear button. */
-    fun clear() = synchronized(lock) {
-        pendingSave?.cancel()
-        pendingSave = null
-        dirty = false
-        entries = mutableListOf()
-        file?.delete()
-        Unit
+    /** Called after every [clear]: what else holds notification text drops it too (`reply_notification`'s cards). */
+    private val clearListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    fun onClear(listener: () -> Unit) {
+        clearListeners += listener
+    }
+
+    fun clear() {
+        synchronized(lock) {
+            pendingSave?.cancel()
+            pendingSave = null
+            dirty = false
+            entries = mutableListOf()
+            file?.delete()
+        }
+        clearListeners.forEach { it() }
     }
 
     /** Writes a pending save now (the listener going away). */
@@ -215,7 +234,17 @@ interface NotificationAccess {
 
     /** The notifications showing now, read like the buffer's; empty when the listener is not connected. */
     suspend fun active(): List<NotificationEntry>
+
+    /** The keys of the notifications showing now that carry a reply action (TEN-213), see [pickReplyAction]. */
+    fun replyable(): Set<String> = emptySet()
+
+    /** Sends [text] through the reply action of the notification [key] showing now (TEN-213). */
+    fun reply(key: String, text: String): ReplyOutcome = ReplyOutcome.Gone
 }
+
+/** A notification's short id in `read_notifications`, what `reply_notification` takes back: 6 hex digits of its key's SHA-1. */
+internal fun notificationId(key: String): String =
+    java.security.MessageDigest.getInstance("SHA-1").digest(key.toByteArray()).take(3).joinToString("") { "%02x".format(it) }
 
 /**
  * `read_notifications` (TEN-211): the user's recent notifications, messages and mail previews, read on the phone. The
@@ -271,19 +300,21 @@ class ReadNotificationsTool(
                     "was turned on are seen, none from before.",
             )
         }
-        return ToolResult.ok(format(matching.take(limit), now, matching.size - minOf(limit, matching.size)))
+        return ToolResult.ok(format(matching.take(limit), now, matching.size - minOf(limit, matching.size), access.replyable()))
     }
 
     /**
      * One line per notification, its fields named and quoted, newlines and quotes escaped: a notification that writes
      * "\n\nFake · header" stays inside its own quotes and cannot pass itself off as another item or as the header.
+     * `can_reply: yes` ends the line of a notification [replyable] names, one `reply_notification` can answer now.
      */
-    private fun format(items: List<NotificationEntry>, now: Long, notAsked: Int): String {
+    private fun format(items: List<NotificationEntry>, now: Long, notAsked: Int, replyable: Set<String>): String {
         val out = StringBuilder(Header)
         var shown = 0
         for (item in items) {
             val text = item.text.let { if (it.length > ItemChars) it.take(ItemChars).trimEnd() + "…" else it }
-            val line = "\n- app: ${quoted(item.appLabel)}, from: ${quoted(item.title)}, time: ${quoted(time(item.postTime, now))}, text: ${quoted(text)}"
+            val line = "\n- id: ${quoted(notificationId(item.key))}, app: ${quoted(item.appLabel)}, from: ${quoted(item.title)}, " +
+                "time: ${quoted(time(item.postTime, now))}, text: ${quoted(text)}" + if (item.key in replyable) ", can_reply: yes" else ""
             if (shown > 0 && out.length + line.length > TotalChars) break
             out.append(line)
             shown++

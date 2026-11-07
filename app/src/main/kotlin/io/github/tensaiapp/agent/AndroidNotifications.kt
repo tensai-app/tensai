@@ -1,10 +1,14 @@
 package io.github.tensaiapp.agent
 
 import android.app.Notification
+import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -79,6 +83,7 @@ internal fun postedOf(sbn: StatusBarNotification, packageManager: PackageManager
         bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
         messages = style?.messages.orEmpty().map { NotificationMessage(it.person?.name?.toString(), it.text?.toString().orEmpty()) },
         conversationTitle = style?.conversationTitle?.toString(),
+        group = style?.isGroupConversation == true,
         ongoing = sbn.isOngoing,
         foregroundService = notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
         groupSummary = notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
@@ -96,6 +101,49 @@ class AndroidNotificationAccess(private val context: Context, private val exclud
         val skip = excluded()
         val shade = runCatching { listener.activeNotifications.orEmpty().toList() }.getOrDefault(emptyList())
         return shade.mapNotNull { sbn -> runCatching { NotificationReader.entryOf(postedOf(sbn, context.packageManager), skip) }.getOrNull() }
+    }
+
+    override fun replyable(): Set<String> {
+        val listener = TensaiNotificationListener.connected ?: return emptySet()
+        val shade = runCatching { listener.activeNotifications.orEmpty().toList() }.getOrDefault(emptyList())
+        return shade.filter { replyAction(it.notification) != null }.map { it.key }.toSet()
+    }
+
+    /**
+     * Fills the reply action's `RemoteInput`s with [text] and fires its PendingIntent, the way the shade's own inline
+     * reply does. The action is the one on the notification showing now: the key alone, after a dismiss, is [ReplyOutcome.Gone].
+     */
+    override fun reply(key: String, text: String): ReplyOutcome {
+        val listener = TensaiNotificationListener.connected ?: return ReplyOutcome.Gone
+        val sbn = runCatching { listener.getActiveNotifications(arrayOf(key)) }.getOrNull()?.firstOrNull() ?: return ReplyOutcome.Gone
+        val action = replyAction(sbn.notification) ?: return ReplyOutcome.NoAction
+        val inputs = action.remoteInputs ?: return ReplyOutcome.NoAction
+        val results = Bundle().apply {
+            replyResults(inputs.map { RemoteInputInfo(it.resultKey, it.allowFreeFormInput) }, text).forEach { (k, v) -> putCharSequence(k, v) }
+        }
+        val intent = Intent()
+        RemoteInput.addResultsToIntent(inputs, intent, results)
+        return try {
+            action.actionIntent.send(context, 0, intent)
+            ReplyOutcome.Sent
+        } catch (e: PendingIntent.CanceledException) {
+            ReplyOutcome.Cancelled
+        }
+    }
+
+    /**
+     * [notification]'s reply action, see [pickReplyAction]. One whose PendingIntent is immutable (API 31+) drops the
+     * filled-in text, so the app would get an empty reply: it is no reply action for tensai.
+     */
+    private fun replyAction(notification: Notification): Notification.Action? {
+        val actions = notification.actions.orEmpty()
+        val infos = actions.map { a ->
+            ReplyActionInfo(a.semanticAction == Notification.Action.SEMANTIC_ACTION_REPLY, a.remoteInputs.orEmpty().any { it.allowFreeFormInput })
+        }
+        return pickReplyAction(infos)?.let { actions[it] }?.takeIf { action ->
+            val intent = action.actionIntent
+            intent != null && !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && intent.isImmutable)
+        }
     }
 }
 

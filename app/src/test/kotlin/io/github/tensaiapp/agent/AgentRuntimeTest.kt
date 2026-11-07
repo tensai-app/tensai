@@ -1132,4 +1132,26 @@ class AgentRuntimeTest {
 
         assertEquals("echo $forged", gen.toolResult())
     }
+
+    /** TEN-213: a denied reply reads as not done (TEN-205), and nothing reaches the app. */
+    @Test
+    fun aDeniedReplyIsNotSentAndReadsAsNotDone() = runBlocking {
+        val sent = mutableListOf<String>()
+        val entry = NotificationEntry("k1", "com.whatsapp", "WhatsApp", 0, "Alice", "on your way?")
+        val access = object : NotificationAccess {
+            override fun enabled() = true
+            override suspend fun active() = listOf(entry)
+            override fun reply(key: String, text: String): ReplyOutcome = ReplyOutcome.Sent.also { sent += text }
+        }
+        val args = """{"id":"${notificationId("k1")}","text":"On my way"}"""
+        val gen = ScriptedGenerator(reply(calls = listOf(call("r", "reply_notification", args))), reply("done"))
+
+        val events = AgentRuntime(ToolRegistry(listOf(ReplyNotificationTool(access))) { ToolTier.entries.toSet() }, { _, _ -> false })
+            .run(userTurn, gen).toList()
+
+        val outcome = events.outcomes().single()
+        assertEquals(ToolCallStatus.Refused, outcome.status)
+        assertEquals(GateRefusal.text("reply_notification"), gen.toolResult())
+        assertTrue(sent.isEmpty())
+    }
 }

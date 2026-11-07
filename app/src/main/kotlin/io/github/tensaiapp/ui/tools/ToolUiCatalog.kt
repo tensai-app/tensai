@@ -2,6 +2,7 @@ package io.github.tensaiapp.ui.tools
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Article
@@ -144,6 +145,10 @@ object ToolUiCatalog {
         ToolUiMeta("read_sms", Icons.Rounded.Sms, R.string.tool_name_read_sms, R.string.tool_desc_read_sms,
             ToolActions(R.string.tool_done_read_sms, R.string.tool_run_read_sms),
             refused = R.string.tool_refused_read_sms),
+        ToolUiMeta("reply_notification", Icons.AutoMirrored.Rounded.Reply, R.string.tool_name_reply_notification, R.string.tool_desc_reply_notification,
+            ToolActions(R.string.tool_done_reply_notification, R.string.tool_run_reply_notification),
+            refused = R.string.tool_refused_reply_notification,
+            confirmLabel = { UiText.of(R.string.tool_confirm_reply_notification) }),
         ToolUiMeta("open_app", Icons.Rounded.Apps, R.string.tool_name_open_app, R.string.tool_desc_open_app,
             ToolActions(R.string.tool_done_open_app, R.string.tool_run_open_app)),
         ToolUiMeta("open_url", Icons.Rounded.OpenInNew, R.string.tool_name_open_url, R.string.tool_desc_open_url,
@@ -231,6 +236,15 @@ object ToolUiCatalog {
         if (tool == "memory" && target != null) {
             return if (target.text != null) UiText.of(R.string.tool_confirm_memory_forget_fact, shortFact(target.text)) else UiText.of(R.string.tool_confirm_memory_forget)
         }
+        // The app and the conversation, read off the notification showing now: the id alone means nothing to the user.
+        // A group as a group, with who wrote last: a group called "Mom" is not Mom.
+        if (tool == "reply_notification" && target?.text != null) {
+            return when {
+                !target.group -> UiText.of(R.string.tool_confirm_reply_notification_to, target.text)
+                target.sender != null -> UiText.of(R.string.tool_confirm_reply_notification_group_from, target.text, target.sender)
+                else -> UiText.of(R.string.tool_confirm_reply_notification_group, target.text)
+            }
+        }
         return byId[tool]?.confirmLabel?.invoke(ToolArgsView.values(argsJson)) ?: UiText.of(R.string.tool_confirm_generic, name(tool))
     }
 
@@ -261,6 +275,8 @@ object ToolUiCatalog {
     fun confirmInputs(tool: String, argsJson: String): List<ToolInput> {
         val args = ToolArgsView.values(argsJson)
         if (tool == "memory" && args["action"] == "remember") return listOf(ToolInput("text", MemoryTool.factText(args["text"].orEmpty()), mono = false))
+        // The exact text that will be sent, nothing else: the id is the app's, the title names where it goes.
+        if (tool == "reply_notification") return listOf(ToolInput("text", args["text"].orEmpty().trim(), mono = false))
         val url = args["url"]
         val host = if (tool in UrlTools && url != null) runCatching { java.net.URI(url.trim()).host }.getOrNull() else null
         if (host == null) return ToolArgsView.inputs(argsJson)

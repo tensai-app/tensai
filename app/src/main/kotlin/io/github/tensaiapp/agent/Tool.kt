@@ -59,8 +59,10 @@ data class ToolResult(
 /**
  * What a gated call acts on, as the confirmation card names it (TEN-169): the fact a `forget` deletes, by its
  * text rather than its id. [text] is `null` when [id] matches nothing any more.
+ *
+ * @param group a reply's conversation is a group (TEN-213), [text] names the group and [sender] wrote its newest message.
  */
-data class ConfirmTarget(val id: String, val text: String?)
+data class ConfirmTarget(val id: String, val text: String?, val group: Boolean = false, val sender: String? = null)
 
 /**
  * What the conversation so far vouches for, read by [Tool.requiresConfirmation]: the links the user wrote, the links

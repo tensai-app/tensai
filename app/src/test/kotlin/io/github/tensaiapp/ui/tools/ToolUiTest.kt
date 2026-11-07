@@ -33,7 +33,7 @@ class ToolUiTest {
         val planned = listOf(
             "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "find_contact", "open_app", "open_url",
             "read_calendar", "location", "media_control", "web_search", "web_fetch", "weather", "wikipedia", "read_notifications",
-            "read_sms",
+            "read_sms", "reply_notification",
         )
 
         assertEquals(emptyList<String>(), (registered + planned).filter { ToolUiCatalog.meta(it) == null })
@@ -125,6 +125,24 @@ class ToolUiTest {
             listOf(ToolInput("host", "collect.example.net", mono = true), ToolInput("url", "https://collect.example.net/p?d=hunter2", mono = false)),
             ToolUiCatalog.confirmInputs("web_fetch", args),
         )
+    }
+
+    /** TEN-213: a reply card names the app and the conversation, then the exact text, never the id. */
+    @Test
+    fun aReplyCardNamesWhereItGoesAndShowsTheExactText() {
+        val args = """{"id":"a1b2c3","text":" On my way, 10 min \n"}"""
+
+        assertEquals(UiText.of(R.string.tool_confirm_reply_notification_to, "WhatsApp · Alice"), ToolUiCatalog.confirmLabel("reply_notification", args, ConfirmTarget("a1b2c3", "WhatsApp · Alice")))
+        assertEquals(UiText.of(R.string.tool_confirm_reply_notification), ToolUiCatalog.confirmLabel("reply_notification", args))
+        assertEquals(
+            UiText.of(R.string.tool_confirm_reply_notification_group_from, "WhatsApp · Mom", "Alice"),
+            ToolUiCatalog.confirmLabel("reply_notification", args, ConfirmTarget("a1b2c3", "WhatsApp · Mom", group = true, sender = "Alice")),
+        )
+        assertEquals(
+            UiText.of(R.string.tool_confirm_reply_notification_group, "WhatsApp · Mom"),
+            ToolUiCatalog.confirmLabel("reply_notification", args, ConfirmTarget("a1b2c3", "WhatsApp · Mom", group = true)),
+        )
+        assertEquals(listOf(ToolInput("text", "On my way, 10 min", mono = false)), ToolUiCatalog.confirmInputs("reply_notification", args))
     }
 
     @Test

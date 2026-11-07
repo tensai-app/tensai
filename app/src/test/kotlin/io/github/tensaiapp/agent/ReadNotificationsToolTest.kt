@@ -50,10 +50,16 @@ class ReadNotificationsToolTest {
         }
     }
 
-    private class FakeAccess(var enabled: Boolean = true, var shade: List<NotificationEntry> = emptyList()) : NotificationAccess {
+    private class FakeAccess(
+        var enabled: Boolean = true,
+        var shade: List<NotificationEntry> = emptyList(),
+        var replyKeys: Set<String> = emptySet(),
+    ) : NotificationAccess {
         override fun enabled() = enabled
 
         override suspend fun active() = shade
+
+        override fun replyable() = replyKeys
     }
 
     private val buffer = NotificationBuffer(clock = { now })
@@ -61,7 +67,7 @@ class ReadNotificationsToolTest {
     private val tool = ReadNotificationsTool(access, buffer, clock = { now }, zone = { ZoneId.of("UTC") })
 
     /** The item lines of an answer. */
-    private fun items(answer: String) = answer.lines().filter { it.startsWith("- app: ") }
+    private fun items(answer: String) = answer.lines().filter { it.startsWith("- id: ") }
 
     /** The text field of each item, unescaped. */
     private fun texts(answer: String) = items(answer).map { line ->
@@ -256,8 +262,8 @@ class ReadNotificationsToolTest {
         assertEquals(
             listOf(
                 ReadNotificationsTool.Header,
-                """- app: "Gmail", from: "Bank", time: "07:55, 5 min ago", text: "Your statement"""",
-                """- app: "WhatsApp", from: "Alice", time: "07:30, 30 min ago", text: "See you at 8"""",
+                """- id: "${notificationId("b")}", app: "Gmail", from: "Bank", time: "07:55, 5 min ago", text: "Your statement"""",
+                """- id: "${notificationId("a")}", app: "WhatsApp", from: "Alice", time: "07:30, 30 min ago", text: "See you at 8"""",
             ),
             result.text.lines(),
         )
@@ -300,6 +306,20 @@ class ReadNotificationsToolTest {
         assertTrue(texts.all { it.length == ReadNotificationsTool.ItemChars + 1 && it.endsWith("…") })
         val more = Regex("""\((\d+) more not shown\)""").find(text)!!.groupValues[1].toInt()
         assertEquals("the cap is 30, the rest is counted", ReadNotificationsTool.MaxLimit, texts.size + more - (40 - ReadNotificationsTool.MaxLimit))
+    }
+
+    /** TEN-213: every item has its id; only one with a live reply action in the shade says it can be replied to. */
+    @Test
+    fun canReplyShowsOnlyWhenTheShadeHasAReplyAction() = runBlocking {
+        access.shade = listOf(entry("live", now - minute, title = "Alice"), entry("plain", now - 2 * minute, title = "Bank"))
+        access.replyKeys = setOf("live")
+        buffer.add(entry("old", now - 3 * minute, title = "Bob"))
+
+        val lines = items(tool.execute("{}").text)
+
+        assertEquals(listOf("live", "plain", "old").map { notificationId(it) }, lines.map { it.substringAfter("id: \"").substringBefore('"') })
+        assertEquals(listOf(true, false, false), lines.map { it.endsWith(", can_reply: yes") })
+        assertTrue(notificationId("live").matches(Regex("[0-9a-f]{6}")))
     }
 
     /** A notification writing what looks like a new item or the header stays inside its own quoted text. */
