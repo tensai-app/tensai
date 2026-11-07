@@ -337,8 +337,23 @@ class ToolUiTest {
             ReadableOutput.Error("unknown tool 'x'."),
             readableOutput("Error: unknown tool 'x'.", ToolCallState.Error),
         )
-        assertTrue(readableOutput("Error: the user refused this action.", ToolCallState.Refused) is ReadableOutput.Error)
         assertTrue(readableOutput("""{"ok":true}""", ToolCallState.Timeout) is ReadableOutput.Error)
+    }
+
+    /**
+     * TEN-205: what the model reads after a Deny is an order to it, in English, with the tool's internal name. The detail
+     * shows the app's own line instead, for that text and for the one rows stored before still hold. A tool's own refusal
+     * (no app for it, a permission) is useful to the user and stays as written.
+     */
+    @Test
+    fun aCallTheGateDidNotApproveReadsAsTheAppsLineNotTheModelsText() {
+        val now = "The user did not approve: 'memory' did not run and nothing changed. Tell the user it was not done; do not say it was."
+        assertEquals(ReadableOutput.NotApproved, readableOutput(now, ToolCallState.Refused))
+        assertEquals(ReadableOutput.NotApproved, readableOutput("Error: the user refused this action.", ToolCallState.Refused))
+        assertEquals(
+            ReadableOutput.Error("no app on this phone can open maps."),
+            readableOutput("Error: no app on this phone can open maps.", ToolCallState.Refused),
+        )
     }
 
     @Test

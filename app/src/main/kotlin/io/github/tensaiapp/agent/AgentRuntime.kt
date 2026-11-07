@@ -345,7 +345,7 @@ class AgentRuntime(
             } catch (e: Exception) {
                 return outcome(ToolCallStatus.Error, "Error: confirmation failed: ${e.message}")
             }
-            if (!approved) return outcome(ToolCallStatus.Refused, "Error: the user refused this action.")
+            if (!approved) return outcome(ToolCallStatus.Refused, GateRefusal.text(tool.name))
         }
 
         val ranFrom = clock()
@@ -433,6 +433,21 @@ class AgentRuntime(
         private const val MaxResultChars = ResultTokenBudget * CharsPerToken
         private const val TruncationMark = "\n[truncated]"
     }
+}
+
+/**
+ * What the model reads when the [ConfirmationGate] did not approve a call: a Deny, a card left unanswered or the chat left
+ * (see [UiConfirmationGate]). Plain words, not an error: a small model read "Error: the user refused this action." and
+ * answered that it had done it anyway (TEN-205). [matches] lets the chat show its own line instead, for this text and for
+ * [Legacy], which rows stored before still hold.
+ */
+internal object GateRefusal {
+    private const val Prefix = "The user did not approve: '"
+    private const val Legacy = "Error: the user refused this action."
+
+    fun text(toolName: String) = "$Prefix$toolName' did not run and nothing changed. Tell the user it was not done; do not say it was."
+
+    fun matches(output: String): Boolean = output.startsWith(Prefix) || output.trim() == Legacy
 }
 
 /** The cheap part of "arguments match the schema": a JSON object holding every `required` key. */

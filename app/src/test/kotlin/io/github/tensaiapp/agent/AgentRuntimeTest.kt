@@ -674,7 +674,37 @@ class AgentRuntimeTest {
         val outcome = events.outcomes().single()
         assertEquals(ToolCallStatus.Refused, outcome.status)
         assertEquals(0L, outcome.durationMs)
-        assertTrue(gen.requests[1].messages.last().content.contains("refused"))
+        assertTrue(gen.requests[1].messages.last().content.contains("did not approve"))
+    }
+
+    /**
+     * TEN-205: a Deny told the model only "Error: the user refused this action.", and a small model answered "removed".
+     * The result names the tool and says that it did not run and nothing changed.
+     */
+    @Test
+    fun aDenyTellsTheModelTheToolDidNotRunAndNothingChanged() = runBlocking {
+        val tool = FakeTool(name = "memory", sendsOrDeletes = true)
+        val gen = ScriptedGenerator(reply(calls = listOf(call("m", name = "memory"))), reply("It was not removed."))
+
+        val events = runtime(tool, gate = ConfirmationGate { _, _ -> false }).run(userTurn, gen).toList()
+
+        val expected = "The user did not approve: 'memory' did not run and nothing changed. Tell the user it was not done; do not say it was."
+        assertEquals(expected, events.outcomes().single().output)
+        assertEquals(expected, gen.requests[1].messages.last().content)
+    }
+
+    /** A card nobody answered counts as a Deny (see [UiConfirmationGate]), and the model reads the same thing. */
+    @Test
+    fun aConfirmationThatTimesOutTellsTheModelTheSame() = runBlocking {
+        val tool = FakeTool(name = "memory", sendsOrDeletes = true)
+        val gen = ScriptedGenerator(reply(calls = listOf(call("m", name = "memory"))), reply("It was not removed."))
+
+        val events = runtime(tool, gate = UiConfirmationGate(timeoutMs = 50)).run(userTurn, gen).toList()
+
+        val outcome = events.outcomes().single()
+        assertEquals(ToolCallStatus.Refused, outcome.status)
+        assertEquals(0, tool.runs)
+        assertEquals("The user did not approve: 'memory' did not run and nothing changed. Tell the user it was not done; do not say it was.", outcome.output)
     }
 
     @Test

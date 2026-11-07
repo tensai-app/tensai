@@ -21,7 +21,7 @@ import java.util.Locale
  */
 object BasePrompt {
     /** Bumped with every change of the text, so a measurement can say which one it ran. */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** The tools a line of the prompt names: with all of them offered, every rule is there (what Settings shows). */
     val ToolsNamed = setOf(AskUserTool.NAME, WebSearchTool.NAME, "web_fetch", "datetime")
@@ -46,6 +46,7 @@ object BasePrompt {
             if (strict && BuildConfig.DEBUG) add(StrictLine)
             add("Write stories, poems, letters and other texts yourself, with no tool.")
             add("Never invent a tool result. If a tool fails, say so.")
+            add("A refused or failed tool call did not happen: never say it did.")
             if (AskUserTool.NAME in tools) add("Call ask_user only when the request is genuinely ambiguous.")
             if (WebSearchTool.NAME in tools) {
                 add(if ("web_fetch" in tools) "web_search finds pages. Call web_fetch on one when you need a precise fact from it." else "web_search finds pages.")

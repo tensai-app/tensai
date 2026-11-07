@@ -1,5 +1,6 @@
 package io.github.tensaiapp.ui.tools
 
+import io.github.tensaiapp.agent.GateRefusal
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -50,6 +51,9 @@ sealed interface ReadableOutput {
 
     data class Error(val message: String) : ReadableOutput
 
+    /** The confirmation gate did not approve the call: shown as the app's own line, not the text the model read. */
+    data object NotApproved : ReadableOutput
+
     data class Text(val text: String) : ReadableOutput
 }
 
@@ -57,6 +61,7 @@ data class ResultItem(val title: String, val url: String?)
 
 /**
  * The readable form of [output], the text a tool answered (and the model read):
+ * - a call the confirmation gate did not approve: [ReadableOutput.NotApproved] (TEN-205), whatever its stored text;
  * - a failed, timed out, refused or stopped call: [ReadableOutput.Error], without the `Error:` the runtime
  *   puts in front for the model;
  * - a JSON object with an `opened` app name: [ReadableOutput.AppOpened] (the shape the phone actions answer with);
@@ -65,6 +70,7 @@ data class ResultItem(val title: String, val url: String?)
  * - anything else, including JSON that is none of those: [ReadableOutput.Text].
  */
 fun readableOutput(output: String, state: ToolCallState): ReadableOutput {
+    if (state == ToolCallState.Refused && GateRefusal.matches(output)) return ReadableOutput.NotApproved
     if (state != ToolCallState.Ok) return ReadableOutput.Error(errorMessage(output.removePrefix("Error: ").trim()))
     val json = parseJson(output) ?: return ReadableOutput.Text(output)
     when (json) {

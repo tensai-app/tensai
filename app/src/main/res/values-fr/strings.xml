@@ -869,6 +869,7 @@
     <string name="tool_detail_waiting_answer">En attente de la réponse…</string>
     <string name="tool_detail_open_settings">Ouvrir les réglages de l\'app</string>
     <string name="tool_detail_dismissed">Question ignorée. Aucune réponse donnée.</string>
+    <string name="tool_detail_not_approved">Action non approuvée, rien n\'a été modifié.</string>
     <string name="tool_detail_opened">Ouvert dans %1$s</string>
     <string name="tool_detail_opened_set">Réglé dans %1$s</string>
     <string name="tool_detail_opened_waiting">À valider dans %1$s</string>

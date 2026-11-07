@@ -957,6 +957,7 @@
     <string name="tool_detail_waiting_answer">Waiting for your answer…</string>
     <string name="tool_detail_open_settings">Open app settings</string>
     <string name="tool_detail_dismissed">Dismissed. No answer given.</string>
+    <string name="tool_detail_not_approved">You did not approve this action, nothing was changed.</string>
     <string name="tool_detail_opened">Opened in %1$s</string>
     <string name="tool_detail_opened_set">Set in %1$s</string>
     <string name="tool_detail_opened_waiting">Waiting for you in %1$s</string>

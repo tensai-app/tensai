@@ -501,7 +501,7 @@ private fun ReadableBlock(output: ReadableOutput, tool: String) {
                 }
             }
         }
-        is ReadableOutput.Error -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.tensaiTints.error12) {
+        is ReadableOutput.Error, ReadableOutput.NotApproved -> Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.tensaiTints.error12) {
             Row(
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -509,7 +509,7 @@ private fun ReadableBlock(output: ReadableOutput, tool: String) {
             ) {
                 Icon(Icons.Rounded.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                 Text(
-                    text = output.message,
+                    text = (output as? ReadableOutput.Error)?.message ?: stringResource(R.string.tool_detail_not_approved),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onBackground,
