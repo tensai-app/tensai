@@ -711,6 +711,10 @@ class LlamaKtEngineImpl(
                         enableThinking = request.sampling.enableThinking,
                     ).prompt
                 } ?: return skip("prefix cache: skipped, no boundary between the system part and the user turn")
+                // TEN-218: the file is keyed on the text alone. A memory fact holding control-token text is
+                // tokenized as text, but the same bytes from a template would be control tokens: neither save
+                // nor restore such a prefix, the decode prefills it.
+                if (llamaEngine.hasInputRanges(prefix)) return skip("prefix cache: skipped, the prefix holds control-token text from input")
                 val file = cache.fileFor(cache.key(prefixIdentity, prefix))
                 val startMs = System.currentTimeMillis()
                 if (file.exists()) {
