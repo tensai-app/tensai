@@ -28,7 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -64,11 +64,9 @@ fun MemoryScreen(
     var confirmingClear by remember { mutableStateOf(false) }
     // The last fact deleted from the list behind the dialog: nothing left to forget.
     LaunchedEffect(list?.isEmpty()) { if (list?.isEmpty() == true) confirmingClear = false }
-    val context = LocalContext.current
-    val dates = remember(context) {
-        val locale = context.resources.configuration.locales[0]
-        SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "MMMd"), locale)
-    }
+    // Read through LocalConfiguration so a locale change recomposes and rebuilds the format.
+    val locale = LocalConfiguration.current.locales[0]
+    val dates = remember(locale) { SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "MMMd"), locale) }
 
     if (list != null && list.isEmpty()) {
         Column(

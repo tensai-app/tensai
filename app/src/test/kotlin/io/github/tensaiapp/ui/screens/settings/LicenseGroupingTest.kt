@@ -16,7 +16,7 @@ class LicenseGroupingTest {
         assertEquals(listOf(LicenseGroup.Inference, LicenseGroup.Fonts, LicenseGroup.App), groups.map { it.first })
         assertEquals("llama.kt", groups.first().second.first().name)
         assertEquals(listOf("Figtree", "JetBrains Mono"), groups[1].second.map { it.name })
-        assertEquals(listOf("commonmark-java", "jsoup"), groups[2].second.map { it.name })
+        assertEquals(listOf("commonmark-java", "jsoup", "Protocol Buffers (in DataStore)"), groups[2].second.map { it.name })
     }
 
     @Test
@@ -31,8 +31,11 @@ class LicenseGroupingTest {
             ),
         ).toMap()
         assertEquals(listOf("Activity", "Room-Runtime"), groups.getValue(LicenseGroup.AndroidX).map { it.name })
-        // hand-listed entries (commonmark, jsoup) stay first (hand list), generated ones follow by name, case-insensitive.
-        assertEquals(listOf("commonmark-java", "jsoup", "kotlinx", "Okio"), groups.getValue(LicenseGroup.App).map { it.name })
+        // hand-listed entries (commonmark, jsoup, protobuf) stay first (hand list), generated ones follow by name, case-insensitive.
+        assertEquals(
+            listOf("commonmark-java", "jsoup", "Protocol Buffers (in DataStore)", "kotlinx", "Okio"),
+            groups.getValue(LicenseGroup.App).map { it.name },
+        )
     }
 
     @Test
@@ -52,7 +55,7 @@ class LicenseGroupingTest {
     @Test
     fun everyHandListLicenseGetsAShortLabel() {
         val labels = ThirdPartyLicenses.map { licenseLabel(it.license) }
-        val known = setOf("MIT", "MIT-0", "ISC", "Apache 2.0", "Apache 2.0 + LLVM", "OFL 1.1", "BSD-2")
+        val known = setOf("MIT", "MIT-0", "ISC", "Apache 2.0", "Apache 2.0 + LLVM", "OFL 1.1", "BSD-2", "BSD-3")
         assertEquals("hand-list licenses with no short label", emptyList<String>(), labels.filterNot { it in known })
         assertEquals("OFL 1.1", licenseLabel("SIL OFL 1.1"))
         assertEquals("BSD-2", licenseLabel("BSD 2-Clause"))

@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -9,7 +8,7 @@ plugins {
 
 android {
     namespace = "io.github.tensaiapp"
-    compileSdk = 35
+    compileSdk = 37
     // Same NDK as llama-kt. The app module packages the native libs, and AGP strips them with
     // its own module's NDK: without this it looked for its default NDK, which isn't installed,
     // logged "Unable to strip ... packaging them as they are" and shipped libllamakt.so with
@@ -112,18 +111,21 @@ aboutLibraries {
     // would make the output depend on it): the report holds ids, names and URLs, the texts are
     // ours, see GeneratedLicenses.kt.
     offlineMode = true
-    // Drops the build timestamp so the same dependencies give the same bytes.
-    excludeFields = arrayOf("generated")
+    export {
+        // Drops the build timestamp so the same dependencies give the same bytes.
+        excludeFields.add("generated")
+    }
 }
 
 kotlin {
     jvmToolchain(21)
 }
 
-// One lint analysis at a time (TEN-172). AGP runs lint in-process with K2 UAST (Kotlin 2.0), and
-// when lintAnalyzeDebugUnitTest and lintAnalyzeDebugAndroidTest start together in the same daemon
-// they intermittently crash on their first file with "Error while resolving FirRegularClassImpl
-// from RAW_FIR to TYPES" (LLFirModuleLazyDeclarationResolver). AGP 8.7.3 is the last 8.7 patch.
+// One lint analysis at a time (TEN-172). AGP runs lint in-process with K2 UAST, and when
+// lintAnalyzeDebugUnitTest and lintAnalyzeDebugAndroidTest started together in the same daemon
+// they intermittently crashed on their first file with "Error while resolving FirRegularClassImpl
+// from RAW_FIR to TYPES" (LLFirModuleLazyDeclarationResolver). Seen on AGP 8.7 / Kotlin 2.0; not
+// re-checked on AGP 9.5 / Kotlin 2.4, keep until it is.
 abstract class LintAnalysisSlot : BuildService<BuildServiceParameters.None>
 
 val lintAnalysisSlot = gradle.sharedServices.registerIfAbsent("lintAnalysisSlot", LintAnalysisSlot::class) {

@@ -17,7 +17,8 @@ import io.github.tensaiapp.R
  *   so that adding a font or a submodule without an entry fails the build: `font:<resource name>`
  *   for a file in `res/font`, `<directory name>` for a submodule under
  *   `third_party/llama.kt/third_party`. `maven:<group>` removes that group from the generated
- *   list (see [parseGeneratedLicenses]) because this entry carries it instead.
+ *   list (see [parseGeneratedLicenses]) because this entry carries it instead, `maven:<group>:<artifact>`
+ *   that one artifact.
  */
 data class ThirdPartyLicense(
     val name: String,
@@ -163,6 +164,18 @@ val ThirdPartyLicenses = listOf(
         url = "jsoup.org",
         textRes = R.raw.license_mit_jsoup,
         covers = setOf("maven:org.jsoup"),
+        group = LicenseGroup.App,
+    ),
+    // DataStore's own copy of protobuf-javalite, repackaged under androidx.datastore. The BSD text its jar
+    // ships has no copyright line, protobuf's own LICENSE names Google.
+    ThirdPartyLicense(
+        name = "Protocol Buffers (in DataStore)",
+        license = "BSD 3-Clause",
+        author = "Google",
+        url = "github.com/protocolbuffers/protobuf",
+        textRes = R.raw.license_bsd_3_clause_protobuf,
+        copyright = "2008 Google Inc.",
+        covers = setOf("maven:androidx.datastore:datastore-preferences-external-protobuf"),
         group = LicenseGroup.App,
     ),
     ThirdPartyLicense(

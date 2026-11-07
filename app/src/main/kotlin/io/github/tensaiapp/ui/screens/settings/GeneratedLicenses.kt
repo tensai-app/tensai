@@ -32,15 +32,15 @@ fun loadGeneratedLicenses(context: Context): List<GeneratedLicense> = runCatchin
     .getOrDefault(emptyList())
 
 /**
- * @param covered the `maven:<group>` entries of [ThirdPartyLicenses], dropped here because the hand
+ * @param covered the `maven:<group>` and `maven:<group>:<artifact>` entries of [ThirdPartyLicenses], dropped here because the hand
  *   list already carries them (commonmark: BSD-2-Clause, whose text is only valid with its copyright line).
  */
 fun parseGeneratedLicenses(json: String, covered: Set<String> = emptySet()): List<GeneratedLicense> {
-    val coveredGroups = covered.filter { it.startsWith("maven:") }.map { it.removePrefix("maven:") + ":" }
+    val coveredMaven = covered.filter { it.startsWith("maven:") }.map { it.removePrefix("maven:") }
     return Libs.Builder().withJson(json).build().libraries
         // A BOM only pins versions, nothing of it is in the APK.
         .filterNot { it.uniqueId.substringAfter(':').endsWith("bom") }
-        .filterNot { library -> coveredGroups.any { library.uniqueId.startsWith(it) } }
+        .filterNot { library -> coveredMaven.any { library.uniqueId == it || library.uniqueId.startsWith("$it:") } }
         .map { library ->
             val license = library.licenses.firstOrNull()
             GeneratedLicense(

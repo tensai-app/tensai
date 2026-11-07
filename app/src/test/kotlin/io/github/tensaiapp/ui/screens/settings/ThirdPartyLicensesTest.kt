@@ -78,6 +78,28 @@ class ThirdPartyLicensesTest {
         assertFalse("a BOM is not in the APK", names.any { it.contains("bom", ignoreCase = true) })
     }
 
+    /**
+     * `maven:<group>:<artifact>` drops that artifact only, its group's other artifacts stay listed, even one
+     * whose id starts like it; `maven:<group>` drops the group, not a group whose name merely starts like it.
+     */
+    @Test
+    fun aCoverDropsExactlyWhatItNames() {
+        val json = """
+            {"libraries":[
+              {"uniqueId":"androidx.datastore:datastore-preferences-external-protobuf","name":"Preferences External Protobuf","licenses":[]},
+              {"uniqueId":"androidx.datastore:datastore-preferences","name":"Preferences DataStore","licenses":[]},
+              {"uniqueId":"androidx.datastore:datastore-preferences-core","name":"Preferences DataStore Core","licenses":[]},
+              {"uniqueId":"org.jsoup:jsoup","name":"jsoup","licenses":[]},
+              {"uniqueId":"org.jsoupx:other","name":"Other","licenses":[]}
+            ],"licenses":{}}
+        """.trimIndent()
+        val covers = setOf("maven:androidx.datastore:datastore-preferences-external-protobuf", "maven:org.jsoup")
+
+        val names = parseGeneratedLicenses(json, covers).map { it.name }
+
+        assertEquals(listOf("Other", "Preferences DataStore", "Preferences DataStore Core"), names)
+    }
+
     private fun findDir(candidates: List<String>): File = candidates.map(::File).firstOrNull { it.isDirectory }
         ?: error("not found from ${File("").absolutePath}, tried ${candidates.joinToString()}")
 
