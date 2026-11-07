@@ -24,7 +24,10 @@ import okhttp3.Response
  * temp dir. The runner decides *when* to call it.
  *
  * - **Resume.** A part file of N bytes asks for `Range: bytes=N-`. `206` with a `Content-Range`
- *   starting at N appends. `200` (server ignored the range) restarts from zero using that body.
+ *   starting at N appends. `200` (server ignored the range) is the whole file: its first N bytes,
+ *   what the part already holds, are read past and the rest appended, so an empty or cut-short `200`
+ *   never costs the resume point (TEN-210). Its first [PREFIX_CHECK_BYTES] are checked against the
+ *   part: a part that is not its start (another revision, junk) is rewritten from the body.
  *   A `206` starting elsewhere restarts. `416` with the part already at full size means it was
  *   complete; otherwise restart.
  * - **Integrity is a separate pass.** [download] only moves bytes and checks the size is exactly
@@ -57,7 +60,8 @@ class DownloadEngine(
      * size, which equals [totalBytes] or this throws.
      *
      * @param onProgress bytes on disk so far, at most every [progressIntervalMs]; always called once
-     *   at the start (resume point) and once at the end.
+     *   at the start (resume point) and once at the end. While a `200` is read past the part, the bytes
+     *   re-read so far, from 0 back up to the resume point.
      */
     suspend fun download(
         url: String,
@@ -175,12 +179,15 @@ class DownloadEngine(
         part: File,
         onProgress: suspend (Long) -> Unit,
     ): Step {
-        var fromZero = false
+        // Bytes of the body that the part already holds: read, not written again.
+        var skip = 0L
         when (val code = response.code) {
             200 -> {
-                // 200 to a ranged request: the server ignored the Range and the body is the whole
-                // file. Use it as is: drop what we had, no second request.
-                if (startAt > 0) fromZero = true
+                // 200 to a ranged request: the server ignored the Range and the body is the whole file.
+                // Its start is the part's own bytes (same pinned file, and the hash pass checks it as for
+                // a 206), so they are read past rather than rewritten: a body that is empty or cut short
+                // before the old size, a broken CDN reply, leaves the part as it was (TEN-210).
+                skip = startAt
             }
             206 -> {
                 val from = CONTENT_RANGE.find(response.header("Content-Range").orEmpty())?.groupValues?.get(1)?.toLongOrNull()
@@ -204,19 +211,49 @@ class DownloadEngine(
         }
 
         val body = response.body
-        if (fromZero) part.delete()
-        var done = if (fromZero) 0L else startAt
+        var done = startAt
         val buffer = ByteArray(BUFFER_SIZE)
         var lastReport = clock()
         var nextDiskCheck = done
-        onProgress(done)
+        // The part's first bytes, to check a 200's start against: a part from another revision, or junk,
+        // is not the start of this body, and is then rewritten from it.
+        val prefix = if (skip > 0) readPrefix(part, minOf(skip, PREFIX_CHECK_BYTES.toLong()).toInt()) else null
+        // Body bytes read past so far. The bar follows them back up to the resume point, so a re-read of
+        // gigabytes shows its real speed instead of a frozen bar: it starts at 0 rather than dropping to it.
+        var reread = 0L
+        onProgress(if (skip > 0) 0L else done)
         val source = body.byteStream()
-        val sink = FileOutputStream(part, !fromZero)
+        var sink = FileOutputStream(part, true)
         try {
             while (true) {
                 coroutineContext.ensureActive()
-                val read = source.read(buffer)
+                var read = source.read(buffer)
                 if (read < 0) break
+                var from = 0
+                if (skip > 0) {
+                    val taken = minOf(skip, read.toLong()).toInt()
+                    if (prefix != null && !matchesPrefix(prefix, reread, buffer, taken)) {
+                        // Stale part: what came before this read matched it, so it is written back from
+                        // the prefix, then this read and the rest of the body follow it.
+                        sink.close()
+                        sink = FileOutputStream(part, false)
+                        sink.write(prefix, 0, reread.toInt())
+                        done = reread
+                        nextDiskCheck = done
+                        skip = 0
+                    } else {
+                        skip -= taken
+                        reread += taken
+                        from = taken
+                        read -= taken
+                        val now = clock()
+                        if (now - lastReport >= progressIntervalMs) {
+                            lastReport = now
+                            onProgress(reread)
+                        }
+                        if (read == 0) continue
+                    }
+                }
                 if (done + read > totalBytes) {
                     sink.close()
                     part.delete()
@@ -227,7 +264,7 @@ class DownloadEngine(
                     checkDisk(totalBytes - done)
                 }
                 try {
-                    sink.write(buffer, 0, read)
+                    sink.write(buffer, from, read)
                 } catch (e: IOException) {
                     // A write that fails with the volume out of room is the disk, not the network.
                     if (freeBytes() < diskMarginBytes) throw DownloadException(DownloadError.DiskFull)
@@ -248,6 +285,26 @@ class DownloadEngine(
         return Step.Finished(done)
     }
 
+    /** The first [size] bytes of [part] (fewer if it is shorter). */
+    private fun readPrefix(part: File, size: Int): ByteArray = FileInputStream(part).use { input ->
+        val bytes = ByteArray(size)
+        var at = 0
+        while (at < size) {
+            val n = input.read(bytes, at, size - at)
+            if (n < 0) break
+            at += n
+        }
+        bytes.copyOf(at)
+    }
+
+    /** Whether the first [count] bytes of [chunk], read at body offset [at], match [prefix] where they overlap it. */
+    private fun matchesPrefix(prefix: ByteArray, at: Long, chunk: ByteArray, count: Int): Boolean {
+        if (at >= prefix.size) return true
+        val n = minOf(count.toLong(), prefix.size - at).toInt()
+        for (i in 0 until n) if (chunk[i] != prefix[(at + i).toInt()]) return false
+        return true
+    }
+
     private fun checkDisk(remaining: Long) {
         if (freeBytes() < remaining + diskMarginBytes) throw DownloadException(DownloadError.DiskFull)
     }
@@ -256,6 +313,12 @@ class DownloadEngine(
         const val BUFFER_SIZE = 256 * 1024
         const val DISK_CHECK_EVERY = 16L * 1024 * 1024
         const val DISK_MARGIN = 32L * 1024 * 1024
+
+        /**
+         * How much of a part is checked against the start of a `200` before its bytes are read past. A part that
+         * differs only further in is left to the sha256 pass: a GGUF from another revision differs in its header.
+         */
+        const val PREFIX_CHECK_BYTES = 64 * 1024
         private val CONTENT_RANGE = Regex("bytes (\\d+)-\\d+/(?:\\d+|\\*)")
     }
 }

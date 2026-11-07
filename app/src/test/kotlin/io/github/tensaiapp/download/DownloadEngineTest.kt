@@ -4,6 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -204,15 +205,98 @@ class DownloadEngineTest {
     }
 
     @Test
-    fun a200ToARangedRequestRestartsFromZero() {
+    fun a200ToARangedRequestReadsPastThePartAndAppendsTheRest() {
         part.writeBytes(content.copyOf(300_000))
         val range = RangeServer(honorRange = false).also { server.dispatcher = it }
 
         val result = run()
 
-        assertEquals("one ranged attempt, its whole-file answer used as is", "bytes=300000-", range.requests.single().getHeader("Range"))
-        assertArrayEquals("not 300000 bytes of old data followed by the whole file", content, part.readBytes())
+        assertEquals("one ranged attempt, its whole-file answer used", "bytes=300000-", range.requests.single().getHeader("Range"))
+        assertArrayEquals("the part kept, the body appended after its first 300000 bytes", content, part.readBytes())
         assertEquals(contentSha, result.sha256)
+    }
+
+    /** The bar follows the re-read from 0 back to the resume point, then on: it climbs, never freezes nor drops. */
+    @Test
+    fun readingPastThePartReportsTheBytesReRead() {
+        part.writeBytes(content.copyOf(600_000))
+        server.dispatcher = RangeServer(honorRange = false)
+        val progress = mutableListOf<Long>()
+
+        run(progress = progress)
+
+        assertEquals(0L, progress.first())
+        assertTrue("re-read bytes reported: $progress", progress.any { it in 1 until 600_000 })
+        assertEquals(progress.sorted(), progress)
+        assertEquals(content.size.toLong(), progress.last())
+    }
+
+    /** A part that is not the start of the body (another revision, junk), which a 200 used to heal, still is. */
+    @Test
+    fun aStalePartIsRewrittenFromA200() {
+        val junk = ByteArray(300_000) { (it * 7 % 13).toByte() }
+        // The body in reads of at most 4096 bytes, so where a mismatch falls against the reads is known.
+        val throttled = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) =
+                MockResponse().setResponseCode(200).setBody(Buffer().write(content)).throttleBody(4096, 0, TimeUnit.MILLISECONDS)
+        }
+        // Matches the body for its first 10 000 bytes, then not: caught past the first read.
+        val late = content.copyOf(10_000) + junk.copyOf(290_000)
+        // Mismatch exactly at 4096, the first byte of the second read.
+        val boundary = content.copyOf(4096) + junk.copyOf(295_904)
+        assertTrue(boundary[4096] != content[4096])
+        for ((stale, sha) in listOf(junk to contentSha, late to contentSha, boundary to contentSha, junk to null)) {
+            part.writeBytes(stale)
+            server.dispatcher = throttled
+
+            run(sha = sha)
+
+            assertArrayEquals(content, part.readBytes())
+        }
+    }
+
+    /** A 200 to a ranged request whose body is the whole file, cut after [bytes] (0: empty), announced whole. */
+    private fun cut200(bytes: Int) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = if (bytes == 0) {
+                MockResponse().setResponseCode(200).setBody(Buffer())
+            } else {
+                MockResponse().setResponseCode(200).setBody(Buffer().write(content, 0, bytes)).setHeader("Content-Length", content.size)
+            }
+        }
+    }
+
+    /** TEN-210: an empty 200 to a resume (a broken CDN reply) is a retryable error, and the part is untouched. */
+    @Test
+    fun anEmpty200ToAResumeKeepsThePartByteForByte() {
+        val before = content.copyOf(300_000)
+        part.writeBytes(before)
+        cut200(0)
+
+        val e = failure { run() }
+
+        assertTrue("retryable, not final: $e", e is IOException && e !is DownloadException)
+        assertArrayEquals(before, part.readBytes())
+    }
+
+    /** Cut before the old size: nothing is lost. Cut after it: what came past the old size is kept for the next resume. */
+    @Test
+    fun aCut200ToAResumeNeverLosesThePart() {
+        val before = content.copyOf(300_000)
+        part.writeBytes(before)
+        cut200(100_000)
+
+        assertTrue(failure { run() } is IOException)
+        assertArrayEquals("cut before the old size", before, part.readBytes())
+
+        cut200(500_000)
+
+        assertTrue(failure { run() } is IOException)
+        assertArrayEquals("cut after it: a longer valid prefix", content.copyOf(500_000), part.readBytes())
+
+        server.dispatcher = RangeServer()
+        assertEquals(contentSha, run().sha256)
+        assertArrayEquals(content, part.readBytes())
     }
 
     @Test
