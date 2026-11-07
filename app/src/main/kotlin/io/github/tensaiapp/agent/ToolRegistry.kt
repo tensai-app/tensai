@@ -9,8 +9,8 @@ fun interface TierGrants {
 }
 
 /**
- * Local, phone actions and Android permissions on, Network off. The permission tier is on because Android
- * asks for each permission at first use; Settings shows it under "Phone actions".
+ * Local, phone actions and Android permissions on, Network and personal data off. The permission tier is on because
+ * Android asks for each permission at first use; Settings shows it under "Phone actions".
  */
 object DefaultTierGrants : TierGrants {
     override fun granted(): Set<ToolTier> = setOf(ToolTier.Local, ToolTier.PhoneAction, ToolTier.AndroidPermission)

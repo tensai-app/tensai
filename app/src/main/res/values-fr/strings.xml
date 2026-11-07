@@ -724,6 +724,7 @@
     <string name="tool_name_find_contact">Recherche de contact</string>
     <string name="tool_name_read_calendar">Agenda</string>
     <string name="tool_name_location">Position</string>
+    <string name="tool_name_read_notifications">Notifications</string>
     <string name="tool_name_open_app">Ouvrir une app</string>
     <string name="tool_name_open_url">Ouvrir un lien</string>
     <string name="tool_name_media_control">Contrôle des médias</string>
@@ -750,6 +751,7 @@
     <string name="tool_desc_find_contact">Cherche numéros et e-mails dans les contacts. Demande la permission Contacts d\'Android au premier usage</string>
     <string name="tool_desc_read_calendar">Lit les événements d\'un jour ou d\'une période (titre, heure, lieu). Demande la permission Agenda d\'Android au premier usage</string>
     <string name="tool_desc_location">Donne la position approximative du téléphone (environ 1 km), pour la météo par exemple. Demande la permission Position d\'Android au premier usage</string>
+    <string name="tool_desc_read_notifications">Lit les notifications récentes (messages, aperçus d\'e-mails), sur le téléphone uniquement. Demande l\'accès aux notifications d\'Android</string>
     <string name="tool_desc_open_app">Lance une app installée</string>
     <string name="tool_desc_open_url">Ouvre un lien dans le navigateur</string>
     <string name="tool_desc_media_control">Lecture, pause et piste suivante dans le lecteur en cours</string>
@@ -809,6 +811,8 @@
     <string name="tool_run_read_calendar">Lecture de l\'agenda…</string>
     <string name="tool_done_location">Position obtenue</string>
     <string name="tool_run_location">Recherche de la position…</string>
+    <string name="tool_done_read_notifications">Notifications lues</string>
+    <string name="tool_run_read_notifications">Lecture des notifications…</string>
     <string name="tool_done_open_app">App ouverte</string>
     <string name="tool_run_open_app">Ouverture de l\'app…</string>
     <string name="tool_done_open_url">Lien ouvert</string>
@@ -839,6 +843,7 @@
     <string name="tool_refused_contacts">Contacts refusés</string>
     <string name="tool_refused_calendar">Agenda refusé</string>
     <string name="tool_refused_location">Position refusée</string>
+    <string name="tool_refused_notifications">Accès aux notifications désactivé</string>
     <string name="tool_refused_url">Lien refusé</string>
     <string name="tool_line_stopped">Arrêté</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>
@@ -924,14 +929,27 @@
         <item quantity="other">Désactivé · %1$d outils</item>
     </plurals>
     <string name="tools_tier_internet_on">Activé · %1$s</string>
+    <string name="tools_tier_personal">Notifications et messages</string>
+    <string name="tools_tier_personal_no_access">Activé · accès aux notifications requis</string>
     <string name="tools_internet_warning">Les requêtes quittent le téléphone et vont chez le fournisseur de recherche, Wikipédia, Open-Meteo ou le site lu</string>
     <string name="tools_footer">Les outils ne sont proposés qu\'aux modèles dont le template les gère. Envoyer et supprimer demandent toujours confirmation.</string>
     <string name="tools_use_local">Utiliser les outils du téléphone</string>
     <string name="tools_use_phone">Utiliser les actions du téléphone</string>
     <string name="tools_use_internet">Utiliser internet</string>
+    <string name="tools_use_personal">Utiliser les notifications et messages</string>
     <string name="tools_empty_local">Aucun outil pour le moment</string>
     <string name="tools_empty_phone">Aucune action pour le moment</string>
     <string name="tools_empty_internet">Aucun outil internet pour le moment</string>
+    <string name="tools_empty_personal">Aucun outil pour le moment</string>
+    <string name="tools_personal_access_eyebrow">Accès aux notifications</string>
+    <string name="tools_personal_access_on">Autorisé dans les réglages d\'Android</string>
+    <string name="tools_personal_access_off">Non autorisé : tensai ne voit aucune notification</string>
+    <string name="tools_personal_note">Seules les notifications reçues après l\'autorisation, gardées 24 heures sur ce téléphone et jamais dans une sauvegarde. Leur texte est écrit par d\'autres : tensai n\'y suit jamais d\'instruction.</string>
+    <string name="tools_personal_open_access">Ouvrir l\'accès aux notifications</string>
+    <string name="tools_personal_clear">Effacer les notifications gardées</string>
+    <string name="tools_personal_cleared">Effacées</string>
+    <string name="tools_personal_excluded_eyebrow">Apps exclues</string>
+    <string name="tools_personal_excluded_hint">Noms d\'apps, séparés par des virgules. Leurs notifications ne sont jamais gardées.</string>
     <string name="tools_provider_eyebrow">Fournisseur de recherche</string>
     <string name="tools_provider_ddg_sub">Aucune clé nécessaire</string>
     <string name="tools_provider_brave_sub">Clé d\'API · crédit gratuit mensuel, carte bancaire requise</string>

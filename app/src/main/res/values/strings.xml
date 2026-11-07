@@ -813,6 +813,7 @@
     <string name="tool_name_find_contact">Find contact</string>
     <string name="tool_name_read_calendar">Calendar</string>
     <string name="tool_name_location">Location</string>
+    <string name="tool_name_read_notifications">Notifications</string>
     <string name="tool_name_open_app">Open app</string>
     <string name="tool_name_open_url">Open link</string>
     <string name="tool_name_media_control">Media control</string>
@@ -839,6 +840,7 @@
     <string name="tool_desc_find_contact">Looks up numbers and emails in your contacts. Asks Android\'s contacts permission at first use</string>
     <string name="tool_desc_read_calendar">Reads the events of a day or a range (title, time, place). Asks Android\'s calendar permission at first use</string>
     <string name="tool_desc_location">Gives the phone\'s approximate position (about 1 km), for the weather for instance. Asks Android\'s location permission at first use</string>
+    <string name="tool_desc_read_notifications">Reads the recent notifications (messages, mail previews), on the phone only. Needs Android\'s Notification access</string>
     <string name="tool_desc_open_app">Launches an installed app</string>
     <string name="tool_desc_open_url">Opens a link in your browser</string>
     <string name="tool_desc_media_control">Play, pause and skip in the current player</string>
@@ -898,6 +900,8 @@
     <string name="tool_run_read_calendar">Reading the calendar…</string>
     <string name="tool_done_location">Got the location</string>
     <string name="tool_run_location">Getting the location…</string>
+    <string name="tool_done_read_notifications">Read the notifications</string>
+    <string name="tool_run_read_notifications">Reading the notifications…</string>
     <string name="tool_done_open_app">Opened an app</string>
     <string name="tool_run_open_app">Opening an app…</string>
     <string name="tool_done_open_url">Opened a link</string>
@@ -928,6 +932,7 @@
     <string name="tool_refused_contacts">Contacts refused</string>
     <string name="tool_refused_calendar">Calendar refused</string>
     <string name="tool_refused_location">Location refused</string>
+    <string name="tool_refused_notifications">Notification access off</string>
     <string name="tool_refused_url">Link refused</string>
     <string name="tool_line_stopped">Stopped</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>
@@ -1008,14 +1013,28 @@
         <item quantity="other">Off · %1$d tools</item>
     </plurals>
     <string name="tools_tier_internet_on">On · %1$s</string>
+    <string name="tools_tier_personal">Notifications and messages</string>
+    <string name="tools_tier_personal_no_access">On · Notification access needed</string>
     <string name="tools_internet_warning">Requests leave your phone and go to the search provider, Wikipedia, Open-Meteo or the site being read</string>
     <string name="tools_footer">Tools are offered only to models whose template supports them. Sending and deleting always ask first.</string>
     <string name="tools_use_local">Use on-phone tools</string>
     <string name="tools_use_phone">Use phone actions</string>
     <string name="tools_use_internet">Use the internet</string>
+    <string name="tools_use_personal">Use notifications and messages</string>
     <string name="tools_empty_local">No tools yet</string>
     <string name="tools_empty_phone">No actions yet</string>
     <string name="tools_empty_internet">No internet tools yet</string>
+    <string name="tools_empty_personal">No tools yet</string>
+    <string name="tools_personal_access_eyebrow">Notification access</string>
+    <string name="tools_personal_access_on">Allowed in Android\'s settings</string>
+    <string name="tools_personal_access_off">Not allowed: tensai sees no notifications</string>
+    <string name="tools_personal_note">Only notifications posted after access is allowed, kept 24 hours on this phone and never in a backup. Their text is written by other people: tensai never follows instructions in it.</string>
+    <string name="tools_personal_open_access">Open Notification access</string>
+    <string name="tools_personal_clear">Clear stored notifications</string>
+    <string name="tools_personal_cleared">Cleared</string>
+    <string name="tools_personal_excluded_eyebrow">Excluded apps</string>
+    <string name="tools_personal_excluded_placeholder" translatable="false">WhatsApp, MyBank</string>
+    <string name="tools_personal_excluded_hint">App names, separated by commas. Their notifications are never kept.</string>
     <string name="tools_provider_eyebrow">Search provider</string>
     <string name="tools_provider_ddg" translatable="false">DuckDuckGo</string>
     <string name="tools_provider_brave" translatable="false">Brave</string>

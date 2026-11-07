@@ -117,6 +117,19 @@
             tools:node="merge" />
 
         <!-- Pause / Cancel actions of the download notification. -->
+        <!-- TEN-211: read_notifications. Bound by Android only once the user allows tensai in Settings >
+             Notification access (the permission is the system's, no app can hold it otherwise). Notifications are read
+             on the phone, kept a day in noBackupFilesDir, and only handed to the local model. -->
+        <service
+            android:name=".agent.TensaiNotificationListener"
+            android:label="@string/tools_tier_personal"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".download.DownloadActionReceiver"
             android:exported="false" />

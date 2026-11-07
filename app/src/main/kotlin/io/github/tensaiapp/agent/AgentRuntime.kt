@@ -129,7 +129,7 @@ class AgentRuntime(
      * read against every registered tool: a stored call is shown with or without its card whatever the grants are now.
      */
     fun requiresConfirmation(toolName: String, argsJson: String, trust: ConversationTrust = ConversationTrust()): Boolean =
-        registry.find(toolName)?.let { runCatching { it.requiresConfirmation(argsJson.ifBlank { "{}" }, trust) }.getOrDefault(false) } ?: false
+        registry.find(toolName)?.let { runCatching { it.asksFirst(argsJson.ifBlank { "{}" }, trust) }.getOrDefault(false) } ?: false
 
     /**
      * [trust] once [message] is in the history, read against every registered tool. The one fold of [ConversationTrust]:
@@ -337,7 +337,7 @@ class AgentRuntime(
         ToolArgs.check(tool.parametersSchema, args)?.let {
             return outcome(ToolCallStatus.Error, "Error: invalid arguments for '${tool.name}': $it. Expected: ${tool.parametersSchema}")
         }
-        if (tool.requiresConfirmation(args, trust)) {
+        if (tool.asksFirst(args, trust)) {
             val approved = try {
                 gate.confirm(call, tool)
             } catch (e: CancellationException) {
@@ -352,11 +352,14 @@ class AgentRuntime(
         return try {
             val result = runDetached(tool, args, call.id)
             val took = clock() - ranFrom
+            // Text other people wrote reaches the prompt, tokenized with special tokens parsed: a page or a message
+            // holding `<|im_start|>system` would open a real turn (TEN-211).
+            val text = result?.text?.let { if (tool.returnsUntrustedContent) MemoryContext.stripControl(it) else it }.orEmpty()
             when {
                 result == null -> outcome(ToolCallStatus.Timeout, "Error: '${tool.name}' timed out after ${timeoutMs(tool) / 1000} s.", took)
-                result.refused -> outcome(ToolCallStatus.Refused, result.text, took)
-                result.isError -> outcome(ToolCallStatus.Error, result.text, took, result.destination)
-                else -> outcome(ToolCallStatus.Ok, result.text, took, result.destination)
+                result.refused -> outcome(ToolCallStatus.Refused, text, took)
+                result.isError -> outcome(ToolCallStatus.Error, text, took, result.destination)
+                else -> outcome(ToolCallStatus.Ok, text, took, result.destination)
             }
         } catch (e: CancellationException) {
             // Ours (Stop) is rethrown; a cancellation the tool raised on its own is just its failure.

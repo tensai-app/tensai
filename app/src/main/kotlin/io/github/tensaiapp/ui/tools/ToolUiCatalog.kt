@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.Mail
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
@@ -137,6 +138,9 @@ object ToolUiCatalog {
         ToolUiMeta("location", Icons.Rounded.MyLocation, R.string.tool_name_location, R.string.tool_desc_location,
             ToolActions(R.string.tool_done_location, R.string.tool_run_location),
             refused = R.string.tool_refused_location),
+        ToolUiMeta("read_notifications", Icons.Rounded.Notifications, R.string.tool_name_read_notifications, R.string.tool_desc_read_notifications,
+            ToolActions(R.string.tool_done_read_notifications, R.string.tool_run_read_notifications),
+            refused = R.string.tool_refused_notifications),
         ToolUiMeta("open_app", Icons.Rounded.Apps, R.string.tool_name_open_app, R.string.tool_desc_open_app,
             ToolActions(R.string.tool_done_open_app, R.string.tool_run_open_app)),
         ToolUiMeta("open_url", Icons.Rounded.OpenInNew, R.string.tool_name_open_url, R.string.tool_desc_open_url,

@@ -16,6 +16,11 @@ import io.github.tensaiapp.agent.DraftSmsTool
 import io.github.tensaiapp.agent.FindContactTool
 import io.github.tensaiapp.agent.LocationTool
 import io.github.tensaiapp.agent.ReadCalendarTool
+import io.github.tensaiapp.agent.ReadNotificationsTool
+import io.github.tensaiapp.agent.ToolTier
+import io.github.tensaiapp.agent.NotificationBuffer
+import io.github.tensaiapp.agent.NotificationBufferFile
+import io.github.tensaiapp.agent.AndroidNotificationAccess
 import io.github.tensaiapp.agent.PermissionGate
 import io.github.tensaiapp.agent.MediaControlTool
 import io.github.tensaiapp.agent.OpenAppTool
@@ -452,6 +457,18 @@ object RuntimeGraph {
         WikipediaTool(httpFetcher, descriptiveUserAgent, searchLanguage),
     )
 
+    /**
+     * What `read_notifications` caught since Notification access was turned on, kept a day (TEN-211). In
+     * `noBackupFilesDir`, see [NotificationBufferFile].
+     */
+    val notificationBuffer: NotificationBuffer by lazy {
+        NotificationBuffer(
+            NotificationBufferFile(File(appContext.noBackupFilesDir, "notifications.json")),
+            accepting = { ToolTier.PersonalData in toolSettings.granted() },
+            scope = applicationScope,
+        )
+    }
+
     /** The built-in tools, filtered by the tiers granted in Settings. Settings lists them per tier. */
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry.default(
@@ -467,6 +484,11 @@ object RuntimeGraph {
                     onForgotten = { memoryPrompt.invalidate() },
                 ),
                 AskUserTool(askUserGate),
+                ReadNotificationsTool(
+                    AndroidNotificationAccess(appContext) { toolSettings.excludedNotificationApps.first() },
+                    notificationBuffer,
+                    excluded = { toolSettings.excludedNotificationApps.first() },
+                ),
             ) + phoneActionTools() + webTools(),
         )
     }

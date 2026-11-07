@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -34,6 +35,7 @@ enum class ToolGroup(val tiers: List<ToolTier>) {
     OnPhone(listOf(ToolTier.Local)),
     PhoneActions(listOf(ToolTier.PhoneAction, ToolTier.AndroidPermission)),
     Internet(listOf(ToolTier.Network)),
+    PersonalData(listOf(ToolTier.PersonalData)),
     ;
 
     fun isOn(granted: Set<ToolTier>): Boolean = tiers.all { it in granted }
@@ -60,7 +62,13 @@ class ToolsViewModel(
     private val keys: SearchKeyStores? = null,
     private val tester: SearchTester? = null,
     private val scope: CoroutineScope = RuntimeGraph.applicationScope,
+    private val clearCaught: (() -> Unit)? = null,
+    private val purgeCaught: ((Set<String>) -> Unit)? = null,
 ) {
+    // What `read_notifications` caught (TEN-211): forgotten with the tier and by the Clear button, an app's when it is excluded.
+    private val clearNotifications: () -> Unit get() = clearCaught ?: RuntimeGraph.notificationBuffer::clear
+    private val purgeNotifications: (Set<String>) -> Unit get() = purgeCaught ?: RuntimeGraph.notificationBuffer::purge
+
     private val keyStores: SearchKeyStores get() = keys ?: RuntimeGraph.searchKeys
     private val searchTester: SearchTester get() = tester ?: RuntimeGraph.searchTester
 
@@ -82,8 +90,26 @@ class ToolsViewModel(
     fun registeredTools(): List<Tool> = registry.registered()
 
     fun setGroup(group: ToolGroup, on: Boolean) {
-        scope.launch { group.tiers.forEach { settings.setGranted(it, on) } }
+        scope.launch {
+            group.tiers.forEach { settings.setGranted(it, on) }
+            // After the grant is written: the buffer reads it on each add, so nothing still on its way is kept again.
+            if (group == ToolGroup.PersonalData && !on) clearNotifications()
+        }
     }
+
+    /** Apps whose notifications are never kept, see [ToolSettingsRepository.excludedNotificationApps]. */
+    val excludedNotificationApps: Flow<Set<String>> = settings.excludedNotificationApps
+
+    /** Stores [typed], a comma separated list of packages or app names, as the excluded apps. */
+    fun setExcludedNotificationApps(typed: String) {
+        scope.launch {
+            settings.setExcludedNotificationApps(typed.split(',').toSet())
+            purgeNotifications(settings.excludedNotificationApps.first())
+        }
+    }
+
+    /** Forgets every notification caught so far (the Clear button). */
+    fun clearCaughtNotifications() = clearNotifications()
 
     fun setSearchProvider(provider: SearchProviderChoice) {
         testRun.incrementAndGet()

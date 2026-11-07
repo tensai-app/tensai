@@ -7,6 +7,7 @@ import io.github.tensaiapp.agent.SearchProviders
 import io.github.tensaiapp.agent.SearchSelection
 import io.github.tensaiapp.agent.SearchTester
 import io.github.tensaiapp.agent.ToolRegistry
+import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.json
 import io.github.tensaiapp.data.SearchProviderChoice
 import io.github.tensaiapp.data.ToolSettingsRepository
@@ -23,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -60,6 +62,29 @@ class ToolsViewModelTest {
             }
             @Suppress("UNREACHABLE_CODE") testState.value
         }
+
+    /**
+     * TEN-211: turning personal data off writes the grant first, then forgets what was caught, so a notification still on
+     * its way (the buffer reads the grant on each add) is not kept again. Excluding an app forgets its notifications.
+     */
+    @Test fun turningPersonalDataOffForgetsAfterTheGrantAndAnExclusionPurges() = runBlocking {
+        val store = PreferenceDataStoreFactory.create(scope = scope) { File(dir, "tools.preferences_pb") }
+        val settings = ToolSettingsRepository(store)
+        settings.setGranted(ToolTier.PersonalData, true)
+        val grantedAtClear = CompletableDeferred<Boolean>()
+        val purged = CompletableDeferred<Set<String>>()
+        val vm = ToolsViewModel(
+            settings, ToolRegistry(), keys = null, tester = null, scope = scope,
+            clearCaught = { grantedAtClear.complete(ToolTier.PersonalData in settings.granted()) },
+            purgeCaught = { purged.complete(it) },
+        )
+
+        vm.setGroup(ToolGroup.PersonalData, false)
+        vm.setExcludedNotificationApps("Signal, com.bank.app ,")
+
+        assertFalse("the grant was written before the clear", withTimeout(5_000) { grantedAtClear.await() })
+        assertEquals(setOf("Signal", "com.bank.app"), withTimeout(5_000) { purged.await() })
+    }
 
     @Test fun aRunReportsRunningThenTheProviderAndTime() = runBlocking {
         val vm = viewModel(tester(FakeHttp(json("""{"results":[]}""")), { SearchSelection(it, "tvly-key") }))

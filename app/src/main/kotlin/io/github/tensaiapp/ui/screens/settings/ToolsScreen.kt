@@ -1,5 +1,6 @@
 package io.github.tensaiapp.ui.screens.settings
 
+import android.content.ActivityNotFoundException
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Warning
@@ -36,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +51,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -62,8 +67,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import io.github.tensaiapp.R
 import io.github.tensaiapp.agent.DefaultTierGrants
+import io.github.tensaiapp.agent.notificationAccessEnabled
+import io.github.tensaiapp.agent.notificationAccessSettingsIntent
 import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.data.SearchProviderChoice
 import io.github.tensaiapp.ui.components.TensaiButton
@@ -82,6 +91,7 @@ private val ToolGroup.icon: ImageVector
         ToolGroup.OnPhone -> Icons.Rounded.Smartphone
         ToolGroup.PhoneActions -> Icons.Rounded.TouchApp
         ToolGroup.Internet -> Icons.Rounded.Language
+        ToolGroup.PersonalData -> Icons.Rounded.Notifications
     }
 
 private val ToolGroup.titleRes: Int
@@ -89,6 +99,7 @@ private val ToolGroup.titleRes: Int
         ToolGroup.OnPhone -> R.string.tools_tier_local
         ToolGroup.PhoneActions -> R.string.tools_tier_phone
         ToolGroup.Internet -> R.string.tools_tier_internet
+        ToolGroup.PersonalData -> R.string.tools_tier_personal
     }
 
 private val SearchProviderChoice.nameRes: Int
@@ -126,6 +137,7 @@ fun ToolsScreen(
     val provider by viewModel.searchProvider.collectAsState(initial = SearchProviderChoice.DuckDuckGo)
     val registered = remember(viewModel) { viewModel.registeredTools() }
     val reducedMotion = rememberReducedMotion()
+    val notificationAccess = rememberNotificationAccess()
 
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -155,7 +167,7 @@ fun ToolsScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = groupSupporting(group, on, count, provider),
+                            text = groupSupporting(group, on, count, provider, notificationAccess),
                             fontSize = 12.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 2.dp),
@@ -188,9 +200,12 @@ fun ToolsScreen(
     }
 }
 
-/** "7 tools", "8 actions · the target app confirms", and for Internet "Off · 4 tools" or "On · DuckDuckGo". */
+/**
+ * "7 tools", "8 actions · the target app confirms", for Internet "Off · 4 tools" or "On · DuckDuckGo", and for personal data
+ * "Off", "On · Notification access needed" or its tool count.
+ */
 @Composable
-private fun groupSupporting(group: ToolGroup, on: Boolean, count: Int, provider: SearchProviderChoice): String = when (group) {
+private fun groupSupporting(group: ToolGroup, on: Boolean, count: Int, provider: SearchProviderChoice, notificationAccess: Boolean): String = when (group) {
     ToolGroup.OnPhone -> pluralStringResource(R.plurals.tools_count_tools, count, count)
     ToolGroup.PhoneActions -> pluralStringResource(R.plurals.tools_tier_phone_supporting, count, count)
     ToolGroup.Internet -> when {
@@ -198,6 +213,27 @@ private fun groupSupporting(group: ToolGroup, on: Boolean, count: Int, provider:
         count > 0 -> pluralStringResource(R.plurals.tools_tier_internet_off, count, count)
         else -> stringResource(R.string.tools_tier_off)
     }
+    ToolGroup.PersonalData -> when {
+        !on -> stringResource(R.string.tools_tier_off)
+        !notificationAccess -> stringResource(R.string.tools_tier_personal_no_access)
+        else -> pluralStringResource(R.plurals.tools_count_tools, count, count)
+    }
+}
+
+/** Whether Android's Notification access is on for tensai, read again whenever the screen comes back (from granting it). */
+@Composable
+private fun rememberNotificationAccess(): Boolean {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(notificationAccessEnabled(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) enabled = notificationAccessEnabled(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return enabled
 }
 
 /** Under the Internet switch: what leaves the phone. Warning tint, same in the card and the tier screen. */
@@ -262,6 +298,7 @@ fun ToolGroupScreen(
                             ToolGroup.OnPhone -> R.string.tools_use_local
                             ToolGroup.PhoneActions -> R.string.tools_use_phone
                             ToolGroup.Internet -> R.string.tools_use_internet
+                            ToolGroup.PersonalData -> R.string.tools_use_personal
                         },
                     ),
                     fontSize = 15.sp,
@@ -280,6 +317,9 @@ fun ToolGroupScreen(
                 SearchProviderSection(viewModel, enabled = on)
             }
         }
+        if (group == ToolGroup.PersonalData) {
+            PersonalDataSection(viewModel, enabled = on)
+        }
 
         val eyebrow = when (group) {
             ToolGroup.PhoneActions -> pluralStringResource(R.plurals.tools_count_actions, tools.size, tools.size)
@@ -295,6 +335,7 @@ fun ToolGroupScreen(
                                 ToolGroup.OnPhone -> R.string.tools_empty_local
                                 ToolGroup.PhoneActions -> R.string.tools_empty_phone
                                 ToolGroup.Internet -> R.string.tools_empty_internet
+                                ToolGroup.PersonalData -> R.string.tools_empty_personal
                             },
                         ),
                         fontSize = 14.sp,
@@ -309,6 +350,108 @@ fun ToolGroupScreen(
             }
         }
     }
+}
+
+/**
+ * The personal data tier's own settings (TEN-211): Android's Notification access, which only the user can turn on, what
+ * is kept and for how long, the apps never kept, and a Clear button.
+ */
+@Composable
+private fun PersonalDataSection(viewModel: ToolsViewModel, enabled: Boolean) {
+    val context = LocalContext.current
+    val access = rememberNotificationAccess()
+    var cleared by remember { mutableStateOf(false) }
+    val excluded by viewModel.excludedNotificationApps.collectAsState(initial = null)
+    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+
+    SectionLabel(stringResource(R.string.tools_personal_access_eyebrow), Modifier.padding(top = 14.dp))
+    SectionCard {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = stringResource(if (access) R.string.tools_personal_access_on else R.string.tools_personal_access_off),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = stringResource(R.string.tools_personal_note),
+                fontSize = 12.5.sp,
+                lineHeight = 17.sp,
+                color = secondary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                TensaiButton(
+                    text = stringResource(R.string.tools_personal_open_access),
+                    onClick = {
+                        try {
+                            context.startActivity(notificationAccessSettingsIntent())
+                        } catch (_: ActivityNotFoundException) {
+                            // No such settings screen on this build of Android: the note says where to go.
+                        }
+                    },
+                    variant = TensaiButtonVariant.Text,
+                    size = TensaiButtonSize.Sm,
+                )
+                TensaiButton(
+                    text = stringResource(if (cleared) R.string.tools_personal_cleared else R.string.tools_personal_clear),
+                    onClick = {
+                        viewModel.clearCaughtNotifications()
+                        cleared = true
+                    },
+                    variant = TensaiButtonVariant.Text,
+                    size = TensaiButtonSize.Sm,
+                    contentColor = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+
+    SectionLabel(stringResource(R.string.tools_personal_excluded_eyebrow), Modifier.padding(top = 14.dp))
+    SectionCard {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            // Seeded once from the store, then the field's own: a re-read while typing would eat a trailing comma.
+            excluded?.let { stored -> ExcludedAppsField(stored, enabled) { viewModel.setExcludedNotificationApps(it) } }
+            Text(
+                text = stringResource(R.string.tools_personal_excluded_hint),
+                fontSize = 12.5.sp,
+                color = secondary,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExcludedAppsField(stored: Set<String>, enabled: Boolean, onChange: (String) -> Unit) {
+    var value by remember { mutableStateOf(stored.sorted().joinToString(", ")) }
+    val label = stringResource(R.string.tools_personal_excluded_eyebrow)
+    BasicTextField(
+        value = value,
+        onValueChange = {
+            value = it
+            onChange(it)
+        },
+        singleLine = true,
+        enabled = enabled,
+        textStyle = TextStyle(fontFamily = TensaiMono, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Done),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp)
+            .semantics { contentDescription = label },
+        decorationBox = { inner ->
+            Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.fillMaxSize()) {
+                if (value.isEmpty()) {
+                    Text(stringResource(R.string.tools_personal_excluded_placeholder), fontFamily = TensaiMono, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                inner()
+            }
+        },
+    )
 }
 
 @Composable

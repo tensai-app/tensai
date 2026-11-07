@@ -40,6 +40,10 @@ class ClipboardTool(private val clipboard: ClipboardAccess) : Tool {
     override val tier = ToolTier.Local
     override val returnsUntrustedContent = true
 
+    /** A `set` after the user's messages were read asks (TEN-211): the clipboard is a way out of the conversation. */
+    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean =
+        trust.readPersonal && runCatching { JSONObject(argsJson).stringArg("action") }.getOrNull() == "set"
+
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
             JSONObject(argsJson)

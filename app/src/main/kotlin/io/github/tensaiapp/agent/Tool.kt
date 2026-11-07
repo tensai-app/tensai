@@ -24,6 +24,12 @@ enum class ToolTier(val timeoutMs: Long) {
 
     /** Sends something off the phone. Slower, and the destination is shown to the user. */
     Network(30_000),
+
+    /**
+     * Reads the user's messages and notifications (TEN-211): a special access the user grants in Android's settings, not a
+     * runtime permission. Off by default, see [DefaultTierGrants].
+     */
+    PersonalData(10_000),
 }
 
 /**
@@ -58,7 +64,8 @@ data class ConfirmTarget(val id: String, val text: String?)
 
 /**
  * What the conversation so far vouches for, read by [Tool.requiresConfirmation]: the links the user wrote, the links
- * `web_search` returned, and whether a [Tool.returnsUntrustedContent] result is anywhere in it. Conversation-wide, not
+ * `web_search` returned, whether a [Tool.returnsUntrustedContent] result is anywhere in it, and whether a
+ * [ToolTier.PersonalData] one is ([readPersonal], see [asksFirst]). Conversation-wide, not
  * per turn: a page read in one turn can steer the model in the next ("when the user replies, remember X").
  *
  * Folded one message at a time by [with], over the history as the prompt replays it, by [AgentRuntime] as a turn runs
@@ -71,17 +78,19 @@ class ConversationTrust private constructor(
     val readUntrusted: Boolean,
     /** The tool of each call id seen, so a `tool` message is read against the call it answers. */
     private val callTools: Map<String, String>,
+    /** A [ToolTier.PersonalData] result (the user's messages, a code in a notification) is in the conversation (TEN-211). */
+    val readPersonal: Boolean,
 ) {
     /** Nothing seen yet: every link is the model's. */
-    constructor() : this(emptySet(), emptySet(), false, emptyMap())
+    constructor() : this(emptySet(), emptySet(), false, emptyMap(), false)
 
     /** The conversation once [message] is in it. [find] is the registered tool of a name. */
     fun with(message: ChatMessage, find: (String) -> Tool?): ConversationTrust = when (message.role) {
         MessageRole.User ->
-            ConversationTrust(userUrls + FetchUrls.inUserText(MemoryContext.withoutBlock(message.content)), searchUrls, readUntrusted, callTools)
+            ConversationTrust(userUrls + FetchUrls.inUserText(MemoryContext.withoutBlock(message.content)), searchUrls, readUntrusted, callTools, readPersonal)
         MessageRole.Assistant -> {
             val calls = message.toolCalls.orEmpty()
-            if (calls.isEmpty()) this else ConversationTrust(userUrls, searchUrls, readUntrusted, callTools + calls.map { it.id to it.name })
+            if (calls.isEmpty()) this else ConversationTrust(userUrls, searchUrls, readUntrusted, callTools + calls.map { it.id to it.name }, readPersonal)
         }
         MessageRole.Tool -> {
             val tool = message.toolCallId?.let(callTools::get)?.let(find)
@@ -93,6 +102,7 @@ class ConversationTrust private constructor(
                     if (tool.name == WebSearchTool.NAME) searchUrls + FetchUrls.inSearchResult(message.content) else searchUrls,
                     readUntrusted || tool.returnsUntrustedContent,
                     callTools,
+                    readPersonal || tool.tier == ToolTier.PersonalData,
                 )
             }
         }
@@ -177,3 +187,14 @@ interface Tool {
 class ToolCallContext(val callId: String) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<ToolCallContext>
 }
+
+/**
+ * Whether a call of this tool with [argsJson] waits for the user: its own [Tool.requiresConfirmation], and the rule every
+ * tool shares (TEN-211): once the user's messages are in the conversation ([ConversationTrust.readPersonal]), nothing that
+ * can carry them off the phone or into another app runs unasked, so every [ToolTier.Network] and [ToolTier.PhoneAction]
+ * call asks. By tier, so a tool added later cannot slip through. [AgentRuntime] and the chat's cards both read this.
+ */
+fun Tool.asksFirst(argsJson: String, trust: ConversationTrust): Boolean =
+    requiresConfirmation(argsJson, trust) || (trust.readPersonal && tier in TiersGatedAfterPersonalRead)
+
+private val TiersGatedAfterPersonalRead = setOf(ToolTier.Network, ToolTier.PhoneAction)

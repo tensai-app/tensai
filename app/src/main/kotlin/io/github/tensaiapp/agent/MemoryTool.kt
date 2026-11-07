@@ -48,7 +48,7 @@ class MemoryTool(
     override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean =
         when (runCatching { JSONObject(argsJson).stringArg("action") }.getOrNull()) {
             "forget" -> true
-            "remember" -> trust.readUntrusted
+            "remember" -> trust.readUntrusted || trust.readPersonal
             else -> false
         }
 

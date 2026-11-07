@@ -58,7 +58,10 @@ object MemoryContext {
     /** Whether [text] holds something [stripControl] would remove. */
     fun hasControl(text: String): Boolean = control.containsMatchIn(text)
 
-    /** [text] without special tokens and template tags, for facts stored before `remember` refused them. */
+    /**
+     * [text] without special tokens and template tags: for facts stored before `remember` refused them, and for the
+     * results of tools that return untrusted content.
+     */
     fun stripControl(text: String): String = control.replace(text, "").trim()
 
     /** [messages] with [block] in front of the first user message, unchanged when [block] is `null` or there is none. */

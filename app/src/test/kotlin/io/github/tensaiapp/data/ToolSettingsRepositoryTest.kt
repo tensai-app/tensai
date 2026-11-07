@@ -3,6 +3,7 @@ package io.github.tensaiapp.data
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import io.github.tensaiapp.agent.DefaultTierGrants
 import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolRegistry
 import io.github.tensaiapp.agent.ToolResult
@@ -98,6 +99,23 @@ class ToolSettingsRepositoryTest {
         assertEquals(setOf(ToolTier.Local, ToolTier.PhoneAction, ToolTier.AndroidPermission), granted)
     }
 
+    /** TEN-211: the user's messages are read only once they turn the tier on, on an install that never saw it too. */
+    @Test
+    fun personalDataIsOffUntilTurnedOnAndItsExcludedAppsAreKept() = runBlocking {
+        assertTrue(ToolTier.PersonalData !in withStore("p") { ToolSettingsRepository(it).granted() })
+        assertTrue(ToolTier.PersonalData !in DefaultTierGrants.granted())
+        assertEquals(emptySet<String>(), withStore("p") { ToolSettingsRepository(it).excludedNotificationApps.first() })
+
+        withStore("p") {
+            val settings = ToolSettingsRepository(it)
+            settings.setGranted(ToolTier.PersonalData, true)
+            settings.setExcludedNotificationApps(setOf(" com.bank.app ", "", "Signal"))
+        }
+
+        assertTrue(ToolTier.PersonalData in withStore("p") { ToolSettingsRepository(it).granted() })
+        assertEquals(setOf("com.bank.app", "Signal"), withStore("p") { ToolSettingsRepository(it).excludedNotificationApps.first() })
+    }
+
     @Test
     fun theSearchProviderDefaultsToDuckDuckGoAndIsRemembered() = runBlocking {
         assertEquals(SearchProviderChoice.DuckDuckGo, withStore("e") { ToolSettingsRepository(it).searchProvider.first() })
@@ -120,7 +138,7 @@ class ToolSettingsRepositoryTest {
         val defaults = setOf(ToolTier.Local, ToolTier.PhoneAction, ToolTier.AndroidPermission)
         assertEquals(2, ToolGroup.countOn(defaults))
         assertTrue(ToolGroup.PhoneActions.isOn(defaults))
-        assertEquals(3, ToolGroup.countOn(ToolTier.entries.toSet()))
+        assertEquals(4, ToolGroup.countOn(ToolTier.entries.toSet()))
         // Half of a card is not on: its switch turns both tiers together.
         assertEquals(1, ToolGroup.countOn(setOf(ToolTier.Local, ToolTier.PhoneAction)))
     }

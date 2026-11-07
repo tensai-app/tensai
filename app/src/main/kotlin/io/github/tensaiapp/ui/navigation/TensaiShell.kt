@@ -77,6 +77,7 @@ private fun detailTitleForRoute(route: String?): Int? = when {
     route == TensaiDestination.ToolsOnPhone.route -> R.string.tools_tier_local
     route == TensaiDestination.ToolsPhoneActions.route -> R.string.tools_tier_phone
     route == TensaiDestination.ToolsInternet.route -> R.string.tools_tier_internet
+    route == TensaiDestination.ToolsPersonal.route -> R.string.tools_tier_personal
     route == TensaiDestination.Licenses.route -> R.string.settings_licenses
     route == TensaiDestination.Changelog.route -> R.string.changelog_title
     route == TensaiDestination.Server.route -> R.string.nav_server

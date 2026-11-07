@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.github.tensaiapp.agent.DefaultTierGrants
 import io.github.tensaiapp.agent.TierGrants
@@ -65,6 +66,9 @@ class ToolSettingsRepository(
             ?: SearchProviderChoice.DuckDuckGo
     }
 
+    /** Apps whose notifications `read_notifications` never keeps (TEN-211), by package or name. Empty by default. */
+    val excludedNotificationApps: Flow<Set<String>> = dataStore.data.map { it[excludedAppsKey].orEmpty() }
+
     override fun granted(): Set<ToolTier> {
         snapshot?.let { return it }
         if (onMain()) return DefaultTierGrants.granted()
@@ -80,6 +84,10 @@ class ToolSettingsRepository(
         dataStore.edit { it[providerKey] = provider.name }
     }
 
+    suspend fun setExcludedNotificationApps(apps: Set<String>) {
+        dataStore.edit { it[excludedAppsKey] = apps.map(String::trim).filter(String::isNotEmpty).toSet() }
+    }
+
     private fun read(preferences: Preferences): Set<ToolTier> {
         val defaults = DefaultTierGrants.granted()
         return ToolTier.entries.filter { preferences[tierKey(it)] ?: (it in defaults) }.toSet().also { snapshot = it }
@@ -89,6 +97,7 @@ class ToolSettingsRepository(
 
     private companion object {
         val providerKey = stringPreferencesKey("search_provider")
+        val excludedAppsKey = stringSetPreferencesKey("excluded_notification_apps")
     }
 }
 

@@ -312,6 +312,7 @@ fun TensaiNavGraph(
                             ToolGroup.OnPhone -> TensaiDestination.ToolsOnPhone.route
                             ToolGroup.PhoneActions -> TensaiDestination.ToolsPhoneActions.route
                             ToolGroup.Internet -> TensaiDestination.ToolsInternet.route
+                            ToolGroup.PersonalData -> TensaiDestination.ToolsPersonal.route
                         },
                     )
                 },
@@ -321,6 +322,7 @@ fun TensaiNavGraph(
         composable(TensaiDestination.ToolsOnPhone.route) { ToolGroupScreen(ToolGroup.OnPhone) }
         composable(TensaiDestination.ToolsPhoneActions.route) { ToolGroupScreen(ToolGroup.PhoneActions) }
         composable(TensaiDestination.ToolsInternet.route) { ToolGroupScreen(ToolGroup.Internet) }
+        composable(TensaiDestination.ToolsPersonal.route) { ToolGroupScreen(ToolGroup.PersonalData) }
 
         composable(TensaiDestination.Changelog.route) {
             ChangelogScreen()
