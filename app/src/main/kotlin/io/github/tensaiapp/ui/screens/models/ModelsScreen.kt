@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -144,6 +145,7 @@ fun ModelsScreen(
     val discover = remember { DiscoverViewModel(scope = scope) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val resources = LocalResources.current
     // TEN-142: the queue, as cards above the installed models.
     val downloads = remember { ModelDownloads(scope) }
     LaunchedEffect(downloads) { downloads.start() }
@@ -156,7 +158,7 @@ fun ModelsScreen(
                 // On applicationScope: it can wait for the queue, and must outlive this screen (TEN-177).
                 RuntimeGraph.applicationScope.async { repository.deleteModel(model.id) }.await()
             } catch (e: ModelInUseException) {
-                snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, model.shownName))
+                snackbarHostState.showSnackbar(resources.getString(R.string.model_delete_in_use, model.shownName))
             }
         }
     }

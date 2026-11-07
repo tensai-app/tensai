@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -150,6 +151,7 @@ fun ModelDetailScreen(
     var importFailure by remember { mutableStateOf<ImportFailure?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val snackbarHostState = remember { SnackbarHostState() }
     val clearDescription = stringResource(R.string.model_detail_sessions_clear_desc)
     // TEN-143: "Download again" goes through the same queue and the same dialogs as the repo screen.
@@ -182,7 +184,7 @@ fun ModelDetailScreen(
         RuntimeGraph.applicationScope.async { repository.deleteModel(modelId) }.await()
         true
     } catch (e: ModelInUseException) {
-        snackbarHostState.showSnackbar(context.getString(R.string.model_delete_in_use, name))
+        snackbarHostState.showSnackbar(resources.getString(R.string.model_delete_in_use, name))
         false
     }
 

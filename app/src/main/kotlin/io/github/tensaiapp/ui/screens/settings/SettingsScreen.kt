@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
@@ -183,6 +184,7 @@ fun SettingsScreen(
     // it has no `stringResource` to call, and building the message by pasting a size onto a
     // translated prefix would freeze English word order into every translation.
     val context = LocalContext.current
+    val resources = LocalResources.current
     val nothingToClear = stringResource(R.string.settings_storage_cleared_nothing)
     val unknown = stringResource(R.string.settings_inference_unknown)
     val newLabel = stringResource(R.string.changelog_new)
@@ -565,7 +567,7 @@ fun SettingsScreen(
                             uiScope.launch {
                                 snackbarHostState.showSnackbar(
                                     if (report.freedBytes > 0) {
-                                        context.getString(
+                                        resources.getString(
                                             R.string.settings_storage_cleared,
                                             formatFileSize(report.freedBytes),
                                         )

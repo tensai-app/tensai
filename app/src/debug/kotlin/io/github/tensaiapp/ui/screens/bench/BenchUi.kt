@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -449,6 +450,8 @@ internal fun elapsedText(ms: Long): String {
 /** "Today · 15:30", "Yesterday · 22:17", else the date: when a run started. */
 @Composable
 internal fun startedLabel(startedAtMs: Long): String {
+    // The app's language, observed: a change recomposes with it.
+    val locale = LocalConfiguration.current.locales[0]
     val zone = ZoneId.systemDefault()
     val at = Instant.ofEpochMilli(startedAtMs).atZone(zone)
     val time = at.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
@@ -456,7 +459,7 @@ internal fun startedLabel(startedAtMs: Long): String {
     return when (at.toLocalDate()) {
         today -> stringResource(R.string.bench_today, time)
         today.minusDays(1) -> stringResource(R.string.bench_yesterday, time)
-        else -> at.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())) + " · " + time
+        else -> at.format(DateTimeFormatter.ofPattern("d MMM", locale)) + " · " + time
     }
 }
 

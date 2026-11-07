@@ -21,7 +21,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -47,23 +49,26 @@ fun DeviceScreen(
     copyRequests: Flow<Unit> = emptyFlow(),
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val viewModel = remember {
         val app = context.applicationContext
         DeviceInfoViewModel(read = { readDeviceInfo(app) })
     }
     val info by viewModel.info.collectAsState()
     val current = info
-    val sections = remember(current, context) {
-        current?.let { deviceSections(it) { id -> context.getString(id) } }
+    // The locale too: with `locale` in configChanges the Resources instance can stay the same across a language change.
+    val locale = LocalConfiguration.current.locales[0]
+    val sections = remember(current, resources, locale) {
+        current?.let { deviceSections(it) { id -> resources.getString(id) } }
     }
 
     val latestSections by rememberUpdatedState(sections)
     LaunchedEffect(copyRequests) {
         copyRequests.collect {
             val ready = latestSections ?: return@collect
-            val text = withContext(Dispatchers.Default) { deviceReportText(ready) { id -> context.getString(id) } }
+            val text = withContext(Dispatchers.Default) { deviceReportText(ready) { id -> resources.getString(id) } }
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.device_title), text))
+            clipboard.setPrimaryClip(ClipData.newPlainText(resources.getString(R.string.device_title), text))
             Toast.makeText(context, R.string.device_copied, Toast.LENGTH_SHORT).show()
         }
     }
