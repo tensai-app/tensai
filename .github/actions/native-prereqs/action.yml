@@ -105,7 +105,7 @@ runs:
       test -s "$OUT/ggml-vulkan-shaders.hpp"
       n=$(find "$OUT/shaders" -name '*.comp.cpp' | wc -l)
       echo "$n fichiers .comp.cpp"
-      [ "$n" -eq 132 ] || { echo "attendu 132"; exit 1; }
+      [ "$n" -eq 155 ] || { echo "attendu 155"; exit 1; }
 
   - name: Save generated Vulkan shaders
     if: steps.shader-cache.outputs.cache-hit != 'true'
