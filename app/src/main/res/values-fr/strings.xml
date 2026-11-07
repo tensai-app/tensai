@@ -725,6 +725,7 @@
     <string name="tool_name_read_calendar">Agenda</string>
     <string name="tool_name_location">Position</string>
     <string name="tool_name_read_notifications">Notifications</string>
+    <string name="tool_name_read_sms">SMS</string>
     <string name="tool_name_open_app">Ouvrir une app</string>
     <string name="tool_name_open_url">Ouvrir un lien</string>
     <string name="tool_name_media_control">Contrôle des médias</string>
@@ -752,6 +753,7 @@
     <string name="tool_desc_read_calendar">Lit les événements d\'un jour ou d\'une période (titre, heure, lieu). Demande la permission Agenda d\'Android au premier usage</string>
     <string name="tool_desc_location">Donne la position approximative du téléphone (environ 1 km), pour la météo par exemple. Demande la permission Position d\'Android au premier usage</string>
     <string name="tool_desc_read_notifications">Lit les notifications récentes (messages, aperçus d\'e-mails), sur le téléphone uniquement. Demande l\'accès aux notifications d\'Android</string>
+    <string name="tool_desc_read_sms">Lit les SMS reçus et envoyés, éventuellement avec un seul contact, sur le téléphone uniquement. Demande la permission SMS d\'Android au premier usage</string>
     <string name="tool_desc_open_app">Lance une app installée</string>
     <string name="tool_desc_open_url">Ouvre un lien dans le navigateur</string>
     <string name="tool_desc_media_control">Lecture, pause et piste suivante dans le lecteur en cours</string>
@@ -813,6 +815,8 @@
     <string name="tool_run_location">Recherche de la position…</string>
     <string name="tool_done_read_notifications">Notifications lues</string>
     <string name="tool_run_read_notifications">Lecture des notifications…</string>
+    <string name="tool_done_read_sms">SMS lus</string>
+    <string name="tool_run_read_sms">Lecture des SMS…</string>
     <string name="tool_done_open_app">App ouverte</string>
     <string name="tool_run_open_app">Ouverture de l\'app…</string>
     <string name="tool_done_open_url">Lien ouvert</string>
@@ -844,6 +848,7 @@
     <string name="tool_refused_calendar">Agenda refusé</string>
     <string name="tool_refused_location">Position refusée</string>
     <string name="tool_refused_notifications">Accès aux notifications désactivé</string>
+    <string name="tool_refused_read_sms">SMS refusés</string>
     <string name="tool_refused_url">Lien refusé</string>
     <string name="tool_line_stopped">Arrêté</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>

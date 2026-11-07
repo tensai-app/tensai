@@ -814,6 +814,7 @@
     <string name="tool_name_read_calendar">Calendar</string>
     <string name="tool_name_location">Location</string>
     <string name="tool_name_read_notifications">Notifications</string>
+    <string name="tool_name_read_sms">SMS</string>
     <string name="tool_name_open_app">Open app</string>
     <string name="tool_name_open_url">Open link</string>
     <string name="tool_name_media_control">Media control</string>
@@ -841,6 +842,7 @@
     <string name="tool_desc_read_calendar">Reads the events of a day or a range (title, time, place). Asks Android\'s calendar permission at first use</string>
     <string name="tool_desc_location">Gives the phone\'s approximate position (about 1 km), for the weather for instance. Asks Android\'s location permission at first use</string>
     <string name="tool_desc_read_notifications">Reads the recent notifications (messages, mail previews), on the phone only. Needs Android\'s Notification access</string>
+    <string name="tool_desc_read_sms">Reads the SMS received and sent, optionally with one contact, on the phone only. Asks Android\'s SMS permission at first use</string>
     <string name="tool_desc_open_app">Launches an installed app</string>
     <string name="tool_desc_open_url">Opens a link in your browser</string>
     <string name="tool_desc_media_control">Play, pause and skip in the current player</string>
@@ -902,6 +904,8 @@
     <string name="tool_run_location">Getting the location…</string>
     <string name="tool_done_read_notifications">Read the notifications</string>
     <string name="tool_run_read_notifications">Reading the notifications…</string>
+    <string name="tool_done_read_sms">Read the SMS</string>
+    <string name="tool_run_read_sms">Reading the SMS…</string>
     <string name="tool_done_open_app">Opened an app</string>
     <string name="tool_run_open_app">Opening an app…</string>
     <string name="tool_done_open_url">Opened a link</string>
@@ -933,6 +937,7 @@
     <string name="tool_refused_calendar">Calendar refused</string>
     <string name="tool_refused_location">Location refused</string>
     <string name="tool_refused_notifications">Notification access off</string>
+    <string name="tool_refused_read_sms">SMS refused</string>
     <string name="tool_refused_url">Link refused</string>
     <string name="tool_line_stopped">Stopped</string>
     <string name="tool_line_repeated">%1$s ×%2$d</string>

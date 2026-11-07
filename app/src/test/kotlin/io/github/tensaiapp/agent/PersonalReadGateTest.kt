@@ -101,4 +101,26 @@ class PersonalReadGateTest {
         assertTrue("open_url always asked", phone.first { it.name == "open_url" }.asksFirst("""{"url":"https://example.com"}""", ConversationTrust()))
         assertTrue("a remember after untrusted text asked already", memory.asksFirst("""{"action":"remember","text":"x"}""", trust))
     }
+
+    /** read_sms is in the same tier: a search after it asks too. */
+    @Test
+    fun afterReadingSmsAWebSearchAsks() {
+        val sms = ReadSmsTool(
+            object : SmsSource {
+                override fun isGranted() = true
+                override suspend fun access() = PermissionResult.Granted
+                override fun query(sinceMillis: Long, box: SmsBox, maxRows: Int) = emptyList<SmsMessage>()
+            },
+            Contacts,
+            inForeground = { true },
+        )
+        val trust = listOf(
+            ChatMessage(MessageRole.User, "my texts"),
+            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", sms.name, "{}"))),
+            ChatMessage(MessageRole.Tool, "result", toolCallId = "c1"),
+        ).fold(ConversationTrust()) { t, m -> t.with(m, ToolRegistry(listOf(sms)) { ToolTier.entries.toSet() }::find) }
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+    }
 }

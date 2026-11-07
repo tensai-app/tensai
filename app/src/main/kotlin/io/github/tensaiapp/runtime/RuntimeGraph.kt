@@ -10,6 +10,7 @@ import io.github.tensaiapp.agent.AndroidCalendarSource
 import io.github.tensaiapp.agent.AndroidContactsSource
 import io.github.tensaiapp.agent.AndroidLocationSource
 import io.github.tensaiapp.agent.AndroidPhoneActions
+import io.github.tensaiapp.agent.AndroidSmsSource
 import io.github.tensaiapp.agent.CreateEventTool
 import io.github.tensaiapp.agent.DraftEmailTool
 import io.github.tensaiapp.agent.DraftSmsTool
@@ -17,6 +18,7 @@ import io.github.tensaiapp.agent.FindContactTool
 import io.github.tensaiapp.agent.LocationTool
 import io.github.tensaiapp.agent.ReadCalendarTool
 import io.github.tensaiapp.agent.ReadNotificationsTool
+import io.github.tensaiapp.agent.ReadSmsTool
 import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.NotificationBuffer
 import io.github.tensaiapp.agent.NotificationBufferFile
@@ -424,6 +426,7 @@ object RuntimeGraph {
             FindContactTool(contacts) { phone.inForeground },
             ReadCalendarTool(AndroidCalendarSource(appContext, permissionGate), inForeground = { phone.inForeground }),
             LocationTool(AndroidLocationSource(appContext, permissionGate), inForeground = { phone.inForeground }),
+            ReadSmsTool(AndroidSmsSource(appContext, permissionGate), contacts, inForeground = { phone.inForeground }),
         )
     }
 

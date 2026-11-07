@@ -28,6 +28,7 @@ import android.util.Log
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.Telephony
 import android.view.KeyEvent
 import io.github.tensaiapp.R
 import kotlinx.coroutines.CoroutineScope
@@ -297,6 +298,44 @@ class AndroidContactsSource(context: Context, private val gate: PermissionGate) 
             }
         }
         return names.map { (id, name) -> Contact(id, name, phones[id].orEmpty(), emails[id].orEmpty()) }
+    }
+}
+
+/**
+ * The SMS on a real device (TEN-212): READ_SMS asked through [gate] at first use, then one query on the inbox and sent
+ * box (number, date, body, type), see [smsSelection]. Nothing is cached or logged.
+ */
+class AndroidSmsSource(context: Context, private val gate: PermissionGate) : SmsSource {
+    private val app = context.applicationContext
+
+    override fun isGranted(): Boolean = app.checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+
+    override suspend fun access(): PermissionResult {
+        if (isGranted()) return PermissionResult.Granted
+        return gate.request(Manifest.permission.READ_SMS)
+    }
+
+    override fun query(sinceMillis: Long, box: SmsBox, maxRows: Int): List<SmsMessage>? {
+        val where = smsSelection(sinceMillis, box)
+        val messages = mutableListOf<SmsMessage>()
+        val cursor = try {
+            app.contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.DATE, Telephony.Sms.BODY, Telephony.Sms.TYPE),
+                where.selection, where.args.toTypedArray(), "${Telephony.Sms.DATE} DESC",
+            )
+        } catch (e: IllegalArgumentException) {
+            // No provider for the URI: a device without telephony.
+            null
+        } ?: return null
+        cursor.use { c ->
+            while (messages.size < maxRows && c.moveToNext()) {
+                val address = c.getString(0)?.trim().orEmpty()
+                if (address.isEmpty()) continue
+                messages += SmsMessage(address, c.getLong(1), c.getString(2).orEmpty(), c.getInt(3) == Telephony.Sms.MESSAGE_TYPE_SENT)
+            }
+        }
+        return messages
     }
 }
 

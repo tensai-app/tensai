@@ -202,6 +202,13 @@ class NotificationBuffer(
     }
 }
 
+/**
+ * [value] in double quotes, backslashes, quotes and newlines escaped: a field of an item a third party wrote, which can
+ * then not end its item and start another or a header. Shared by `read_notifications` and `read_sms`.
+ */
+internal fun quoted(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "\\n") + "\""
+
 /** Android's side of `read_notifications`: whether the user granted Notification access, and what is in the shade now. */
 interface NotificationAccess {
     fun enabled(): Boolean
@@ -285,9 +292,6 @@ class ReadNotificationsTool(
         if (left > 0) out.append("\n(").append(left).append(" more not shown)")
         return out.toString()
     }
-
-    private fun quoted(value: String): String =
-        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "\\n") + "\""
 
     /** "14:05, 12 min ago". */
     private fun time(at: Long, now: Long): String {

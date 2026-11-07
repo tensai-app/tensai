@@ -17,6 +17,12 @@
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- TEN-212: read_sms, behind the "Notifications and messages" tools, off by default. Asked at first use, never
+         at launch; the inbox and sent box are read on the phone and only handed to the local model. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- READ_SMS implies telephony: not required, so Wi-Fi-only tablets still get the app (read_sms says there is no SMS). -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
     <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
          listings and files from huggingface.co and nothing else: no telemetry, no other host.
          "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->

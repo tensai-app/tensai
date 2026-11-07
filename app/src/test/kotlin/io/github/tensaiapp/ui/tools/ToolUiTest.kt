@@ -33,6 +33,7 @@ class ToolUiTest {
         val planned = listOf(
             "set_timer", "set_alarm", "create_event", "draft_sms", "draft_email", "find_contact", "open_app", "open_url",
             "read_calendar", "location", "media_control", "web_search", "web_fetch", "weather", "wikipedia", "read_notifications",
+            "read_sms",
         )
 
         assertEquals(emptyList<String>(), (registered + planned).filter { ToolUiCatalog.meta(it) == null })
