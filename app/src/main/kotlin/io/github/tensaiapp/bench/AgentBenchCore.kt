@@ -299,15 +299,15 @@ enum class AnswerOutcome {
     Correct,
     Wrong,
 
-    /** No check for the prompt, or the turn failed before it could answer. */
+    /** No check for the prompt and a reply to show, or the turn failed before it could answer. */
     Unchecked,
 
     /** A token cap ended the turn before its reply held the answer: the budget ran out, not the model's knowledge. */
     Cut,
 
     /**
-     * No reply, the turn ended by the model itself: at a low budget, the forced close tag followed by end of turn. A
-     * failure of the budget, not a cap.
+     * No reply, the turn ended by the model itself: at a low budget, the forced close tag followed by end of turn, or an
+     * empty answer after a tool call (TEN-204). A failure, not a cap, whether the prompt has a check or not.
      */
     Empty,
     ;
@@ -329,7 +329,9 @@ enum class AnswerOutcome {
          * [stopReason], `null` when it reported no stats.
          */
         fun of(check: AnswerCheck?, reply: String?, stopReason: String?, failed: Boolean = false): AnswerOutcome = when {
-            check == null || failed -> Unchecked
+            failed -> Unchecked
+            reply.isNullOrBlank() && stopReason != null && stopReason !in CappedStops -> Empty
+            check == null -> Unchecked
             !reply.isNullOrBlank() && check.matches(reply) -> Correct
             stopReason == null || stopReason in CappedStops -> Cut
             reply.isNullOrBlank() -> Empty
@@ -440,6 +442,8 @@ class RefusingGate : ConfirmationGate {
  *   call the verdict counts as made, whose result gave the model nothing to answer from. Logged on its call.
  * @param answer [reply] against the prompt's [BenchPrompt.answer], whatever the [verdict]: a right call can still be
  *   answered wrong.
+ * @param emptyRaw what the model wrote, think tags included, when an answer after a tool came out empty and the runtime
+ *   asked again (TEN-204), `null` otherwise. Kept for the bench screen, never logged; the line logs `asked_again`.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -464,6 +468,7 @@ data class BenchResult(
     val reasoning: String? = null,
     val callErrors: Map<String, String> = emptyMap(),
     val answer: AnswerOutcome = AnswerOutcome.Unchecked,
+    val emptyRaw: String? = null,
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -498,6 +503,7 @@ data class BenchResult(
         put("total_ms", totalMs)
         put("stop", stopReason)
         if (prefixCold) put("prefix_cold", true)
+        if (emptyRaw != null) put("asked_again", true)
         if (namedInText.isNotEmpty()) put("named_in_text", JsonArray(namedInText.map { JsonPrimitive(it) }))
         if (truncatedCalls.isNotEmpty()) put("truncated_calls", JsonArray(truncatedCalls.map { JsonPrimitive(it) }))
         error?.let { put("error", it) }
@@ -691,6 +697,7 @@ class BenchRunner(
         var ttftMs: Long? = null
         var replies = 0
         var reasoning: String? = null
+        var emptyRaw: String? = null
         val reasonings = mutableListOf<String>()
         val replyTexts = mutableListOf<String>()
         val calls = mutableListOf<ToolCall>()
@@ -713,6 +720,7 @@ class BenchRunner(
                 }
                 is AgentEvent.ReplyFinished -> {
                     if (replies++ == 0) ttftMs = event.stats?.ttftMs
+                    if (event.retrying) emptyRaw = event.raw
                     calls += event.calls
                     // The last name may be cut short: only a tool the prompt offered counts.
                     if (event.truncated && event.calls.isEmpty()) truncatedCalls += opened.filter { it in available }
@@ -756,6 +764,7 @@ class BenchRunner(
             reasoning = reasonings.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
             callErrors = callErrors,
             answer = AnswerOutcome.of(prompt.answer, reply, stopReason, failed = error != null),
+            emptyRaw = emptyRaw,
         )
     }
 

@@ -94,6 +94,9 @@ sealed interface AgentEvent {
      * @param toolsIgnored see [io.github.tensaiapp.engine.DecodeEvent.ToolTurn.toolsIgnored].
      * @param toolParseFailed see [io.github.tensaiapp.engine.DecodeEvent.ToolTurn.toolParseFailed].
      * @param truncated see [io.github.tensaiapp.engine.DecodeEvent.ToolTurn.truncated].
+     * @param retrying the answer after an ok call came out with no text, and the runtime asks once more (TEN-204):
+     *   this reply is dropped, the next one answers. See [AgentRuntime].
+     * @param raw what the model wrote, think tags included, set only with [retrying]: for debug logs and the bench.
      */
     data class ReplyFinished(
         val index: Int,
@@ -104,6 +107,8 @@ sealed interface AgentEvent {
         val toolsIgnored: Boolean,
         val toolParseFailed: Boolean,
         val truncated: Boolean,
+        val retrying: Boolean = false,
+        val raw: String? = null,
     ) : AgentEvent
 
     /** A call is about to be validated, confirmed and run. */

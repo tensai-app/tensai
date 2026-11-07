@@ -875,6 +875,10 @@ class AgentBenchTest {
         assertEquals("the model ended the turn with nothing: not a cap", AnswerOutcome.Empty, AnswerOutcome.of(check, null, StopReason.Complete.name))
         assertEquals(AnswerOutcome.Empty, AnswerOutcome.of(check, "  ", StopReason.Complete.name))
         assertEquals("no stats, no telling", AnswerOutcome.Cut, AnswerOutcome.of(check, null, null))
+        // TEN-204: time-tokyo has no check, and an empty answer after its tool must still show as one.
+        assertEquals(AnswerOutcome.Empty, AnswerOutcome.of(null, null, StopReason.Complete.name))
+        assertEquals(AnswerOutcome.Unchecked, AnswerOutcome.of(null, "It is 23:04.", StopReason.Complete.name))
+        assertEquals("a cap, not the model", AnswerOutcome.Unchecked, AnswerOutcome.of(null, null, StopReason.TokenBudget.name))
         assertEquals(AnswerOutcome.Cut, AnswerOutcome.of(check, "7 times 8 is", StopReason.ResponseBudgetExhausted.name))
         assertEquals("the answer came before the cap", AnswerOutcome.Correct, AnswerOutcome.of(check, "56, because", StopReason.ResponseBudgetExhausted.name))
         assertEquals(AnswerOutcome.Unchecked, AnswerOutcome.of(null, "56", StopReason.Complete.name))

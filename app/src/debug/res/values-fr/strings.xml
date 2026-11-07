@@ -160,6 +160,7 @@
         <item quantity="other">coupé à %d caractères</item>
     </plurals>
     <string name="bench_no_reply">Pas de texte de réponse.</string>
+    <string name="bench_asked_again">Réponse vide après l\'outil, redemandée. Ce que le modèle a écrit :</string>
     <string name="bench_verdict_correct">Correct</string>
     <string name="bench_verdict_false_call">Appel en trop</string>
     <string name="bench_verdict_missing">Appel manquant</string>

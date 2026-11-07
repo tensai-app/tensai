@@ -7,6 +7,7 @@ import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.DecodeStats
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.engine.ToolChoice
 import kotlinx.coroutines.CompletableDeferred
@@ -91,6 +92,94 @@ class AgentRuntimeTest {
     ) = AgentRuntime(ToolRegistry(tools.toList()), gate, countTokens = countTokens, timeoutMs = timeoutMs)
 
     private fun List<AgentEvent>.outcomes() = filterIsInstance<AgentEvent.ToolCallFinished>().map { it.outcome }
+
+    /** A final reply as the engine parses it when the model wrote [raw]: [content] after the think tags are split off. */
+    private fun answer(raw: String, content: String, reasoning: String?, stop: StopReason = StopReason.Complete): List<DecodeEvent> = listOf(
+        DecodeEvent.Token(raw),
+        DecodeEvent.ToolTurn(content, reasoning, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = false),
+        DecodeEvent.Done(DecodeStats(tokensGenerated = 15, tokPerSec = 1f, ttftMs = 1L, stopReason = stop)),
+    )
+
+    /**
+     * TEN-204: after an ok call the model can end its answer with nothing outside the think tags: an end of turn right
+     * after `</think>`, only blank lines after it, or a stop inside an unclosed `<think>`. The runtime asks once more,
+     * thinking off and no tools, and the turn ends on that answer.
+     */
+    @Test
+    fun anEmptyAnswerAfterAnOkCallIsAskedOnceMoreWithoutThinking() = runBlocking {
+        val empties = listOf(
+            answer("<think>The tool says 23:04.</think>", content = "", reasoning = "The tool says 23:04."),
+            answer("<think>The tool says 23:04.</think>\n\n", content = "\n\n", reasoning = "The tool says 23:04."),
+            answer("<think>The tool says", content = "", reasoning = "The tool says"),
+            // The token cap hit inside the think block.
+            answer("<think>The tool says", content = "", reasoning = "The tool says", stop = StopReason.TokenBudget),
+        )
+        for (empty in empties) {
+            val gen = ScriptedGenerator(reply(calls = listOf(call("c1"))), empty, reply("It is 23:04 in Tokyo."))
+
+            val events = runtime(FakeTool()).run(userTurn, gen).toList()
+
+            assertEquals(3, gen.requests.size)
+            val retry = gen.requests[2]
+            assertFalse("thinking off for the second ask", retry.sampling.enableThinking)
+            assertNull(retry.sampling.reasoningBudget)
+            assertEquals(ToolChoice.None, retry.toolChoice)
+            assertEquals("the empty answer is not replayed", gen.requests[1].messages, retry.messages)
+            val finished = events.filterIsInstance<AgentEvent.ReplyFinished>()
+            assertEquals(listOf(false, true, false), finished.map { it.retrying })
+            assertEquals(empty.filterIsInstance<DecodeEvent.Token>().single().text, finished[1].raw)
+            assertEquals("It is 23:04 in Tokyo.", finished.last().content)
+            assertEquals(AgentEvent.Done, events.last())
+        }
+    }
+
+    @Test
+    fun aSecondEmptyAnswerEndsTheTurnWithoutAskingAgain() = runBlocking {
+        val empty = answer("<think>hm</think>", content = "", reasoning = "hm")
+        val gen = ScriptedGenerator(reply(calls = listOf(call("c1"))), empty, empty)
+
+        val events = runtime(FakeTool()).run(userTurn, gen).toList()
+
+        assertEquals(3, gen.requests.size)
+        val finished = events.filterIsInstance<AgentEvent.ReplyFinished>()
+        assertEquals(listOf(false, true, false), finished.map { it.retrying })
+        assertEquals("", finished.last().content)
+        assertEquals(AgentEvent.Done, events.last())
+    }
+
+    @Test
+    fun noSecondAskWithoutAnOkCallOrWhenTheContextRanOut() = runBlocking {
+        val empty = answer("<think>hm</think>", content = "", reasoning = "hm")
+        // A first reply with nothing in it: no tool result to answer from.
+        assertEquals(1, ScriptedGenerator(empty).also { runtime(FakeTool()).run(userTurn, it).toList() }.requests.size)
+        // The only call failed.
+        val failing = FakeTool(body = { ToolResult.error("nope") })
+        assertEquals(2, ScriptedGenerator(reply(calls = listOf(call("c1"))), empty).also { runtime(failing).run(userTurn, it).toList() }.requests.size)
+        // Stopped by the user, failed, or no room left in the context: asking again is not wanted or cannot fit.
+        for (stop in listOf(StopReason.Cancelled, StopReason.Failed, StopReason.ContextBudgetExhausted)) {
+            val ended = answer("<think>hm", content = "", reasoning = "hm", stop = stop)
+            assertEquals(stop.name, 2, ScriptedGenerator(reply(calls = listOf(call("c1"))), ended).also { runtime(FakeTool()).run(userTurn, it).toList() }.requests.size)
+        }
+        // A parse the engine rejected: the chat rescues the prose from the stream, a second ask would throw it away.
+        val rejected = listOf(
+            DecodeEvent.Token("It is 23:04."),
+            DecodeEvent.ToolTurn("", null, emptyList(), toolsIgnored = false, toolParseFailed = true, truncated = false),
+            DecodeEvent.Done(DecodeStats(tokensGenerated = 5, tokPerSec = 1f, ttftMs = 1L, stopReason = StopReason.Complete)),
+        )
+        assertEquals(2, ScriptedGenerator(reply(calls = listOf(call("c1"))), rejected).also { runtime(FakeTool()).run(userTurn, it).toList() }.requests.size)
+    }
+
+    /** The second ask answers from the last call: an ok one earlier in the turn, then a failed one, is nothing to answer from. */
+    @Test
+    fun onlyTheLastCallDecidesTheSecondAsk() = runBlocking {
+        val empty = answer("<think>hm</think>", content = "", reasoning = "hm")
+        val failing = FakeTool("broken", body = { ToolResult.error("nope") })
+        val gen = ScriptedGenerator(reply(calls = listOf(call("c1"))), reply(calls = listOf(call("c2", name = "broken"))), empty)
+
+        runtime(FakeTool(), failing).run(userTurn, gen).toList()
+
+        assertEquals(3, gen.requests.size)
+    }
 
     @Test
     fun noCallIsOneGenerationThenDone() = runBlocking {
@@ -496,7 +585,7 @@ class AgentRuntimeTest {
                 if (generations == 2) {
                     emit(DecodeEvent.Error(QueueBusyException("busy")))
                 } else {
-                    reply(calls = if (generations == 1) listOf(call("a")) else emptyList()).forEach { emit(it) }
+                    (if (generations == 1) reply(calls = listOf(call("a"))) else reply("done")).forEach { emit(it) }
                 }
             }
         }

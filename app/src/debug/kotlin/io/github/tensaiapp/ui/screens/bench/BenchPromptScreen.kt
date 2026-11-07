@@ -152,6 +152,10 @@ internal fun BenchPromptScreen(runId: String, promptId: String, runKey: String, 
                 }
             }
             Eyebrow(stringResource(R.string.bench_eyebrow_reply))
+            trial.emptyRaw?.let { raw ->
+                Text(stringResource(R.string.bench_asked_again), fontFamily = TensaiMono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
+                Text(raw, fontFamily = TensaiMono, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 10.dp))
+            }
             trial.reasoning?.let { reasoning ->
                 ThinkingBlock(thinking = reasoning, isActive = false)
                 val facts = listOfNotNull(

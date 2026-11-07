@@ -257,9 +257,10 @@ class AskUserToolTest {
         return ReplyGenerator { flow { queue.removeFirst().forEach { emit(it) } } }
     }
 
+    // The final answer has text: an empty one after an ok call is asked for again (TEN-204).
     private fun reply(calls: List<ToolCall> = emptyList()) = listOf(
         DecodeEvent.Token(""),
-        DecodeEvent.ToolTurn("", null, calls, toolsIgnored = false, toolParseFailed = false, truncated = false),
+        DecodeEvent.ToolTurn(if (calls.isEmpty()) "ok" else "", null, calls, toolsIgnored = false, toolParseFailed = false, truncated = false),
         DecodeEvent.Done(DecodeStats(tokensGenerated = 1, tokPerSec = 1f, ttftMs = 1L)),
     )
 

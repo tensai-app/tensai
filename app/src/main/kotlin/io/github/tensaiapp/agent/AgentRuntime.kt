@@ -6,6 +6,7 @@ import io.github.tensaiapp.engine.DecodeEvent
 import io.github.tensaiapp.engine.DecodeRequest
 import io.github.tensaiapp.engine.DecodeStats
 import io.github.tensaiapp.engine.MessageRole
+import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.engine.ToolChoice
 import io.github.tensaiapp.engine.ToolDefinition
@@ -84,6 +85,9 @@ fun interface ConfirmationGate {
  *   the same: one generation with [ToolChoice.None], so a small model answers instead of chaining calls
  *   that go nowhere. An ok call starts the count again;
  * - a tool runs at most its tier's [ToolTier.timeoutMs] (none for a [Tool.waitsForUser]), a result at most [ResultTokenBudget] tokens;
+ * - an answer that follows an ok call (the last one of the turn) and has no text (TEN-204: the model ended its turn inside or right after its
+ *   think tags) is asked for once more, thinking off and [ToolChoice.None], with the empty reply left out of the history.
+ *   The second answer ends the turn whatever it holds: never a third;
  * - cancelling the collector (Stop) cancels the running tool and ends the loop. The calls that did
  *   not finish get no event: whoever records the turn closes them with [ToolCallOutcome.stopped] (a
  *   flow cannot emit once its collector is cancelled), so every call of a reply has its result.
@@ -134,6 +138,10 @@ class AgentRuntime(
      */
     fun trustWith(trust: ConversationTrust, message: ChatMessage): ConversationTrust = trust.with(message, registry::find)
 
+    /** [Tool.fallbackAnswer] of [outcome]'s tool, `null` for a call that was not ok or a tool with none. */
+    fun fallbackAnswer(outcome: ToolCallOutcome): String? =
+        if (outcome.status != ToolCallStatus.Ok) null else registry.find(outcome.call.name)?.fallbackAnswer(outcome.output)
+
     /** The active tools as the prompt describes them. */
     fun definitions(): List<ToolDefinition> =
         registry.active().map { ToolDefinition(it.name, it.description, it.parametersSchema) }
@@ -176,6 +184,9 @@ class AgentRuntime(
         var callsMade = 0
         var failedInARow = 0
         var index = 0
+        // The last call ended ok, so the model has something to answer from; and whether the empty answer's one retry is spent.
+        var okCall = false
+        var askedAgain = false
         // What the gate reads (web_fetch, memory remember): the whole history, then each message the turn adds to it.
         var trust = request.messages.fold(ConversationTrust(), ::trustWith)
         while (true) {
@@ -184,7 +195,8 @@ class AgentRuntime(
             val generation = request.copy(
                 messages = history.toList(),
                 tools = definitions,
-                toolChoice = if (forced) ToolChoice.None else ToolChoice.Auto,
+                toolChoice = if (forced || askedAgain) ToolChoice.None else ToolChoice.Auto,
+                sampling = if (askedAgain) request.sampling.copy(enableThinking = false, reasoningBudget = null) else request.sampling,
             )
             var reply = generateOnce(generator, generation)
             // Rejected before any token, so asking again is safe: once, after the queue frees.
@@ -194,7 +206,11 @@ class AgentRuntime(
                 return@flow
             }
             val turn = reply.turn?.let { bareCall(it, tools) ?: it }
-            val calls = if (forced || turn == null) emptyList() else uniqueIds(turn.toolCalls, turnId, index, usedIds)
+            val calls = if (forced || askedAgain || turn == null) emptyList() else uniqueIds(turn.toolCalls, turnId, index, usedIds)
+            // Not a reply whose calls were dropped past the limit (that model wanted more tools, it did not end on nothing),
+            // nor one the parser rejected: its prose may be in the stream, and the chat keeps it.
+            val askAgain = calls.isEmpty() && okCall && !askedAgain && turn != null && turn.toolCalls.isEmpty() &&
+                !turn.toolParseFailed && turn.content.isBlank() && reply.stats?.stopReason !in NoSecondAsk
             emit(
                 AgentEvent.ReplyFinished(
                     index = index,
@@ -205,8 +221,15 @@ class AgentRuntime(
                     toolsIgnored = turn?.toolsIgnored ?: false,
                     toolParseFailed = turn?.toolParseFailed ?: false,
                     truncated = turn?.truncated ?: false,
+                    retrying = askAgain,
+                    raw = reply.raw.takeIf { askAgain },
                 ),
             )
+            if (askAgain) {
+                askedAgain = true
+                index++
+                continue
+            }
             if (calls.isEmpty()) {
                 emit(AgentEvent.Done)
                 return@flow
@@ -217,6 +240,7 @@ class AgentRuntime(
             for ((i, call) in calls.withIndex()) {
                 val outcome = executeCall(call, tools, trust, overLimit = callsMade + i >= MaxToolCallsPerTurn)
                 emit(AgentEvent.ToolCallFinished(outcome))
+                okCall = outcome.status == ToolCallStatus.Ok
                 when (outcome.status) {
                     ToolCallStatus.Error, ToolCallStatus.Refused, ToolCallStatus.Timeout -> failedInARow++
                     ToolCallStatus.Ok -> failedInARow = 0
@@ -233,23 +257,27 @@ class AgentRuntime(
         }
     }
 
-    private class Reply(val stats: DecodeStats?, val turn: DecodeEvent.ToolTurn?, val error: Throwable?)
+    private class Reply(val stats: DecodeStats?, val turn: DecodeEvent.ToolTurn?, val error: Throwable?, val raw: String)
 
     /** Runs one generation, forwarding its text and keeping the terminal facts. */
     private suspend fun FlowCollector<AgentEvent>.generateOnce(generator: ReplyGenerator, request: DecodeRequest): Reply {
         var stats: DecodeStats? = null
         var turn: DecodeEvent.ToolTurn? = null
         var error: Throwable? = null
+        val raw = StringBuilder()
         generator.generate(request).collect { event ->
             when (event) {
-                is DecodeEvent.Token -> emit(AgentEvent.Token(event.text))
+                is DecodeEvent.Token -> {
+                    raw.append(event.text)
+                    emit(AgentEvent.Token(event.text))
+                }
                 is DecodeEvent.Parsed -> emit(AgentEvent.Parsed(event.content, event.reasoning, event.toolCalls))
                 is DecodeEvent.ToolTurn -> turn = event
                 is DecodeEvent.Done -> stats = event.stats
                 is DecodeEvent.Error -> error = event.cause
             }
         }
-        return Reply(stats, turn, error)
+        return Reply(stats, turn, error, raw.toString())
     }
 
     /**
@@ -394,6 +422,10 @@ class AgentRuntime(
         const val ResultTokenBudget = 512
 
         private const val QueueRetryPauseMs = 250L
+
+        /** How an empty answer can end without being asked for again: stopped, failed, or no room left in the context. */
+        private val NoSecondAsk: Set<StopReason?> =
+            setOf(StopReason.Cancelled, StopReason.Failed, StopReason.ContextBudgetExhausted, StopReason.ContextBudgetClipped)
 
         private val toolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

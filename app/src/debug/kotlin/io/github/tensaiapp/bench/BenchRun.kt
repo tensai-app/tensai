@@ -160,6 +160,7 @@ data class BenchSampling(
  * @param expectedAnswer the prompt's [AnswerCheck.shown], `null` for a prompt with no check.
  * @param tags the prompt's [BenchPrompt.tags].
  * @param reasoningCap [BenchResult.reasoningCap], `null` too in a run saved before it.
+ * @param emptyRaw [BenchResult.emptyRaw], cut to [MaxTextChars].
  */
 @Serializable
 data class BenchTrial(
@@ -189,6 +190,7 @@ data class BenchTrial(
     @SerialName("expected_answer") val expectedAnswer: String? = null,
     val tags: List<String> = emptyList(),
     @SerialName("reasoning_cap") val reasoningCap: Int? = null,
+    @SerialName("empty_raw") val emptyRaw: String? = null,
 ) {
     /** [verdict] read back, [BenchVerdict.Error] for a name this build does not know. */
     val benchVerdict: BenchVerdict get() = BenchVerdict.entries.firstOrNull { it.storageName == verdict } ?: BenchVerdict.Error
@@ -229,6 +231,7 @@ data class BenchTrial(
                 expectedAnswer = result.prompt.answer?.shown,
                 tags = result.prompt.tags.toList(),
                 reasoningCap = result.reasoningCap,
+                emptyRaw = capText(result.emptyRaw).first,
             )
         }
     }

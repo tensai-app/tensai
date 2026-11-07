@@ -1,11 +1,13 @@
 package io.github.tensaiapp.ui.screens.chat
 
 import android.util.Log
+import io.github.tensaiapp.BuildConfig
 import io.github.tensaiapp.agent.AgentEvent
 import io.github.tensaiapp.agent.AgentRuntime
 import io.github.tensaiapp.agent.ReplyGenerator
 import io.github.tensaiapp.agent.SystemPrompt
 import io.github.tensaiapp.agent.ToolCallOutcome
+import io.github.tensaiapp.agent.ToolCallStatus
 import io.github.tensaiapp.agent.ToolTier
 import io.github.tensaiapp.agent.AskUserGate
 import io.github.tensaiapp.agent.PendingQuestion
@@ -1714,6 +1716,8 @@ class ChatViewModel(
         var wrotePlaceholders = false
         // The engine reported a call (of any name) for the open reply, see the parse-failure rescue below.
         var sawCallName = false
+        // The turn's last call, when it ended ok: what an answer that never came falls back on (TEN-204).
+        var lastOk: ToolCallOutcome? = null
 
         suspend fun persistThrottled() {
             val now = System.currentTimeMillis()
@@ -1771,6 +1775,13 @@ class ChatViewModel(
                         val id = openReplyId ?: return@collect
                         openReplyId = null
                         parser.finish()
+                        // An empty answer the runtime asks for again (TEN-204): the next reply replaces this one.
+                        if (event.retrying) {
+                            if (BuildConfig.DEBUG) log("empty answer after a tool, asking again; raw: ${event.raw}")
+                            if (wrotePlaceholders) withContext(NonCancellable) { chatRepository.setToolCalls(id, emptyList()) }
+                            withContext(NonCancellable) { chatRepository.deleteMessage(id) }
+                            return@collect
+                        }
                         // Before any write: a stop landing in the middle of them must still find these calls to close.
                         if (event.calls.isNotEmpty()) {
                             callingReplyId = id
@@ -1788,12 +1799,14 @@ class ChatViewModel(
                         ) {
                             content = parser.fallbackContent
                         }
-                        // The answer after tool use came out empty: say so rather than leave bare calls on screen.
+                        // The answer after tool use came out with no text, reasoning or not (TEN-204): say what the tool
+                        // found when it can, or that it could not finish, rather than leave a bubble with nothing in it.
                         val noAnswer = (event.index > 0 || event.toolParseFailed) && event.calls.isEmpty() &&
-                            !hasPersistableContent(content, parser.thinking) &&
+                            content.isBlank() &&
                             event.stats?.stopReason != StopReason.ContextBudgetExhausted &&
-                            event.stats?.stopReason != StopReason.ContextBudgetClipped
-                        if (noAnswer) content = toolFallbackMessage(Locale.getDefault().language)
+                            event.stats?.stopReason != StopReason.ContextBudgetClipped &&
+                            event.stats?.stopReason != StopReason.Cancelled && !stopSignal.wasRequested
+                        if (noAnswer) content = lastOk?.let(agentRuntime::fallbackAnswer) ?: toolFallbackMessage(Locale.getDefault().language)
                         // Not cancellable: the reply and its calls land together, or the `finally` below has
                         // nothing coherent to close.
                         withContext(NonCancellable) {
@@ -1812,6 +1825,7 @@ class ChatViewModel(
                         val replyId = callingReplyId ?: return@collect
                         withContext(NonCancellable) { chatRepository.recordToolCall(conversationId, replyId, event.outcome) }
                         unanswered = unanswered.filterNot { it.id == event.outcome.call.id }
+                        lastOk = event.outcome.takeIf { it.status == ToolCallStatus.Ok }
                     }
                     AgentEvent.Done -> Unit
                     is AgentEvent.Error -> failed = true

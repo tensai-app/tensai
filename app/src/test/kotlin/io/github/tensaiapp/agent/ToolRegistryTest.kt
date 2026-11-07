@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,6 +129,17 @@ class ToolRegistryTest {
         assertEquals("Saturday", json.getString("dayOfWeek"))
         assertEquals("Asia/Tokyo", json.getString("timezone"))
         assertEquals("+09:00", json.getString("utcOffset"))
+    }
+
+    /** TEN-204: what the chat shows when the model's answer after the call came out empty twice. */
+    @Test
+    fun datetimeFallsBackOnItsOwnResult() = runBlocking {
+        val clock = Clock.fixed(Instant.parse("2026-10-16T20:00:00Z"), ZoneId.of("Europe/Paris"))
+        val tool = DateTimeTool(clock)
+
+        assertEquals("2026-10-17 05:00 (Asia/Tokyo)", tool.fallbackAnswer(tool.execute("""{"timezone":"Asia/Tokyo"}""").text))
+        assertEquals("2026-10-16 22:00 (Europe/Paris)", tool.fallbackAnswer(tool.execute("{}").text))
+        assertNull("not its JSON: nothing to read", tool.fallbackAnswer("Error: timezone: unknown"))
     }
 
     @Test

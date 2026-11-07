@@ -1677,6 +1677,91 @@ class ChatViewModelTest {
         assertEquals("Sure, one moment.", chatDao.observeMessages(id).first().last().content)
     }
 
+    /** TEN-204's reply: the model reasoned, then ended its turn with nothing outside the think tags. */
+    private fun thinkingOnlyReply(reasoning: String = "The tool gave the time.") = listOf(
+        DecodeEvent.Token("<think>$reasoning</think>"),
+        DecodeEvent.Parsed(content = "", reasoning = reasoning),
+        DecodeEvent.ToolTurn("", reasoning, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = false),
+    )
+
+    /**
+     * TEN-204, as seen on the phone: the tool line, then a reasoning block over a reply with no text. The runtime asks
+     * once more and the chat keeps that answer, not the empty row.
+     */
+    @Test
+    fun aThinkingOnlyAnswerAfterAToolIsAskedAgainAndOnlyTheAnswerStays() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsThinking = true, supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += thinkingOnlyReply()
+        engine.scriptQueue += answerReply("It is 23:04 in Tokyo.")
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("What time is it in Tokyo?")
+        awaitGeneration()
+
+        val rows = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool", "assistant"), rows.map { it.role })
+        assertEquals("It is 23:04 in Tokyo.", rows.last().content)
+    }
+
+    /** A rejected parse after the tool keeps the prose the stream carried: no second ask, which could lose it. */
+    @Test
+    fun aRejectedParseAfterAToolKeepsItsProseWithoutAskingAgain() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsThinking = true, supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += listOf(
+            DecodeEvent.Token("It is 23:04 in Tokyo."),
+            DecodeEvent.ToolTurn("", null, emptyList(), toolsIgnored = false, toolParseFailed = true, truncated = false),
+        )
+        val id = chatRepository.createConversation(modelId = null)
+        engine.requests.clear()
+
+        newViewModel(id).send("What time is it in Tokyo?")
+        awaitGeneration()
+
+        val rows = chatDao.observeMessages(id).first()
+        assertEquals(listOf("user", "assistant", "tool", "assistant"), rows.map { it.role })
+        assertEquals("It is 23:04 in Tokyo.", rows.last().content)
+        assertEquals(2, engine.requests.count { r -> r.messages.any { it.role == MessageRole.User } })
+    }
+
+    /** The time an earlier call found is no answer once a later call failed: the generic line, not the time. */
+    @Test
+    fun anEmptyAnswerAfterAFailedCallDoesNotShowAnEarlierResult() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsThinking = true, supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += toolCallsReply(ToolCall("call_2", "datetime", """{"timezone":"Nowhere/Fake"}"""))
+        engine.scriptQueue += thinkingOnlyReply()
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("What time is it in Tokyo?")
+        awaitGeneration()
+
+        assertEquals(toolFallbackMessage(java.util.Locale.getDefault().language), chatDao.observeMessages(id).first().last().content)
+    }
+
+    /** The second ask came back empty too: the reply says what the tool found rather than showing nothing. */
+    @Test
+    fun aSecondEmptyAnswerShowsWhatTheToolFound() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsThinking = true, supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += thinkingOnlyReply()
+        engine.scriptQueue += thinkingOnlyReply()
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("What time is it in Tokyo?")
+        awaitGeneration()
+
+        val rows = chatDao.observeMessages(id).first()
+        val zone = org.json.JSONObject(rows.single { it.role == "tool" }.content).getString("timezone")
+        assertEquals(listOf("user", "assistant", "tool", "assistant"), rows.map { it.role })
+        assertTrue("the reply shows the tool's answer: ${rows.last().content}", rows.last().content.contains(zone))
+    }
+
     private fun answerReply(text: String) = listOf(
         DecodeEvent.Token(text),
         DecodeEvent.ToolTurn(text, null, emptyList(), toolsIgnored = false, toolParseFailed = false, truncated = false),

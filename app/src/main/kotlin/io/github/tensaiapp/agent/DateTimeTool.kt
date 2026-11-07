@@ -54,6 +54,12 @@ class DateTimeTool(private val clock: Clock? = null) : Tool {
         return ToolResult.ok(json.toString())
     }
 
+    /** "2026-11-07 23:04 (Asia/Tokyo)", from [execute]'s JSON. */
+    override fun fallbackAnswer(output: String): String? = runCatching {
+        val json = JSONObject(output)
+        "${json.getString("date")} ${json.getString("time").take(5)} (${json.getString("timezone")})"
+    }.getOrNull()
+
     internal companion object {
         private val ZoneWords = setOf("time", "zone", "timezone", "tz", "the", "s")
         private val PlaceholderWords = setOf(

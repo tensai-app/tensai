@@ -152,6 +152,13 @@ interface Tool {
     val waitsForUser: Boolean get() = false
 
     /**
+     * A short answer read off this tool's [output] (an ok result), for when the model's own answer came out empty
+     * twice after it (TEN-204). `null`, the default, leaves the chat's generic line. Words-free where it can be: it
+     * shows whatever the app language is.
+     */
+    fun fallbackAnswer(output: String): String? = null
+
+    /**
      * Runs the tool, on [kotlinx.coroutines.Dispatchers.IO]. [argsJson] is a JSON object that passed the
      * `required` check. May throw: the runtime turns an exception into an error result for the model.
      *
