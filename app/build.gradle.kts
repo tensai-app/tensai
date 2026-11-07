@@ -185,3 +185,59 @@ dependencies {
     androidTestImplementation(libs.androidx.room.testing)
 }
 
+
+// The permissions the release APK asks for, after the manifest merge (TEN-208): a new one, from our manifest or a
+// dependency's, fails the release build until it is added here on purpose. minifyReleaseWithR8 depends on the check,
+// so the local gate runs it.
+val releasePermissions = setOf(
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.INTERNET",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.READ_CALENDAR",
+    "android.permission.READ_CONTACTS",
+    "android.permission.READ_SMS",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.WAKE_LOCK",
+    "com.android.alarm.permission.SET_ALARM",
+    "io.github.tensaiapp.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+)
+
+abstract class CheckMergedPermissions : DefaultTask() {
+    @get:InputFile
+    abstract val manifest: RegularFileProperty
+
+    @get:Input
+    abstract val allowed: SetProperty<String>
+
+    @get:OutputFile
+    abstract val stamp: RegularFileProperty
+
+    @TaskAction
+    fun check() {
+        val asked = Regex("""<uses-permission(?:-sdk-\d+)?\s[^>]*android:name="([^"]+)"""")
+            .findAll(manifest.get().asFile.readText())
+            .map { it.groupValues[1] }
+            .toSortedSet()
+        val added = asked - allowed.get()
+        if (added.isNotEmpty()) {
+            throw GradleException("The merged release manifest asks for permissions not in releasePermissions: $added")
+        }
+        stamp.get().asFile.writeText(asked.joinToString("\n"))
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val name = variant.name.replaceFirstChar { it.uppercase() }
+        val check = tasks.register<CheckMergedPermissions>("check${name}Permissions") {
+            manifest.set(variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST))
+            allowed.set(releasePermissions)
+            stamp.set(layout.buildDirectory.file("permissions/${variant.name}.txt"))
+        }
+        tasks.matching { it.name == "minify${name}WithR8" }.configureEach { dependsOn(check) }
+    }
+}

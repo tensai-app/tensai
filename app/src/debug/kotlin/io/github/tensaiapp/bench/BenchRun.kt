@@ -272,12 +272,6 @@ internal suspend fun <T> runThenSave(
     return reason
 }
 
-/**
- * The backend of an engine label as the bench shows and saves it: "CPU", "Vulkan". The engine reports
- * "<backend>: <device>" ("CPU: CPU", "Vulkan: Mali-G68"); a label with no colon is kept whole.
- */
-fun backendName(label: String): String = label.substringBefore(':').trim().ifBlank { label }
-
 /** [text] cut to [max] chars, never inside a surrogate pair, and whether it was cut. */
 internal fun capText(text: String?, max: Int = BenchTrial.MaxTextChars): Pair<String?, Boolean> {
     if (text == null || text.length <= max) return text to false

@@ -38,7 +38,8 @@ import kotlinx.coroutines.withContext
  * Settings > This device (TEN-158): what this phone is and what llama.cpp found on it, in the same
  * grouped cards as Settings, values in mono. Read-only. [copyRequests] are taps on the top bar's
  * copy icon (owned by `TensaiShell`): the whole report goes to the clipboard as plain text, for a
- * bug report. A debug build also has the agent bench at the bottom, see [BenchPanel].
+ * bug report. Under the cards, the benchmark ([DeviceBenchPanel], TEN-208); a debug build also has the agent bench
+ * at the bottom, see [BenchPanel].
  */
 @Composable
 fun DeviceScreen(
@@ -91,6 +92,7 @@ fun DeviceScreen(
                 }
             }
         }
+        DeviceBenchPanel()
         BenchPanel()
     }
 }

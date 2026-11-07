@@ -167,6 +167,41 @@ class InferenceQueueToolPrefixTest {
     }
 
     @Test
+    fun aBenchLeavesTheCacheForTheNextConversationToRestoreOver() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        val info = load(queue)
+        val filler = DecodeRequest(messages = listOf(ChatMessage(MessageRole.User, "[n1] filler")))
+        // The bench's decodes, after the open conversation's session was saved.
+        queue.generate(filler).toList()
+        queue.generate(filler).toList()
+        assertFalse(queue.holdsOnlyWarmedPrefix())
+
+        assertTrue(queue.releaseBenchCache(queue.generationsStarted()))
+
+        // What ChatViewModel.syncSessionForConversationSwitch reads to restore the conversation over the cache.
+        assertTrue(queue.holdsOnlyWarmedPrefix())
+        assertEquals("the filler is never saved as a conversation's", SessionSaveOutcome.NotAttempted, queue.saveSession("/tmp/session"))
+        assertEquals(SessionRestoreOutcome.Restored, queue.restoreSession("/tmp/session", expectedModel = info))
+        assertFalse(queue.holdsOnlyWarmedPrefix())
+    }
+
+    @Test
+    fun aMessageSentAfterTheBenchKeepsTheCache() = inTest {
+        val engine = FakeEngine()
+        val queue = InferenceQueue(engine)
+        load(queue)
+        queue.generate(DecodeRequest(messages = listOf(ChatMessage(MessageRole.User, "[n1] filler")))).toList()
+        val afterBench = queue.generationsStarted()
+        queue.generate(DecodeRequest(messages = listOf(ChatMessage(MessageRole.User, "hello")))).toList()
+
+        assertFalse(queue.releaseBenchCache(afterBench))
+
+        assertFalse(queue.holdsOnlyWarmedPrefix())
+        assertEquals(SessionSaveOutcome.Wrote(7, withoutTools = true), queue.saveSession("/tmp/session"))
+    }
+
+    @Test
     fun aSessionRestoreEndsThePrefixOnlyState() = inTest {
         val engine = FakeEngine()
         val queue = InferenceQueue(engine)

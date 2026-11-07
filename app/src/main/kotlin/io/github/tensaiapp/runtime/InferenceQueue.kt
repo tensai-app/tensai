@@ -348,6 +348,10 @@ class InferenceQueue(
     @Volatile
     private var residentPrefix: PrefixKey? = null
 
+    /** Generations started so far, see [releaseBenchCache]. Written under [mutex]. */
+    @Volatile
+    private var generationsStarted = 0L
+
     /** The session [restoreSession] put in the cache was saved without tools, see [holdsNoToolPrefix]. Read while [residentPrefix] is `null`. */
     @Volatile
     private var restoredWithoutTools = false
@@ -673,6 +677,7 @@ class InferenceQueue(
                 // however narrow, where a stop is offered against a job that isn't there yet, and
                 // [cancelActive] would silently do nothing.
                 activeGeneration = coroutineContext[Job]?.let { ActiveGeneration(it, stopSignal) }
+                generationsStarted++
                 wasPrefixOnly = prefixOnly && !prefixWritten
                 prefixOnly = false
                 heldNoTools = holdsNoToolPrefix()
@@ -1015,6 +1020,27 @@ class InferenceQueue(
      * restore, a load and an unload. A plain read, like [currentKvTokenCount].
      */
     fun holdsOnlyWarmedPrefix(): Boolean = prefixOnly
+
+    /** How many generations have started, for [releaseBenchCache]. */
+    fun generationsStarted(): Long = generationsStarted
+
+    /**
+     * After a bench (TEN-208): the cache holds filler nobody owns, the open conversation's session already saved. Marked
+     * like a warmed prefix ([holdsOnlyWarmedPrefix]), so the conversation opened next restores its session over it, a save
+     * never writes it under anyone's id, and a request with tools puts its prefix back first. There is no engine call to
+     * empty the cache; this is what the readers of the flag need.
+     *
+     * [afterGeneration] is [generationsStarted] read right after the bench's last decode: a generation started since (a
+     * message sent meanwhile) owns the cache now, and nothing changes. `false` then, or unless the model is idle.
+     */
+    suspend fun releaseBenchCache(afterGeneration: Long): Boolean = mutex.withLock {
+        if (_state.value !is QueueState.ModelReady || generationsStarted != afterGeneration) return@withLock false
+        prefixOnly = true
+        prefixWritten = false
+        residentPrefix = null
+        restoredWithoutTools = false
+        true
+    }
 
     private suspend fun runWarmUp(
         expectedModel: LoadedModelInfo,

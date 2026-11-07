@@ -258,68 +258,79 @@ object DecodeBench {
             }
         }
         if (!handOver()) return fail("could not save the open conversation's session, curve not run")
-        val paragraphTokens = queue.countTokens(listOf(DecodeCurve.Paragraph))?.firstOrNull()?.takeIf { it > 0 }
-            ?: return fail("cannot count tokens on the loaded model")
-        if (queue.state.value.residentModel != info) return fail("the model was unloaded or replaced")
+        lastGeneration = -1L
+        // From here the cache is the curve's: left restorable however the run ends (TEN-208), unless a conversation
+        // sent to meanwhile could not be saved, in which case it is that conversation's.
+        var release = true
+        try {
+            val paragraphTokens = queue.countTokens(listOf(DecodeCurve.Paragraph))?.firstOrNull()?.takeIf { it > 0 }
+                ?: return fail("cannot count tokens on the loaded model")
+            if (queue.state.value.residentModel != info) return fail("the model was unloaded or replaced")
 
-        Log.i(TAG, DecodeRunJson.startLine(config))
-        val startedAt = System.currentTimeMillis()
-        // The elapsed time keeps counting from the tap; the saved run starts here.
-        _progress.value = _progress.value?.copy(phase = DecodePhase.WarmUp, phaseStartedAtMs = startedAt)
-        // A warm-up the engine refuses says the points would fail too: no run of error points is saved.
-        decode(DecodeCurve.prompt(nonce(), 0), DecodeEstimate.WarmUpTokens).second?.let { error ->
-            return fail("the warm-up decode failed (${error.message ?: error::class.simpleName}), curve not run")
+            Log.i(TAG, DecodeRunJson.startLine(config))
+            val startedAt = System.currentTimeMillis()
+            // The elapsed time keeps counting from the tap; the saved run starts here.
+            _progress.value = _progress.value?.copy(phase = DecodePhase.WarmUp, phaseStartedAtMs = startedAt)
+            // A warm-up the engine refuses says the points would fail too: no run of error points is saved.
+            decode(DecodeCurve.prompt(nonce(), 0), DecodeEstimate.WarmUpTokens).second?.let { error ->
+                return fail("the warm-up decode failed (${error.message ?: error::class.simpleName}), curve not run")
+            }
+
+            // Kept here rather than returned: a cancelled run never returns, and what it measured is still saved.
+            val points = mutableListOf<DecodeRunPoint>()
+            runThenSave(
+                points,
+                stopRequested = { stopRequested },
+                run = run@{
+                    for (ctx in lengths) {
+                        val why = when {
+                            queue.state.value.residentModel != info -> "the model was unloaded or replaced"
+                            !handOver() -> {
+                                release = false
+                                "could not save the session of a conversation sent to meanwhile"
+                            }
+                            else -> null
+                        }
+                        if (why != null) {
+                            Log.e(TAG, benchErrorLine("$why, curve stopped before ctx $ctx"))
+                            return@run why
+                        }
+                        val pointStart = System.currentTimeMillis()
+                        _progress.value = _progress.value?.copy(current = ctx, phase = DecodePhase.Prefill, phaseStartedAtMs = pointStart, decoded = 0, ttftMs = null)
+                        val (stats, error) = decode(DecodeCurve.prompt(nonce(), DecodeCurve.paragraphsFor(ctx, paragraphTokens)), tokens)
+                        val point = DecodeRunPoint.of(
+                            ctx,
+                            stats,
+                            error?.let { it.message ?: it::class.simpleName },
+                            kvTokens = queue.currentKvTokenCount(),
+                            ms = System.currentTimeMillis() - pointStart,
+                        )
+                        points += point
+                        Log.i(TAG, DecodeRunJson.pointLine(point, config))
+                        _progress.value = _progress.value?.let { it.copy(done = it.done + point) }
+                        if (error is QueueBusyException) {
+                            Log.e(TAG, benchErrorLine("the queue refused ctx $ctx (${point.error}), curve stopped"))
+                            return@run "the queue refused ctx $ctx (${point.error})"
+                        }
+                    }
+                    null
+                },
+                finish = { measured, why ->
+                    if (why == BenchRun.StoppedByUser) Log.e(TAG, benchErrorLine("cancelled from the bench screen, ${measured.size} of ${lengths.size} points"))
+                    if (measured.isEmpty()) return@runThenSave
+                    val run = DecodeRun.of(startedAt, System.currentTimeMillis(), config, measured, why)
+                    Log.i(TAG, DecodeRunJson.summaryLine(run))
+                    runCatching { DecodeRunStore.of(context).save(run) }
+                        .onSuccess {
+                            Log.i(TAG, "saved ${run.id}, ${measured.size} of ${lengths.size} points")
+                            _lastSaved.value = run.id
+                        }
+                        .onFailure { Log.e(TAG, benchErrorLine("could not save ${run.id}: ${it.message}")) }
+                },
+            )
+        } finally {
+            if (release) withContext(NonCancellable) { queue.releaseBenchCache(lastGeneration) }
         }
-
-        // Kept here rather than returned: a cancelled run never returns, and what it measured is still saved.
-        val points = mutableListOf<DecodeRunPoint>()
-        runThenSave(
-            points,
-            stopRequested = { stopRequested },
-            run = run@{
-                for (ctx in lengths) {
-                    val why = when {
-                        queue.state.value.residentModel != info -> "the model was unloaded or replaced"
-                        !handOver() -> "could not save the session of a conversation sent to meanwhile"
-                        else -> null
-                    }
-                    if (why != null) {
-                        Log.e(TAG, benchErrorLine("$why, curve stopped before ctx $ctx"))
-                        return@run why
-                    }
-                    val pointStart = System.currentTimeMillis()
-                    _progress.value = _progress.value?.copy(current = ctx, phase = DecodePhase.Prefill, phaseStartedAtMs = pointStart, decoded = 0, ttftMs = null)
-                    val (stats, error) = decode(DecodeCurve.prompt(nonce(), DecodeCurve.paragraphsFor(ctx, paragraphTokens)), tokens)
-                    val point = DecodeRunPoint.of(
-                        ctx,
-                        stats,
-                        error?.let { it.message ?: it::class.simpleName },
-                        kvTokens = queue.currentKvTokenCount(),
-                        ms = System.currentTimeMillis() - pointStart,
-                    )
-                    points += point
-                    Log.i(TAG, DecodeRunJson.pointLine(point, config))
-                    _progress.value = _progress.value?.let { it.copy(done = it.done + point) }
-                    if (error is QueueBusyException) {
-                        Log.e(TAG, benchErrorLine("the queue refused ctx $ctx (${point.error}), curve stopped"))
-                        return@run "the queue refused ctx $ctx (${point.error})"
-                    }
-                }
-                null
-            },
-            finish = { measured, why ->
-                if (why == BenchRun.StoppedByUser) Log.e(TAG, benchErrorLine("cancelled from the bench screen, ${measured.size} of ${lengths.size} points"))
-                if (measured.isEmpty()) return@runThenSave
-                val run = DecodeRun.of(startedAt, System.currentTimeMillis(), config, measured, why)
-                Log.i(TAG, DecodeRunJson.summaryLine(run))
-                runCatching { DecodeRunStore.of(context).save(run) }
-                    .onSuccess {
-                        Log.i(TAG, "saved ${run.id}, ${measured.size} of ${lengths.size} points")
-                        _lastSaved.value = run.id
-                    }
-                    .onFailure { Log.e(TAG, benchErrorLine("could not save ${run.id}: ${it.message}")) }
-            },
-        )
     }
 
     /** One decode of [text] as the only user message, capped at [maxTokens]: its stats, or why it failed. Moves [progress] along. */
@@ -328,24 +339,32 @@ object DecodeBench {
         var error: Throwable? = null
         val start = System.currentTimeMillis()
         val request = DecodeRequest(listOf(ChatMessage(MessageRole.User, text)), sampling.copy(maxTokens = maxTokens))
-        RuntimeGraph.inferenceQueue.generate(request).collect { event ->
-            when (event) {
-                // A piece of text is a token or a few: close enough for a live count, the saved one is llama.cpp's.
-                is DecodeEvent.Token -> _progress.value = _progress.value?.let { p ->
-                    if (p.phase == DecodePhase.Prefill) {
-                        val now = System.currentTimeMillis()
-                        p.copy(phase = DecodePhase.Decode, ttftMs = now - start, phaseStartedAtMs = now, decoded = 1)
-                    } else {
-                        p.copy(decoded = p.decoded + 1)
+        try {
+            RuntimeGraph.inferenceQueue.generate(request).collect { event ->
+                when (event) {
+                    // A piece of text is a token or a few: close enough for a live count, the saved one is llama.cpp's.
+                    is DecodeEvent.Token -> _progress.value = _progress.value?.let { p ->
+                        if (p.phase == DecodePhase.Prefill) {
+                            val now = System.currentTimeMillis()
+                            p.copy(phase = DecodePhase.Decode, ttftMs = now - start, phaseStartedAtMs = now, decoded = 1)
+                        } else {
+                            p.copy(decoded = p.decoded + 1)
+                        }
                     }
+                    is DecodeEvent.Done -> stats = event.stats
+                    is DecodeEvent.Error -> error = event.cause
+                    else -> Unit
                 }
-                is DecodeEvent.Done -> stats = event.stats
-                is DecodeEvent.Error -> error = event.cause
-                else -> Unit
             }
+        } finally {
+            lastGeneration = RuntimeGraph.inferenceQueue.generationsStarted()
         }
         return stats to error
     }
+
+    /** [io.github.tensaiapp.runtime.InferenceQueue.generationsStarted] right after the last decode, for the release at the end. */
+    @Volatile
+    private var lastGeneration = -1L
 
     private fun nonce() = UUID.randomUUID().toString().take(8)
 
