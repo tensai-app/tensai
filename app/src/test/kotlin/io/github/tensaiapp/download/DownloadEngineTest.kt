@@ -178,6 +178,31 @@ class DownloadEngineTest {
         assertEquals("the sha256 spans the bytes already on disk and the new ones", contentSha, result.sha256)
     }
 
+    /** The Hub answers `resolve/` with a redirect to its CDN: the followed request must still ask for the rest only. */
+    @Test
+    fun resumeKeepsItsRangeAcrossTheHubsRedirect() {
+        val half = 400_000
+        part.writeBytes(content.copyOf(half))
+        val cdn = RangeServer()
+        val seen = mutableListOf<RecordedRequest>()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                seen += request
+                return if (request.path!!.startsWith("/org/")) {
+                    MockResponse().setResponseCode(302).addHeader("Location", "/cdn/model.gguf")
+                } else {
+                    cdn.dispatch(request)
+                }
+            }
+        }
+
+        run()
+
+        assertEquals(listOf("/org/repo/resolve/main/model.gguf", "/cdn/model.gguf"), seen.map { it.path })
+        assertEquals(listOf("bytes=$half-", "bytes=$half-"), seen.map { it.getHeader("Range") })
+        assertArrayEquals(content, part.readBytes())
+    }
+
     @Test
     fun a200ToARangedRequestRestartsFromZero() {
         part.writeBytes(content.copyOf(300_000))
@@ -351,6 +376,44 @@ class DownloadEngineTest {
 
         assertEquals(listOf(null, "Bearer hf_goodgood1"), range.requests.map { it.getHeader("Authorization") })
         assertArrayEquals(content, part.readBytes())
+    }
+
+    /**
+     * The gated path on the Hub's real shape: anonymous 401, the token retry answered with a redirect to the CDN on
+     * another host. The token must not follow it there (OkHttp drops `Authorization` across hosts, see
+     * [DownloadEngine]'s KDoc), the resume `Range` must.
+     */
+    @Test
+    fun theTokenStaysOnTheHubAndTheRangeFollowsTheRedirectToTheCdn() {
+        token = "hf_goodgood1"
+        val half = 400_000
+        part.writeBytes(content.copyOf(half))
+        val cdn = MockWebServer().also { it.start() }
+        try {
+            val cdnRange = RangeServer().also { cdn.dispatcher = it }
+            val cdnUrl = cdn.url("/cdn/model.gguf").newBuilder().host("127.0.0.1").build()
+            val hub = mutableListOf<RecordedRequest>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    hub += request
+                    return if (request.getHeader("Authorization") == null) {
+                        MockResponse().setResponseCode(401)
+                    } else {
+                        MockResponse().setResponseCode(302).addHeader("Location", cdnUrl.toString())
+                    }
+                }
+            }
+
+            run()
+
+            assertEquals(listOf(null, "Bearer hf_goodgood1"), hub.map { it.getHeader("Authorization") })
+            val atCdn = cdnRange.requests.single()
+            assertNull("the token reached the CDN", atCdn.getHeader("Authorization"))
+            assertEquals("bytes=$half-", atCdn.getHeader("Range"))
+            assertArrayEquals(content, part.readBytes())
+        } finally {
+            cdn.shutdown()
+        }
     }
 
     @Test

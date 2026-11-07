@@ -47,6 +47,9 @@ class OkHttpFetcherTest {
         assertFalse(client.followRedirects)
         assertFalse(client.followSslRedirects)
         assertEquals(Proxy.NO_PROXY, client.proxy)
+        assertEquals(8_000, client.connectTimeoutMillis)
+        assertTrue(client.dns is GuardedDns)
+        assertEquals("PrivateConnectInterceptor", client.networkInterceptors.single()::class.simpleName)
     }
 
     @Test fun theBodyIsCappedAndFlagged() = runBlocking {

@@ -133,6 +133,17 @@ class HfClientTest {
         assertEquals("Bearer hf_secret_token", server.takeRequest().getHeader("Authorization"))
     }
 
+    /** The timeouts and redirect policy the Hub client runs with; downloads derive their client from it. */
+    @Test
+    fun `the default client keeps its timeouts and follows redirects`() {
+        val client = HfClient.defaultHttp()
+        assertEquals(10_000, client.connectTimeoutMillis)
+        assertEquals(20_000, client.readTimeoutMillis)
+        assertEquals(30_000, client.callTimeoutMillis)
+        assertTrue(client.followRedirects)
+        assertTrue(client.followSslRedirects)
+    }
+
     @Test
     fun `url builders stay on the origin`() {
         val base = server.url("/").toString().trimEnd('/')

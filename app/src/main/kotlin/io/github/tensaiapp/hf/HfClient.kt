@@ -187,7 +187,7 @@ class HfClient(
     }
 
     private fun readBody(response: Response, maxBytes: Long): String {
-        val source = (response.body ?: throw HfException(HfError.Parse("empty body"))).source()
+        val source = response.body.source()
         source.request(maxBytes + 1)
         return source.buffer.readUtf8(minOf(source.buffer.size, maxBytes))
     }

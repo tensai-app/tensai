@@ -203,7 +203,7 @@ class DownloadEngine(
             else -> if (code !in 200..299) throw DownloadException(DownloadError.Http(code)) else Unit
         }
 
-        val body = response.body ?: throw IOException("empty body")
+        val body = response.body
         if (fromZero) part.delete()
         var done = if (fromZero) 0L else startAt
         val buffer = ByteArray(BUFFER_SIZE)

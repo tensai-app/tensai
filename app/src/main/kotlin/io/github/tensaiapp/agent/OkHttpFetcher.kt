@@ -110,15 +110,12 @@ class OkHttpFetcher(
 
     private fun read(response: Response, maxBytes: Int): HttpResponse {
         val headers = response.headers.names().associate { it.lowercase() to response.header(it).orEmpty() }
-        val source = response.body?.source()
+        val source = response.body.source()
         val buffer = Buffer()
-        var truncated = false
-        if (source != null) {
-            while (buffer.size < maxBytes) {
-                if (source.read(buffer, minOf(CHUNK, maxBytes - buffer.size)) == -1L) break
-            }
-            truncated = buffer.size >= maxBytes && !source.exhausted()
+        while (buffer.size < maxBytes) {
+            if (source.read(buffer, minOf(CHUNK, maxBytes - buffer.size)) == -1L) break
         }
+        val truncated = buffer.size >= maxBytes && !source.exhausted()
         return HttpResponse(response.code, buffer.readByteArray(), headers, truncated)
     }
 
