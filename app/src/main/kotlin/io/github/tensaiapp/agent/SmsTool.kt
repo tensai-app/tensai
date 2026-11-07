@@ -77,10 +77,6 @@ const val SmsBlockedText =
 
 const val NoSmsText = "this device has no SMS. Tell the user, do not retry."
 
-/** A name needs the contacts; a number does not. */
-const val SmsContactsRefusedText =
-    "the user refused access to the contacts, so a name cannot be looked up. Ask the user for the number, or read without contact."
-
 /**
  * `read_sms` (TEN-212): the user's text messages, received and sent, newest first, optionally with one contact (a name
  * from the address book or a number). Asks READ_SMS at first use ([waitsForUser]), and READ_CONTACTS only for a name.
@@ -126,12 +122,15 @@ class ReadSmsTool(
         if (!sms.isGranted() && !inForeground()) return ToolResult.error(BACKGROUND_ERROR)
         refusalFor(sms.access(), "sms", SmsRefusedText, SmsBlockedText)?.let { return it }
 
-        val byName = contact != null && !looksLikePhoneNumber(contact)
+        // A name needs the contacts, a number does not.
+        val name = contact?.takeIf { !looksLikePhoneNumber(it) }
+        val byName = name != null
         if (byName && !contacts.isGranted() && !inForeground()) return ToolResult.error(BACKGROUND_ERROR)
         val book = try {
             when {
-                byName -> {
-                    refusalFor(contacts.access(), "contacts", SmsContactsRefusedText, ContactsBlockedText)?.let { return it }
+                name != null -> {
+                    val refused = nameLookupRefused(name, "the number") + " Or read without a contact."
+                    refusalFor(contacts.access(), "contacts", refused, nameLookupBlocked(name, "the number"))?.let { return it }
                     contacts.load()
                 }
                 // Names for the senders, never a dialog for them.
@@ -139,7 +138,7 @@ class ReadSmsTool(
                 else -> emptyList()
             }
         } catch (e: SecurityException) {
-            if (byName) return blockedResult("contacts", ContactsBlockedText)
+            if (name != null) return blockedResult("contacts", nameLookupBlocked(name, "the number"))
             emptyList()
         }
         val phones = when {

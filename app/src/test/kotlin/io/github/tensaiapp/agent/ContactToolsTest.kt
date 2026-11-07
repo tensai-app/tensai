@@ -379,8 +379,9 @@ class ContactToolsTest {
         for (result in listOf(sms, find)) {
             assertTrue(result.refused)
             assertTrue(result.isError)
-            assertEquals(ContactsRefusedText, result.text)
         }
+        assertEquals(ContactsRefusedText, find.text)
+        assertEquals(nameLookupRefused("jade", "jade's number"), sms.text)
         assertEquals(null, blockedPermission(find.text))
         assertEquals(null, blockedPermission("Error: no contact named Paul"))
         assertEquals(0, contacts.loaded)
@@ -395,8 +396,9 @@ class ContactToolsTest {
             assertTrue(result.refused)
             assertEquals("contacts", blockedPermission(result.text))
             assertEquals("contacts", blockedPermission("Error: ${result.text}"))
-            assertEquals(ContactsBlockedText, JSONObject(result.text).getString("error"))
         }
+        assertEquals(ContactsBlockedText, JSONObject(find.text).getString("error"))
+        assertEquals(nameLookupBlocked("jade", "jade's email address"), JSONObject(email.text).getString("error"))
     }
 
     @Test
@@ -576,5 +578,56 @@ class ContactToolsTest {
     fun aDismissedFirstDialogIsOnlyDenied() {
         // Android 11+: tap outside or back on the first dialog answers granted=false with no rationale, like a permanent refusal.
         assertEquals(PermissionResult.Denied, PermissionResult.of(granted = false, rationaleBefore = false, rationaleAfter = false, askedBefore = false))
+    }
+
+    // TEN-206: a draft by name without the contacts, and what a draft says
+
+    /** Refused or blocked, a name lookup asks the model to get the number from the user, and opens nothing. */
+    @Test
+    fun aDraftByNameWithoutContactsAsksForTheNumberAndOpensNothing() = runBlocking {
+        for (refusal in listOf(PermissionResult.Denied, PermissionResult.PermanentlyDenied)) {
+            val contacts = FakeContacts(book, refusal)
+            val phone = FakePhone()
+
+            val result = DraftSmsTool(phone, contacts).execute("""{"body":"running late","to":"Sam"}""")
+
+            assertTrue(refusal.name, result.refused)
+            if (refusal == PermissionResult.Denied) {
+                assertEquals(nameLookupRefused("Sam", "Sam's number"), result.text)
+            } else {
+                assertEquals("contacts", blockedPermission(result.text))
+                assertEquals(nameLookupBlocked("Sam", "Sam's number"), JSONObject(result.text).getString("error"))
+            }
+            val said = if (refusal == PermissionResult.Denied) result.text else JSONObject(result.text).getString("error")
+            assertTrue(said.contains("Ask the user for Sam's number"))
+            assertEquals(0, contacts.loaded)
+            assertTrue(phone.started.isEmpty())
+        }
+    }
+
+    @Test
+    fun aDraftToANumberNeverAsksForTheContacts() = runBlocking {
+        val contacts = FakeContacts(book, PermissionResult.Denied)
+        val phone = FakePhone()
+
+        val result = DraftSmsTool(phone, contacts).execute("""{"body":"running late","to":"06 39 98 10 78"}""")
+
+        assertFalse(result.isError)
+        assertEquals(0, contacts.asked)
+        assertEquals(1, phone.started.size)
+    }
+
+    /** The model reads a draft, not a sent message, so its answer has no reason to say "sent". */
+    @Test
+    fun aDraftsResultSaysItIsNotSent() = runBlocking {
+        val sms = DraftSmsTool(FakePhone(), FakeContacts(book)).execute("""{"body":"running late","to":"Jade Martin"}""")
+        val email = DraftEmailTool(FakePhone(), FakeContacts(book)).execute("""{"to":"jade@example.com","subject":"late"}""")
+
+        for (result in listOf(sms, email)) {
+            assertFalse(result.isError)
+            val status = JSONObject(result.text).getString("status")
+            assertTrue(status, status.contains("not sent"))
+            assertFalse(result.text, Regex("(?<!not )\\bsent\\b").containsMatchIn(result.text))
+        }
     }
 }

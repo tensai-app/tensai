@@ -127,6 +127,15 @@ class ToolUiTest {
         )
     }
 
+    /** TEN-206: a draft says on its card and its line that it only opens the app, and nothing is sent from tensai. */
+    @Test
+    fun aDraftSaysItOpensTheAppAndSendsNothing() {
+        assertEquals(UiText.of(R.string.tool_confirm_draft_sms), ToolUiCatalog.confirmLabel("draft_sms", """{"to":"Sam","body":"late"}"""))
+        assertEquals(UiText.of(R.string.tool_confirm_draft_email), ToolUiCatalog.confirmLabel("draft_email", """{"to":"a@b.c"}"""))
+        assertEquals(UiText.of(R.string.tool_done_draft_sms), ToolUiCatalog.doneLabel("draft_sms", "{}"))
+        assertEquals(UiText.of(R.string.tool_done_draft_email), ToolUiCatalog.doneLabel("draft_email", "{}"))
+    }
+
     /** TEN-213: a reply card names the app and the conversation, then the exact text, never the id. */
     @Test
     fun aReplyCardNamesWhereItGoesAndShowsTheExactText() {
@@ -338,6 +347,10 @@ class ToolUiTest {
     fun anOpenedAppReadsAsAnApp() {
         assertEquals(ReadableOutput.AppOpened("Clock"), readableOutput("""{"opened":"Clock"}""", ToolCallState.Ok))
         assertEquals(ReadableOutput.AppOpened("Clock", set = true), readableOutput("""{"opened":"Clock","status":"set, shown in Clock"}""", ToolCallState.Ok))
+        assertEquals(
+            ReadableOutput.AppOpened("Messages", draft = true),
+            readableOutput("""{"opened":"Messages","status":"draft open in Messages, not sent: the user reviews and sends it there"}""", ToolCallState.Ok),
+        )
     }
 
     @Test

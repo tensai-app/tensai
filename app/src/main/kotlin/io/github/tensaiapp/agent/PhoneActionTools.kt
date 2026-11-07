@@ -75,12 +75,18 @@ interface PhoneActions {
     fun sendMediaKey(key: MediaKey)
 }
 
+/**
+ * What a draft tool tells the model once the app is open (TEN-206): a draft, not a sent message, so the answer never
+ * says "sent". The user sends it from [app], or not.
+ */
+private fun draftStatus(app: String) = "draft open in $app, not sent: the user reviews and sends it there"
+
 internal const val BACKGROUND_ERROR =
     "tensai is not on screen and Android blocks opening apps from the background. Tell the user to come back to tensai and ask again."
 
 /** What an opened app answers: the app card reads `opened`, the model reads `status`. */
-private fun opened(app: String, set: Boolean, chose: List<String> = emptyList()) = ToolResult.ok(
-    JSONObject().put("opened", app).put("status", if (set) "set, shown in $app" else "waiting for the user")
+private fun opened(app: String, status: String, chose: List<String> = emptyList()) = ToolResult.ok(
+    JSONObject().put("opened", app).put("status", status)
         .apply { if (chose.isNotEmpty()) put("to", chose.joinToString("; ")) }.toString(),
 )
 
@@ -123,6 +129,9 @@ abstract class IntentTool internal constructor(private val phone: PhoneActions) 
     /** The app starts the timer or saves the alarm by itself: the result says "set", not "waiting for the user". */
     protected open val setsDirectly = false
 
+    /** What the model reads of an opened [app]: "set" when it [setsDirectly], else that the user finishes it there. */
+    protected open fun status(app: String): String = if (setsDirectly) "set, shown in $app" else "waiting for the user"
+
     /** @throws ArgException with a message for the model. */
     internal abstract fun build(args: JSONObject): IntentSpec
 
@@ -155,7 +164,7 @@ abstract class IntentTool internal constructor(private val phone: PhoneActions) 
         val label = phone.handlerLabel(spec) ?: return refusedNoApp(spec.subject)
         return try {
             phone.start(spec)
-            opened(label, setsDirectly, chose)
+            opened(label, status(label), chose)
         } catch (e: NoHandlerException) {
             refusedNoApp(spec.subject)
         }
@@ -293,10 +302,13 @@ class DraftSmsTool(phone: PhoneActions, private val contacts: ContactsSource) : 
         """{"type":"object","properties":{"body":{"type":"string"},"to":{"type":"string"}},"required":["body"]}"""
     override val waitsForUser = true
 
+    override fun status(app: String) = draftStatus(app)
+
     override suspend fun resolve(args: JSONObject, chose: MutableList<String>): JSONObject {
         val recipient = args.optionalString("to") ?: args.optionalString("number") ?: return args
         if (looksLikePhoneNumber(recipient)) return args
-        val resolved = resolvePhone(recipient, contacts.loadContacts())
+        val what = "$recipient's number"
+        val resolved = resolvePhone(recipient, contacts.loadContacts(nameLookupRefused(recipient, what), nameLookupBlocked(recipient, what)))
         chose += resolved.chose
         return JSONObject(args.toString()).put("to", resolved.value)
     }
@@ -329,6 +341,8 @@ class DraftEmailTool(phone: PhoneActions, private val contacts: ContactsSource) 
         """{"type":"object","properties":{"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}}"""
     override val waitsForUser = true
 
+    override fun status(app: String) = draftStatus(app)
+
     /** An address, not a name with a tag ("Jade Martin @corp.example"). */
     private fun isAddress(entry: String) = '@' in entry && ' ' !in entry
 
@@ -344,7 +358,8 @@ class DraftEmailTool(phone: PhoneActions, private val contacts: ContactsSource) 
             if (isAddress(entry)) {
                 entry
             } else {
-                val book = all ?: contacts.loadContacts().also { all = it }
+                val what = "$entry's email address"
+                val book = all ?: contacts.loadContacts(nameLookupRefused(entry, what), nameLookupBlocked(entry, what)).also { all = it }
                 resolveEmail(entry, book).also { chose += it.chose }.value
             }
         }
@@ -446,7 +461,7 @@ class OpenAppTool(private val phone: PhoneActions) : Tool {
             )
             is AppMatch.Found -> try {
                 phone.launchApp(match.app.packageName)
-                opened(match.app.label, set = false)
+                opened(match.app.label, "waiting for the user")
             } catch (e: NoHandlerException) {
                 ToolResult.refused("${match.app.label} has no screen to open. Tell the user.")
             }

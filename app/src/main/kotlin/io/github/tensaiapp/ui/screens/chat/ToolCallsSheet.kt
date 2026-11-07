@@ -494,7 +494,14 @@ private fun ReadableBlock(output: ReadableOutput, tool: String) {
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = stringResource(if (output.set) R.string.tool_detail_opened_set else R.string.tool_detail_opened_waiting, output.app),
+                        text = stringResource(
+                            when {
+                                output.set -> R.string.tool_detail_opened_set
+                                output.draft -> R.string.tool_detail_opened_draft
+                                else -> R.string.tool_detail_opened_waiting
+                            },
+                            output.app,
+                        ),
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -748,8 +748,8 @@
     <string name="tool_desc_set_timer">Ouvre Horloge avec un minuteur prêt</string>
     <string name="tool_desc_set_alarm">Ouvre Horloge avec un réveil prêt</string>
     <string name="tool_desc_create_event">Ouvre Agenda avec un nouvel événement</string>
-    <string name="tool_desc_draft_sms">Ouvre Messages avec un brouillon</string>
-    <string name="tool_desc_draft_email">Ouvre l\'app de mail avec un brouillon</string>
+    <string name="tool_desc_draft_sms">Ouvre votre app de messages avec un brouillon. Rien n\'est envoyé tant que vous ne l\'envoyez pas depuis cette app</string>
+    <string name="tool_desc_draft_email">Ouvre votre app de mail avec un brouillon. Rien n\'est envoyé tant que vous ne l\'envoyez pas depuis cette app</string>
     <string name="tool_desc_find_contact">Cherche numéros et e-mails dans les contacts. Demande la permission Contacts d\'Android au premier usage</string>
     <string name="tool_desc_read_calendar">Lit les événements d\'un jour ou d\'une période (titre, heure, lieu). Demande la permission Agenda d\'Android au premier usage</string>
     <string name="tool_desc_location">Donne la position approximative du téléphone (environ 1 km), pour la météo par exemple. Demande la permission Position d\'Android au premier usage</string>
@@ -805,9 +805,9 @@
     <string name="tool_run_set_alarm">Réglage du réveil…</string>
     <string name="tool_done_create_event">Événement créé</string>
     <string name="tool_run_create_event">Création de l\'événement…</string>
-    <string name="tool_done_draft_sms">SMS rédigé</string>
+    <string name="tool_done_draft_sms">Brouillon de SMS ouvert, pas envoyé</string>
     <string name="tool_run_draft_sms">Rédaction du SMS…</string>
-    <string name="tool_done_draft_email">E-mail rédigé</string>
+    <string name="tool_done_draft_email">Brouillon d\'e-mail ouvert, pas envoyé</string>
     <string name="tool_run_draft_email">Rédaction de l\'e-mail…</string>
     <string name="tool_done_find_contact">Contact recherché</string>
     <string name="tool_run_find_contact">Recherche du contact…</string>
@@ -888,6 +888,7 @@
     <string name="tool_detail_opened">Ouvert dans %1$s</string>
     <string name="tool_detail_opened_set">Réglé dans %1$s</string>
     <string name="tool_detail_opened_waiting">À valider dans %1$s</string>
+    <string name="tool_detail_opened_draft">Pas envoyé : vous l\'envoyez depuis %1$s</string>
     <string name="tool_app_picker">le sélecteur d\'apps</string>
 
     <string name="tool_confirm_eyebrow">tensai veut</string>
@@ -906,6 +907,8 @@
     <string name="tool_confirm_memory_fact_missing">Le fait %1$s n\'existe plus</string>
     <string name="tool_confirm_open_url">Ouvrir un lien</string>
     <string name="tool_confirm_web_fetch">Lire une page web</string>
+    <string name="tool_confirm_draft_sms">Ouvrir un brouillon de SMS dans votre app de messages</string>
+    <string name="tool_confirm_draft_email">Ouvrir un brouillon d\'e-mail dans votre app de mail</string>
     <string name="tool_confirm_reply_notification">Envoyer une réponse</string>
     <string name="tool_confirm_reply_notification_to">Répondre dans %1$s</string>
     <string name="tool_confirm_reply_notification_group">Répondre dans le groupe %1$s</string>

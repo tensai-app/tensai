@@ -176,16 +176,32 @@ private val emailTag = Regex("^(.+?)\\s+@(\\S+)$")
 /** What a name resolved to: the [value] for the intent and what the model is told it picked ("Jade Martin, mobile"). */
 internal class Resolved(val value: String, val chose: String)
 
-/** Loads the contacts, asking the permission first. @throws ContactFailure when it is refused, or revoked meanwhile. */
-internal suspend fun ContactsSource.loadContacts(): List<Contact> {
-    refusalFor(access())?.let { throw ContactFailure(it) }
+/**
+ * Loads the contacts, asking the permission first. [refused] and [blocked] are what the model reads when it is refused
+ * (see [refusalFor]). @throws ContactFailure when it is refused, or revoked meanwhile.
+ */
+internal suspend fun ContactsSource.loadContacts(refused: String = ContactsRefusedText, blocked: String = ContactsBlockedText): List<Contact> {
+    refusalFor(access(), "contacts", refused, blocked)?.let { throw ContactFailure(it) }
     return try {
         load()
     } catch (e: SecurityException) {
         // Revoked after the check: only the app settings can grant it again.
-        throw ContactFailure(blockedResult("contacts", ContactsBlockedText))
+        throw ContactFailure(blockedResult("contacts", blocked))
     }
 }
+
+/**
+ * What a draft reads when the contacts permission it asked to look [name] up is refused (TEN-206): ask the user for
+ * [what] (the number, the address) rather than fail, and never retry with the name.
+ */
+internal fun nameLookupRefused(name: String, what: String) =
+    "contacts access was refused, so '$name' cannot be looked up. Ask the user for $what, or to allow Contacts for tensai " +
+        "in the app settings. Do not retry with the name."
+
+/** [nameLookupRefused] once Android shows no dialog any more: only the app settings can allow it. */
+internal fun nameLookupBlocked(name: String, what: String) =
+    "contacts access is blocked in Android settings, so '$name' cannot be looked up. Ask the user for $what, or to allow " +
+        "Contacts for tensai in the app settings. Do not retry with the name."
 
 private fun noContact(name: String) = ContactFailure(ToolResult.error("no contact named $name"))
 

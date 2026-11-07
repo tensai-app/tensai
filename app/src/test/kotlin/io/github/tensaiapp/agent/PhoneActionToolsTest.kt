@@ -328,7 +328,7 @@ class PhoneActionToolsTest {
         assertFalse(result.isError)
         val json = JSONObject(result.text)
         assertEquals("Clock", json.getString("opened"))
-        assertEquals("waiting for the user", json.getString("status"))
+        assertEquals("draft open in Clock, not sent: the user reviews and sends it there", json.getString("status"))
         assertEquals(1, phone.started.size)
     }
 
@@ -340,7 +340,7 @@ class PhoneActionToolsTest {
 
         assertEquals("set, shown in Clock", JSONObject(timer.text).getString("status"))
         assertEquals("set, shown in Clock", JSONObject(alarm.text).getString("status"))
-        assertEquals("waiting for the user", JSONObject(sms.text).getString("status"))
+        assertEquals("draft open in Messages, not sent: the user reviews and sends it there", JSONObject(sms.text).getString("status"))
     }
 
     @Test
@@ -401,5 +401,22 @@ class PhoneActionToolsTest {
             assertEquals(tool.name, tool.name == "open_url", tool.requiresConfirmation("{}"))
             assertTrue(tool.name, JSONObject(tool.parametersSchema).has("properties"))
         }
+    }
+
+    /** TEN-206: an email to a name and an address, contacts refused: the model asks for the address, nothing opens. */
+    @Test
+    fun anEmailToANameWithoutContactsAsksForTheAddressAndOpensNothing() = runBlocking {
+        val refused = object : ContactsSource {
+            override fun isGranted() = false
+            override suspend fun access() = PermissionResult.Denied
+            override fun load(): List<Contact> = error("not loaded after a refusal")
+        }
+        val phone = FakePhone()
+
+        val result = DraftEmailTool(phone, refused).execute("""{"to":"Sam, jade@example.com"}""")
+
+        assertTrue(result.refused)
+        assertEquals(nameLookupRefused("Sam", "Sam's email address"), result.text)
+        assertTrue(phone.started.isEmpty())
     }
 }

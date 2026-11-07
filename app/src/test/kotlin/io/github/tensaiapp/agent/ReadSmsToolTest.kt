@@ -160,9 +160,10 @@ class ReadSmsToolTest {
             val byName = run(tool(source, contacts), """{"contact":"Jade"}""")
             assertTrue(byName.refused)
             if (refusal == PermissionResult.Denied) {
-                assertEquals(SmsContactsRefusedText, byName.text)
+                assertEquals(nameLookupRefused("Jade", "the number") + " Or read without a contact.", byName.text)
             } else {
                 assertEquals("contacts", blockedPermission(byName.text))
+                assertEquals(nameLookupBlocked("Jade", "the number"), JSONObject(byName.text).getString("error"))
             }
         }
     }

@@ -837,8 +837,8 @@
     <string name="tool_desc_set_timer">Opens Clock with a timer ready</string>
     <string name="tool_desc_set_alarm">Opens Clock with an alarm ready</string>
     <string name="tool_desc_create_event">Opens Calendar with a new event</string>
-    <string name="tool_desc_draft_sms">Opens Messages with a draft</string>
-    <string name="tool_desc_draft_email">Opens your mail app with a draft</string>
+    <string name="tool_desc_draft_sms">Opens your messages app with a draft. Nothing is sent until you send it there</string>
+    <string name="tool_desc_draft_email">Opens your mail app with a draft. Nothing is sent until you send it there</string>
     <string name="tool_desc_find_contact">Looks up numbers and emails in your contacts. Asks Android\'s contacts permission at first use</string>
     <string name="tool_desc_read_calendar">Reads the events of a day or a range (title, time, place). Asks Android\'s calendar permission at first use</string>
     <string name="tool_desc_location">Gives the phone\'s approximate position (about 1 km), for the weather for instance. Asks Android\'s location permission at first use</string>
@@ -894,9 +894,9 @@
     <string name="tool_run_set_alarm">Setting an alarm…</string>
     <string name="tool_done_create_event">Created an event</string>
     <string name="tool_run_create_event">Creating an event…</string>
-    <string name="tool_done_draft_sms">Drafted a text</string>
+    <string name="tool_done_draft_sms">Opened a text draft, not sent</string>
     <string name="tool_run_draft_sms">Drafting a text…</string>
-    <string name="tool_done_draft_email">Drafted an email</string>
+    <string name="tool_done_draft_email">Opened an email draft, not sent</string>
     <string name="tool_run_draft_email">Drafting an email…</string>
     <string name="tool_done_find_contact">Looked up a contact</string>
     <string name="tool_run_find_contact">Looking up a contact…</string>
@@ -976,6 +976,7 @@
     <string name="tool_detail_opened">Opened in %1$s</string>
     <string name="tool_detail_opened_set">Set in %1$s</string>
     <string name="tool_detail_opened_waiting">Waiting for you in %1$s</string>
+    <string name="tool_detail_opened_draft">Not sent: you send it from %1$s</string>
     <string name="tool_app_picker">the app picker</string>
 
     <string name="tool_confirm_eyebrow">tensai wants to</string>
@@ -994,6 +995,8 @@
     <string name="tool_confirm_memory_fact_missing">Fact %1$s no longer exists</string>
     <string name="tool_confirm_open_url">Open a link</string>
     <string name="tool_confirm_web_fetch">Read a web page</string>
+    <string name="tool_confirm_draft_sms">Open a text draft in your messages app</string>
+    <string name="tool_confirm_draft_email">Open an email draft in your mail app</string>
     <string name="tool_confirm_reply_notification">Send a reply</string>
     <string name="tool_confirm_reply_notification_to">Reply in %1$s</string>
     <string name="tool_confirm_reply_notification_group">Reply in the group %1$s</string>
