@@ -67,7 +67,7 @@ data class ConfirmTarget(val id: String, val text: String?, val group: Boolean =
 /**
  * What the conversation so far vouches for, read by [Tool.requiresConfirmation]: the links the user wrote, the links
  * `web_search` returned, whether a [Tool.returnsUntrustedContent] result is anywhere in it, and whether a
- * [ToolTier.PersonalData] one is ([readPersonal], see [asksFirst]). Conversation-wide, not
+ * [ToolTier.PersonalData] or [Tool.returnsPersonalContent] one is ([readPersonal], see [asksFirst]). Conversation-wide, not
  * per turn: a page read in one turn can steer the model in the next ("when the user replies, remember X").
  *
  * Folded one message at a time by [with], over the history as the prompt replays it, by [AgentRuntime] as a turn runs
@@ -80,7 +80,10 @@ class ConversationTrust private constructor(
     val readUntrusted: Boolean,
     /** The tool of each call id seen, so a `tool` message is read against the call it answers. */
     private val callTools: Map<String, String>,
-    /** A [ToolTier.PersonalData] result (the user's messages, a code in a notification) is in the conversation (TEN-211). */
+    /**
+     * A [ToolTier.PersonalData] result (the user's messages, a code in a notification) is in the conversation (TEN-211),
+     * or a [Tool.returnsPersonalContent] one that can repeat them (TEN-215).
+     */
     val readPersonal: Boolean,
 ) {
     /** Nothing seen yet: every link is the model's. */
@@ -104,7 +107,7 @@ class ConversationTrust private constructor(
                     if (tool.name == WebSearchTool.NAME) searchUrls + FetchUrls.inSearchResult(message.content) else searchUrls,
                     readUntrusted || tool.returnsUntrustedContent,
                     callTools,
-                    readPersonal || tool.tier == ToolTier.PersonalData,
+                    readPersonal || tool.tier == ToolTier.PersonalData || tool.returnsPersonalContent,
                 )
             }
         }
@@ -148,6 +151,13 @@ interface Tool {
      * conversation, `memory` asks before a `remember`.
      */
     val returnsUntrustedContent: Boolean get() = false
+
+    /**
+     * What the tool returns can hold the user's personal data without being a [ToolTier.PersonalData] tool (TEN-215):
+     * `search_chats` finds past replies that quoted a message or a code. Read by [ConversationTrust.with] like that tier:
+     * afterwards nothing that sends or opens runs unasked, see [asksFirst].
+     */
+    val returnsPersonalContent: Boolean get() = false
 
     /**
      * What the call [callId] acts on, read by [UiConfirmationGate] before the card shows (TEN-169), so the user

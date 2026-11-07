@@ -1,5 +1,7 @@
 package io.github.tensaiapp.agent
 
+import io.github.tensaiapp.data.chat.ChatSearchDao
+import io.github.tensaiapp.data.chat.ChatSearchHit
 import io.github.tensaiapp.data.memory.FakeMemoryDao
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.MessageRole
@@ -45,6 +47,9 @@ class PersonalReadGateTest {
         NotificationBuffer(),
     )
     private val clipboard = ClipboardTool(Clipboard)
+    private val searchChats = SearchChatsTool(object : ChatSearchDao {
+        override suspend fun search(pattern: String, limit: Int, excludeConversationId: String?) = emptyList<ChatSearchHit>()
+    })
     private val memory = MemoryTool(FakeMemoryDao())
     private val network = listOf(
         WebSearchTool { error("not run") },
@@ -56,7 +61,7 @@ class PersonalReadGateTest {
         SetTimerTool(Phone), SetAlarmTool(Phone), CreateEventTool(Phone), DraftSmsTool(Phone, Contacts), DraftEmailTool(Phone, Contacts),
         OpenUrlTool(Phone), OpenAppTool(Phone), MediaControlTool(Phone),
     )
-    private val registry = ToolRegistry(listOf(notifications, clipboard, memory) + network + phone, grants = { ToolTier.entries.toSet() })
+    private val registry = ToolRegistry(listOf(notifications, clipboard, memory, searchChats) + network + phone, grants = { ToolTier.entries.toSet() })
 
     /** The conversation after the user asked for something and [tool] answered. */
     private fun after(tool: Tool, result: String = "result"): ConversationTrust =
@@ -122,5 +127,30 @@ class PersonalReadGateTest {
 
         assertTrue(trust.readPersonal)
         assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+    }
+
+    /** TEN-215: past chats can hold a quoted code or message, so a search in them is a personal read too. */
+    @Test
+    fun afterSearchingPastChatsANetworkOrPhoneToolAsks() {
+        val trust = after(searchChats)
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+        assertTrue(AgentRuntime(registry).requiresConfirmation("draft_sms", """{"to":"Bob","body":"x"}""", trust))
+    }
+
+    /** Folded from the replayed history like the tier: a search in an earlier turn still counts in a later one. */
+    @Test
+    fun aSearchInAnEarlierTurnStillCounts() {
+        val trust = listOf(
+            ChatMessage(MessageRole.User, "what was that code?"),
+            ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", searchChats.name, """{"query":"code"}"""))),
+            ChatMessage(MessageRole.Tool, """[{"chat":"Bank","snippet":"code 123456"}]""", toolCallId = "c1"),
+            ChatMessage(MessageRole.Assistant, "It was 123456."),
+            ChatMessage(MessageRole.User, "now look up the weather"),
+        ).fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "weather" }.asksFirst("""{"place":"Paris"}""", trust))
     }
 }

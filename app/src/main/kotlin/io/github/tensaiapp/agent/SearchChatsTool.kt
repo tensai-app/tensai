@@ -30,7 +30,8 @@ object ChatSearch {
 /**
  * Looks a word or phrase up in the user's past conversations, so the model can answer "what did we say about X".
  * The conversation being held is left out of the results: the query is in it, so it would always be the first hit.
- * A snippet can repeat the text of a page read in that other conversation: [returnsUntrustedContent].
+ * A snippet can repeat the text of a page read in that other conversation: [returnsUntrustedContent]. Or a code or a
+ * message a reply quoted from a notification or an SMS: [returnsPersonalContent] (TEN-215).
  */
 class SearchChatsTool(
     private val dao: ChatSearchDao,
@@ -43,6 +44,7 @@ class SearchChatsTool(
         """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max 10"}},"required":["query"]}"""
     override val tier = ToolTier.Local
     override val returnsUntrustedContent = true
+    override val returnsPersonalContent = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
