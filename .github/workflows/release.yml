@@ -119,6 +119,8 @@ jobs:
       # Sous-modules, NDK/glslc, shaders (cache), libOpenCL.so, java et gradle :
       # les mêmes prérequis que native.yml, une seule copie.
       - uses: ./.github/actions/native-prereqs
+        with:
+          gradle-cache: 'false'
 
       # Le keystore va dans RUNNER_TEMP, jamais dans le workspace, en 0600.
       - name: Decode keystore
