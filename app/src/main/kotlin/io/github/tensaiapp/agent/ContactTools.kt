@@ -268,6 +268,10 @@ internal fun resolveEmail(name: String, all: List<Contact>): Resolved {
  *
  * The result the model reads: `{"contacts": [{"name", "phones": [{"type", "number"}], "emails": [...]}], "more": 2}`,
  * at most [MaxCandidates] contacts, `more` when others matched. No match is an empty list with a `note`.
+ *
+ * Numbers and addresses are a personal read ([returnsPersonalContent], TEN-217): a draft or a search after it asks.
+ * The lookups `draft_sms` and `draft_email` run themselves are not: the number or address goes into the intent, the model
+ * only reads the name picked.
  */
 class FindContactTool(private val contacts: ContactsSource, private val inForeground: () -> Boolean) : Tool {
     override val name = "find_contact"
@@ -275,6 +279,7 @@ class FindContactTool(private val contacts: ContactsSource, private val inForegr
     override val parametersSchema = """{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"""
     override val tier = ToolTier.AndroidPermission
     override val waitsForUser = true
+    override fun returnsPersonalContent(argsJson: String) = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val query = try {

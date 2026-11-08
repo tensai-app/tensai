@@ -34,6 +34,18 @@ class PersonalReadGateTest {
         override fun load(): List<Contact> = emptyList()
     }
 
+    private object Calendar : CalendarSource {
+        override fun isGranted() = true
+        override suspend fun access() = PermissionResult.Granted
+        override fun events(startMillis: Long, endMillis: Long, limit: Int) = emptyList<CalendarEvent>()
+    }
+
+    private object Location : LocationSource {
+        override fun isGranted() = true
+        override suspend fun access() = PermissionResult.Granted
+        override suspend fun current() = error("not run")
+    }
+
     private object Clipboard : ClipboardAccess {
         override fun read(): String? = null
         override fun write(text: String) = Unit
@@ -51,6 +63,9 @@ class PersonalReadGateTest {
         override suspend fun search(pattern: String, limit: Int, excludeConversationId: String?) = emptyList<ChatSearchHit>()
     })
     private val memory = MemoryTool(FakeMemoryDao())
+    private val readCalendar = ReadCalendarTool(Calendar, inForeground = { true })
+    private val findContact = FindContactTool(Contacts, inForeground = { true })
+    private val location = LocationTool(Location, inForeground = { true })
     private val network = listOf(
         WebSearchTool { error("not run") },
         WebFetchTool(PageReader(FakeHttp())),
@@ -61,7 +76,10 @@ class PersonalReadGateTest {
         SetTimerTool(Phone), SetAlarmTool(Phone), CreateEventTool(Phone), DraftSmsTool(Phone, Contacts), DraftEmailTool(Phone, Contacts),
         OpenUrlTool(Phone), OpenAppTool(Phone), MediaControlTool(Phone),
     )
-    private val registry = ToolRegistry(listOf(notifications, clipboard, memory, searchChats) + network + phone, grants = { ToolTier.entries.toSet() })
+    private val registry = ToolRegistry(
+        listOf(notifications, clipboard, memory, searchChats, readCalendar, findContact, location) + network + phone,
+        grants = { ToolTier.entries.toSet() },
+    )
 
     /** The conversation after the user asked for something and [tool] answered. */
     private fun after(tool: Tool, result: String = "result", args: String = "{}"): ConversationTrust =
@@ -205,5 +223,61 @@ class PersonalReadGateTest {
 
         assertFalse(afterSet.readPersonal)
         assertTrue(afterGet.readPersonal)
+    }
+
+    /** TEN-217: the agenda is the user's personal data: a search after reading it asks. */
+    @Test
+    fun afterReadingTheCalendarAWebSearchAsks() {
+        val trust = after(readCalendar, result = "10:00-11:00 Doctor", args = """{"day":"today"}""")
+
+        assertTrue(trust.readPersonal)
+        assertTrue(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+    }
+
+    /** "text Jade I'm late" as find_contact then draft_sms: the draft asks. draft_sms alone, resolving the name itself, does not. */
+    @Test
+    fun afterFindingAContactADraftSmsAsks() {
+        val found = """{"contacts":[{"name":"Jade","phones":[{"type":"mobile","number":"0600000000"}]}]}"""
+        val trust = after(findContact, result = found, args = """{"name":"Jade"}""")
+
+        assertTrue(trust.readPersonal)
+        assertTrue(AgentRuntime(registry).requiresConfirmation("draft_sms", """{"to":"0600000000","body":"I'm late"}""", trust))
+    }
+
+    /** Location stays outside the rule: weather right after it is what it is for. */
+    @Test
+    fun locationThenWeatherDoesNotAsk() {
+        val trust = after(location, result = """{"latitude":48.1,"longitude":-1.7}""")
+
+        assertFalse(trust.readPersonal)
+        assertFalse(network.first { it.name == "weather" }.asksFirst("""{"place":"here"}""", trust))
+    }
+
+    /** A chat that read none of these: a draft by name and a search run unasked, as before. */
+    @Test
+    fun aFreshChatWithoutAPersonalReadIsUnchanged() {
+        val trust = listOf(ChatMessage(MessageRole.User, "text Jade I'm late"))
+            .fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
+
+        assertFalse(trust.readPersonal)
+        assertFalse(AgentRuntime(registry).requiresConfirmation("draft_sms", """{"to":"Jade","body":"I'm late"}""", trust))
+        assertFalse(network.first { it.name == "web_search" }.asksFirst("""{"query":"x"}""", trust))
+    }
+
+    /** Folded from the replayed history: a calendar read or a contact lookup in an earlier turn still counts in a later one. */
+    @Test
+    fun aCalendarOrContactReadInAnEarlierTurnStillCounts() {
+        for ((tool, args) in listOf(readCalendar to """{"day":"today"}""", findContact to """{"name":"Jade"}""")) {
+            val trust = listOf(
+                ChatMessage(MessageRole.User, "what do I have today?"),
+                ChatMessage(MessageRole.Assistant, "", toolCalls = listOf(ToolCall("c1", tool.name, args))),
+                ChatMessage(MessageRole.Tool, "result", toolCallId = "c1"),
+                ChatMessage(MessageRole.Assistant, "Here it is."),
+                ChatMessage(MessageRole.User, "now look up the weather"),
+            ).fold(ConversationTrust()) { t, m -> t.with(m, registry::find) }
+
+            assertTrue(tool.name, trust.readPersonal)
+            assertTrue(tool.name, network.first { it.name == "weather" }.asksFirst("""{"place":"Paris"}""", trust))
+        }
     }
 }

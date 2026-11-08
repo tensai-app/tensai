@@ -208,6 +208,10 @@ class ToolCallContext(val callId: String) : AbstractCoroutineContextElement(Key)
  * tool shares (TEN-211): once the user's messages are in the conversation ([ConversationTrust.readPersonal]), nothing that
  * can carry them off the phone or into another app runs unasked, so every [ToolTier.Network] and [ToolTier.PhoneAction]
  * call asks. By tier, so a tool added later cannot slip through. [AgentRuntime] and the chat's cards both read this.
+ *
+ * Left out on purpose (TEN-217): memory facts, which sit in every chat's system prompt, so counting them would put a
+ * card on every network call whenever memory is on; they are curated by the user (`remember` asks after an untrusted
+ * read) and stripped of control tokens. And `location`, whose intended use is `weather` right after it.
  */
 fun Tool.asksFirst(argsJson: String, trust: ConversationTrust): Boolean =
     requiresConfirmation(argsJson, trust) || (trust.readPersonal && tier in TiersGatedAfterPersonalRead)

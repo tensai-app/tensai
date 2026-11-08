@@ -146,7 +146,8 @@ internal fun formatCalendar(events: List<CalendarEvent>, range: CalendarRange, z
 /**
  * Reads the events of a day or a range from the Android calendar (TEN-179), recurring events expanded, visible calendars
  * only. Asks the permission at first use ([waitsForUser]: the runtime's timeout does not apply while the dialog is up).
- * An invite's title and place are written by whoever sent it: [returnsUntrustedContent].
+ * An invite's title and place are written by whoever sent it: [returnsUntrustedContent]. The user's agenda is a personal
+ * read too ([returnsPersonalContent], TEN-217): no search or phone action runs unasked after it.
  */
 class ReadCalendarTool(
     private val calendar: CalendarSource,
@@ -162,6 +163,7 @@ class ReadCalendarTool(
     override val tier = ToolTier.AndroidPermission
     override val waitsForUser = true
     override val returnsUntrustedContent = true
+    override fun returnsPersonalContent(argsJson: String) = true
 
     override suspend fun execute(argsJson: String): ToolResult {
         val args = try {
