@@ -2,6 +2,7 @@ package io.github.tensaiapp.ui.screens.chat
 
 import android.content.ContextWrapper
 import io.github.tensaiapp.agent.AgentRuntime
+import io.github.tensaiapp.agent.ConfirmationGate
 import io.github.tensaiapp.agent.ToolCallOutcome
 import io.github.tensaiapp.agent.ToolCallStatus
 import io.github.tensaiapp.agent.Tool
@@ -1687,6 +1688,63 @@ class ChatViewModelTest {
         awaitGeneration()
 
         assertEquals("Sure, one moment.", chatDao.observeMessages(id).first().last().content)
+    }
+
+    /**
+     * TEN-221, as seen on the phone: two refused calls, then the forced answer writes a third call in another
+     * template's shape, which the engine's parser does not read as one. The fallback says it was refused, not the markup.
+     */
+    @Test
+    fun aCallWrittenAsTextInTheForcedAnswerAfterTwoRefusalsShowsTheRefusal() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser())), gate = ConfirmationGate { _, _ -> false })
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += toolCallsReply(ToolCall("c2", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("<tool_call> <function=web_search> <parameter=query> Lyon current weather </tool_call>")
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("erase fact 1")
+        awaitGeneration()
+
+        assertEquals(listOf("refused", "refused"), chatDao.toolCalls.map { it.status })
+        assertEquals(toolFallbackMessage(java.util.Locale.getDefault().language, refused = true), chatDao.observeMessages(id).first().last().content)
+    }
+
+    /** TEN-221: an answer with a stray call written after its prose keeps the prose only. */
+    @Test
+    fun aStrayCallAfterTheAnswerKeepsOnlyTheProse() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(datetimeCall)
+        engine.scriptQueue += answerReply("It is 23:04 in Tokyo.\n<tool_call>\n{\"name\": \"datetime\", \"arguments\": {}}\n</tool_call>")
+        val id = chatRepository.createConversation(modelId = null)
+
+        newViewModel(id).send("What time is it in Tokyo?")
+        awaitGeneration()
+
+        assertEquals("It is 23:04 in Tokyo.", chatDao.observeMessages(id).first().last().content)
+    }
+
+    /** TEN-221: a reply stopped while writing a call as text keeps its prose, not the call it would replay. */
+    @Test
+    fun aReplyStoppedWhileWritingACallAsTextKeepsOnlyTheProse() = runBlocking {
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(DateTimeTool())))
+        loadFakeModel(supportsTools = true)
+        // As on the phone: a shape the engine's parser does not know is content to it.
+        val written = "Sure. <tool_call>\n{\"name\": \"datetime\", \"arguments\": {}"
+        engine.scriptedEvents = listOf(DecodeEvent.Token(written), DecodeEvent.Parsed(content = written, reasoning = null))
+        engine.hangBeforeTerminal = true
+        val id = chatRepository.createConversation(modelId = null)
+        val viewModel = newViewModel(id)
+
+        viewModel.send("what time is it?")
+        awaitStreamingReply(id)
+        viewModel.stop()
+        awaitGeneration()
+
+        val reply = chatDao.observeMessages(id).first().last()
+        assertEquals("Sure.", reply.content)
+        assertEquals(StopReason.Cancelled.name, reply.stopReason)
     }
 
     /** TEN-204's reply: the model reasoned, then ended its turn with nothing outside the think tags. */

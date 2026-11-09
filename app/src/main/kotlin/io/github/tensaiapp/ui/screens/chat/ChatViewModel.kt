@@ -330,14 +330,64 @@ internal fun hasToolCallMarker(text: String): Boolean =
 private val ToolCallMarkers = listOf("tool_call", "python_tag", "<function", "<invoke")
 
 /**
+ * [text] without the tool calls the model wrote in it as plain text (TEN-221), the prose around them kept. A final
+ * answer makes no call (the forced one past the guards, or one the engine's parser did not read as a call): a model
+ * that still writes one, in its own template's shape or another's (LFM3 writing Qwen3-Coder's `<tool_call>
+ * <function=...>`), must not have the markup shown or replayed. Each call runs to its closing tag or, unclosed, to
+ * the end of its stretch of prose; a closing or opening tag left alone is dropped too. The word "function" in prose
+ * is not a tag.
+ *
+ * Code is left as written: a ``` block or a `span` showing a call is an answer about the format, not a call. A tag
+ * outside backticks is taken for a call, a real mention of one included: the two cannot be told apart.
+ */
+internal fun withoutToolCallMarkup(text: String): String {
+    if (!hasToolCallMarker(text)) return text
+    val out = StringBuilder()
+    var at = 0
+    for (code in CodeSpans.findAll(text)) {
+        out.append(withoutCalls(text.substring(at, code.range.first))).append(code.value)
+        at = code.range.last + 1
+    }
+    out.append(withoutCalls(text.substring(at)))
+    val stripped = out.toString()
+    return if (stripped == text) text else stripped.trim()
+}
+
+/** [prose] (no code in it) without its calls, the blank lines and the gap a call leaves mid-line closed up. */
+private fun withoutCalls(prose: String): String {
+    val stripped = WrittenToolCalls.fold(prose) { acc, call -> acc.replace(call, "") }
+    return if (stripped == prose) prose else stripped.replace(BlankLines, "\n\n").replace(InnerSpaces, " ")
+}
+
+/** A ``` block (unclosed: to the end) or an inline `span`. */
+private val CodeSpans = Regex("""```.*?(?:```|\z)|`[^`\n]*`""", RegexOption.DOT_MATCHES_ALL)
+
+private val WrittenToolCalls = listOf(
+    // Hermes, Qwen (JSON inside) and Qwen3-Coder (XML-ish inside).
+    Regex("""<tool_call>.*?(?:</tool_call>|\z)""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+    // LFM's own.
+    Regex("""<\|tool_call_start\|>.*?(?:<\|tool_call_end\|>|\z)""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+    // Llama 3.x and Qwen3-Coder without the outer tag.
+    Regex("""<function(?:=[^>]*)?>.*?(?:</function>|\z)""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+    Regex("""</?(?:tool_call|function|parameter)(?:=[^>]*)?>|<\|tool_call_(?:start|end)\|>""", RegexOption.IGNORE_CASE),
+)
+
+private val BlankLines = Regex("""\n\s*\n(?:\s*\n)+""")
+
+private val InnerSpaces = Regex("""(?<=\S)[ \t]{2,}(?=\S)""")
+
+/**
  * What an agent turn ends on when the model, after its tool calls, wrote no answer at all (TEN-172).
  * Stored text, so it follows the app language ([language] is a two-letter code) rather than a resource.
+ * [refused] when the turn's last call was refused (TEN-221): the user is told so, not that the tools fell short.
+ * Only that call: an earlier one may have done something, so the line does not say nothing was.
  */
-internal fun toolFallbackMessage(language: String): String =
-    if (language == "fr") {
-        "Je n'ai pas pu terminer avec les outils disponibles."
-    } else {
-        "I couldn't finish with the tools available."
+internal fun toolFallbackMessage(language: String, refused: Boolean = false): String =
+    when {
+        refused && language == "fr" -> "L'action a été refusée."
+        refused -> "The action was refused."
+        language == "fr" -> "Je n'ai pas pu terminer avec les outils disponibles."
+        else -> "I couldn't finish with the tools available."
     }
 
 /** Thinking of a new chat, until its toggle is flipped. Also the agent bench's default. */
@@ -1723,6 +1773,8 @@ class ChatViewModel(
         var sawCallName = false
         // The turn's last call, when it ended ok: what an answer that never came falls back on (TEN-204).
         var lastOk: ToolCallOutcome? = null
+        // The turn's last call was refused: that fallback says so (TEN-221).
+        var lastRefused = false
 
         suspend fun persistThrottled() {
             val now = System.currentTimeMillis()
@@ -1804,14 +1856,19 @@ class ChatViewModel(
                         ) {
                             content = parser.fallbackContent
                         }
+                        // A final answer holding a call written as text (TEN-221): the forced one cannot drop what the
+                        // engine's parser did not read as a call. Only the prose stays.
+                        val shown = if (event.calls.isEmpty()) withoutToolCallMarkup(content) else content
+                        val wroteCall = shown != content
+                        content = shown
                         // The answer after tool use came out with no text, reasoning or not (TEN-204): say what the tool
                         // found when it can, or that it could not finish, rather than leave a bubble with nothing in it.
-                        val noAnswer = (event.index > 0 || event.toolParseFailed) && event.calls.isEmpty() &&
+                        val noAnswer = (event.index > 0 || event.toolParseFailed || wroteCall) && event.calls.isEmpty() &&
                             content.isBlank() &&
                             event.stats?.stopReason != StopReason.ContextBudgetExhausted &&
                             event.stats?.stopReason != StopReason.ContextBudgetClipped &&
                             event.stats?.stopReason != StopReason.Cancelled && !stopSignal.wasRequested
-                        if (noAnswer) content = lastOk?.let(agentRuntime::fallbackAnswer) ?: toolFallbackMessage(Locale.getDefault().language)
+                        if (noAnswer) content = lastOk?.let(agentRuntime::fallbackAnswer) ?: toolFallbackMessage(Locale.getDefault().language, lastRefused)
                         // Not cancellable: the reply and its calls land together, or the `finally` below has
                         // nothing coherent to close.
                         withContext(NonCancellable) {
@@ -1831,6 +1888,7 @@ class ChatViewModel(
                         withContext(NonCancellable) { chatRepository.recordToolCall(conversationId, replyId, event.outcome) }
                         unanswered = unanswered.filterNot { it.id == event.outcome.call.id }
                         lastOk = event.outcome.takeIf { it.status == ToolCallStatus.Ok }
+                        lastRefused = event.outcome.status == ToolCallStatus.Refused
                     }
                     AgentEvent.Done -> Unit
                     is AgentEvent.Error -> failed = true
@@ -1856,9 +1914,11 @@ class ChatViewModel(
                         stopSignal.wasRequested -> StopReason.Cancelled
                         else -> null
                     }
-                    keptCutReply = hasPersistableContent(parser.content, parser.thinking)
+                    // A call the cut reply was writing as text is not kept either (TEN-221).
+                    val cutContent = withoutToolCallMarkup(parser.content)
+                    keptCutReply = hasPersistableContent(cutContent, parser.thinking)
                     if (keptCutReply || keepsEmptyTurn(stopReason)) {
-                        chatRepository.updateAssistantMessage(id, parser.content, parser.thinking, stopReason = stopReason)
+                        chatRepository.updateAssistantMessage(id, cutContent, parser.thinking, stopReason = stopReason)
                     } else {
                         chatRepository.deleteMessage(id)
                     }
