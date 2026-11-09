@@ -1,9 +1,12 @@
 package io.github.tensaiapp.runtime
 
+import io.github.tensaiapp.agent.AskUserGate
+import io.github.tensaiapp.agent.UiConfirmationGate
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 
 /**
@@ -32,6 +35,43 @@ class ChatTurns {
 
     /** The running turns by conversation id. */
     val running: StateFlow<Map<String, Turn>> = _running.asStateFlow()
+
+    // The conversation each chat screen shows, by screen (`null` for a draft): see [show].
+    private val shown = MutableStateFlow<Map<Any, String?>>(emptyMap())
+
+    /**
+     * [screen] shows [conversationId] (`null` for a draft) until [hide]. Keyed by screen, not counted by
+     * conversation: a screen leaving after another one on the same conversation came up leaves that one shown.
+     */
+    fun show(screen: Any, conversationId: String?) {
+        shown.update { it + (screen to conversationId) }
+    }
+
+    /** The draft [screen] shows got its row. A no-op once [hide] has run: the turn it starts is nobody's to watch. */
+    fun bind(screen: Any, conversationId: String) {
+        shown.update { if (screen in it) it + (screen to conversationId) else it }
+    }
+
+    fun hide(screen: Any) {
+        shown.update { it - screen }
+    }
+
+    /**
+     * Denies the cards and dismisses the questions of every turn whose conversation no screen shows (TEN-174,
+     * TEN-187): nobody is there to answer them, a card would wait out its five minutes and a question for good,
+     * and every chat's Send waits for the turn to end. Pending ones as the screen leaves, and the ones the turn
+     * raises later (a model calling again after a Deny), until a screen shows the conversation again.
+     * Never returns: collected for the life of the process. [log] gets how many calls it answered.
+     */
+    suspend fun answerUnattended(confirmations: UiConfirmationGate, questions: AskUserGate, log: (String) -> Unit) {
+        combine(_running, shown, confirmations.pending, questions.pending) { running, shown, cards, asked ->
+            val watched = shown.values.toSet()
+            running.filterKeys { it !in watched }.values.flatMap { it.callIds }.filter { it in cards || it in asked }
+        }.collect { ids ->
+            val answered = confirmations.deny(ids) + questions.dismiss(ids)
+            if (answered > 0) log("chat left: answered $answered call(s) for nobody")
+        }
+    }
 
     fun start(conversationId: String, turn: Turn) {
         _running.update { it + (conversationId to turn) }

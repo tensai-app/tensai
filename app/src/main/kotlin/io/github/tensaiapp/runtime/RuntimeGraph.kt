@@ -84,6 +84,7 @@ import io.github.tensaiapp.download.WorkManagerScheduler
 import io.github.tensaiapp.download.toOrigin
 import io.github.tensaiapp.hf.HfClient
 import io.github.tensaiapp.hf.TokenStore
+import io.github.tensaiapp.ui.screens.chat.ChatLogTag
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -205,6 +206,11 @@ object RuntimeGraph {
 
         // TEN-144: decrypt the Hugging Face token once, off Main, so the HTTP clients' provider is a cache hit.
         applicationScope.launch(Dispatchers.IO) { runCatching { tokenStore.get() } }
+
+        // TEN-220: what a turn asks while no chat shows it is answered for nobody, see [ChatTurns.answerUnattended].
+        applicationScope.launch {
+            chatTurns.answerUnattended(confirmationGate, askUserGate) { Log.i(ChatLogTag, it) }
+        }
 
         // TEN-174: read the granted tiers once, so the first turn finds them in the snapshot.
         applicationScope.launch(Dispatchers.IO) { runCatching { toolSettings.grants.first() } }

@@ -144,10 +144,14 @@ class ChatViewModelTest {
      */
     private lateinit var viewModelJob: Job
 
+    /** Runs [ChatTurns.answerUnattended] as `RuntimeGraph` does, apart from [viewModelJob]: it never ends. */
+    private lateinit var answerJob: Job
+
     @Before
     fun setUp() {
         storageRoot = Files.createTempDirectory("tensai-chatviewmodel-test").toFile()
         viewModelJob = Job()
+        answerJob = Job()
         chatDao = FakeChatDao()
         modelDao = FakeModelDao()
         sessionDao = FakeSessionDao()
@@ -187,6 +191,7 @@ class ChatViewModelTest {
         // would wait for good. Every test that has something to wait for has already waited for it
         // — see [awaitGeneration].
         viewModelJob.cancel()
+        answerJob.cancel()
         storageRoot.deleteRecursively()
         AppForegroundTracker.onActivityStopped()
         ActiveSessionTracker.clear()
@@ -198,7 +203,14 @@ class ChatViewModelTest {
      * rather than the receiver's job, so [awaitGeneration] has something to join that holds the
      * generations and nothing else.
      */
-    private fun CoroutineScope.newViewModel(conversationId: String?) = ChatViewModel(
+    private fun CoroutineScope.newViewModel(conversationId: String?): ChatViewModel {
+        if (answerJob.children.none()) {
+            launch(answerJob) { chatTurns.answerUnattended(confirmationGate, askUserGate) { logLines += it } }
+        }
+        return buildViewModel(conversationId)
+    }
+
+    private fun CoroutineScope.buildViewModel(conversationId: String?) = ChatViewModel(
         conversationId = conversationId,
         chatRepository = chatRepository,
         inferenceQueue = inferenceQueue,
@@ -2000,10 +2012,13 @@ class ChatViewModelTest {
         engine.scriptQueue += toolCallsReply(askCall)
         engine.scriptQueue += answerReply("Okay.")
         val id = chatRepository.createConversation(modelId = null)
-        newViewModel(id).send("text Jade")
+        val first = newViewModel(id)
+        first.send("text Jade")
         withTimeout(5_000) { askUserGate.pending.first { it.isNotEmpty() } }
 
+        // Reopened: the first screen is gone, and the question waits for the one showing it now.
         val reopened = newViewModel(id)
+        first.leave()
         assertNotNull(reopened.pendingQuestion.first())
         reopened.leave()
         awaitGeneration()
@@ -2127,6 +2142,121 @@ class ChatViewModelTest {
         assertEquals("refused", chatDao.toolCalls.single().status)
         assertEquals(0, eraser.runs)
         assertTrue(confirmationGate.pending.value.isEmpty())
+    }
+
+    /**
+     * The chat left after a Deny, while the model goes on and asks again: that second card is denied as it comes,
+     * not left waiting out the gate's five minutes unseen. The turn ends, and Send in another chat with it.
+     */
+    @Test
+    fun aCardRaisedAfterTheChatWasLeftIsDeniedAndFreesSendInAnotherChat() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += toolCallsReply(ToolCall("c2", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("Left it alone.")
+        engine.scriptQueue += answerReply("Hello.")
+        val a = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(a)
+
+        viewModelA.send("erase fact 1")
+        val first = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModelA.answerConfirmation(first, allow = false)
+        viewModelA.leave()
+        val viewModelB = newViewModel(null)
+        withTimeout(5_000) { viewModelB.turnRunning.first { !it } }
+        viewModelB.send("hi")
+        withTimeout(5_000) { awaitGeneration() }
+
+        assertEquals(listOf("refused", "refused"), chatDao.toolCalls.map { it.status })
+        assertEquals(0, eraser.runs)
+        val b = viewModelB.currentConversationId.value!!
+        assertEquals(listOf("user", "assistant"), chatRepository.observeMessages(b).first().map { it.role })
+    }
+
+    /** The chat left after a Deny and opened again before the model asks again: that card is the user's to answer. */
+    @Test
+    fun aCardRaisedAfterTheChatWasReopenedWaitsForTheUser() = runBlocking {
+        val eraser = eraser()
+        agentRuntime = AgentRuntime(ToolRegistry(listOf(eraser)), gate = confirmationGate)
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(ToolCall("c1", "erase", """{"id":1}"""))
+        engine.scriptQueue += toolCallsReply(ToolCall("c2", "erase", """{"id":1}"""))
+        engine.scriptQueue += answerReply("Erased.")
+        val a = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(a)
+
+        viewModelA.send("erase fact 1")
+        val first = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModelA.answerConfirmation(first, allow = false)
+        viewModelA.leave()
+        val reopened = newViewModel(a)
+        val second = withTimeout(5_000) { confirmationGate.pending.first { it.isNotEmpty() && first !in it } }.keys.single()
+        settle()
+
+        assertTrue("still waiting for the user", second in confirmationGate.pending.value)
+        val card = reopened.items.first().filterIsInstance<ConfirmationItem>().last()
+        assertEquals(ConfirmDecision.Pending, card.decision)
+        reopened.answerConfirmation(second, allow = true)
+        awaitGeneration()
+
+        assertEquals(listOf("refused", "ok"), chatDao.toolCalls.map { it.status })
+        assertEquals(1, eraser.runs)
+    }
+
+    /** [aCardRaisedAfterTheChatWasLeftIsDeniedAndFreesSendInAnotherChat] for a question, which has no timeout at all. */
+    @Test
+    fun aQuestionAskedAfterTheChatWasLeftIsDismissedAndFreesSendInAnotherChat() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += toolCallsReply(askCall.copy(id = "c2"))
+        engine.scriptQueue += answerReply("Drafting to Jade Martin.")
+        engine.scriptQueue += answerReply("Hello.")
+        val a = chatRepository.createConversation(modelId = null)
+        val viewModelA = newViewModel(a)
+
+        viewModelA.send("text Jade")
+        val first = withTimeout(5_000) { askUserGate.pending.first { it.isNotEmpty() } }.keys.single()
+        viewModelA.answerQuestion(first, listOf("Jade Martin"))
+        viewModelA.leave()
+        val viewModelB = newViewModel(null)
+        withTimeout(5_000) { viewModelB.turnRunning.first { !it } }
+        viewModelB.send("hi")
+        withTimeout(5_000) { awaitGeneration() }
+
+        val results = chatRepository.observeMessages(a).first().filter { it.role == "tool" }.map { it.content }
+        assertEquals("""{"dismissed":true}""", results.last())
+        assertEquals(2, results.size)
+        val b = viewModelB.currentConversationId.value!!
+        assertEquals(listOf("user", "assistant"), chatRepository.observeMessages(b).first().map { it.role })
+    }
+
+    /** A new chat left before its first send has its row: its turn is nobody's to watch, its question is dismissed. */
+    @Test
+    fun aDraftLeftBeforeItsFirstSendHasARowHasItsQuestionDismissed() = runBlocking {
+        askRuntime()
+        loadFakeModel(supportsTools = true)
+        engine.scriptQueue += toolCallsReply(askCall)
+        engine.scriptQueue += answerReply("Okay.")
+        engine.scriptQueue += answerReply("Hello.")
+        val draft = newViewModel(null)
+
+        // Same thread: the send's coroutine has not created the row yet when the screen goes away.
+        draft.send("text Jade")
+        draft.leave()
+        // The id is set right before the turn registers, with no suspension between.
+        withTimeout(5_000) { draft.currentConversationId.first { it != null } }
+        val other = newViewModel(null)
+        withTimeout(5_000) { other.turnRunning.first { !it } }
+        other.send("hi")
+        withTimeout(5_000) { awaitGeneration() }
+
+        val a = draft.currentConversationId.value!!
+        assertEquals("""{"dismissed":true}""", chatRepository.observeMessages(a).first().single { it.role == "tool" }.content)
+        val b = other.currentConversationId.value!!
+        assertEquals(listOf("user", "assistant"), chatRepository.observeMessages(b).first().map { it.role })
     }
 
     /** Stop while the card waits: the pending call is dropped, never runs, and is closed as stopped. */

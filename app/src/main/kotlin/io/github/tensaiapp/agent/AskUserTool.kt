@@ -55,14 +55,10 @@ class AskUserGate {
         _pending.value[callId]?.reply?.complete(answers)
     }
 
-    fun dismiss(callId: String) {
-        _pending.value[callId]?.reply?.complete(null)
-    }
+    fun dismiss(callId: String): Boolean = _pending.value[callId]?.reply?.complete(null) == true
 
-    /** Dismisses the pending questions among [callIds]: nobody is left to answer them. */
-    fun dismiss(callIds: Collection<String>) {
-        callIds.forEach(::dismiss)
-    }
+    /** Dismisses the pending questions among [callIds]: nobody is left to answer them. Answers how many it dismissed. */
+    fun dismiss(callIds: Collection<String>): Int = callIds.count(::dismiss)
 }
 
 /**

@@ -88,10 +88,10 @@ class UiConfirmationGate(private val timeoutMs: Long = DefaultTimeoutMs) : Confi
         _pending.value[callId]?.decision?.complete(allow)
     }
 
-    /** Denies the pending calls among [callIds]: nobody is left to answer them. */
-    fun deny(callIds: Collection<String>) {
+    /** Denies the pending calls among [callIds]: nobody is left to answer them. Answers how many it denied. */
+    fun deny(callIds: Collection<String>): Int {
         val current = _pending.value
-        callIds.forEach { current[it]?.decision?.complete(false) }
+        return callIds.count { current[it]?.decision?.complete(false) == true }
     }
 
     companion object {

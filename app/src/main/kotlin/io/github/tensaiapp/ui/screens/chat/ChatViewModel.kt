@@ -115,7 +115,7 @@ internal fun replySampling(
 }
 
 /** The log tag of the chat's replies. */
-private const val ChatLogTag = "tensai.chat"
+internal const val ChatLogTag = "tensai.chat"
 
 /** Minimum time between DB writes of a streaming assistant message's growing content — see [ChatViewModel.streamInto]. */
 private const val StreamPersistIntervalMs = 100L
@@ -478,7 +478,9 @@ class ChatViewModel(
      * While a question is open the card replaces the input pill, so Stop is out of reach: the X is the way out, the model
      * goes on without an answer and the pill (with its Stop) is back as soon as the question closes.
      */
-    fun dismissQuestion(callId: String) = askUserGate.dismiss(callId)
+    fun dismissQuestion(callId: String) {
+        askUserGate.dismiss(callId)
+    }
 
     /** Mirrors [InferenceQueue.state] — [ChatScreen] derives `isGenerating`/`modelName`/`nCtx` from it directly. */
     val queueState: StateFlow<QueueState> = inferenceQueue.state
@@ -638,6 +640,7 @@ class ChatViewModel(
                 toolsEnabled = settings.toolsEnabled,
             )
             _conversationId.value = id
+            chatTurns.bind(this, id)
             id
         }
     }
@@ -718,13 +721,13 @@ class ChatViewModel(
      * One thing is answered for the user: a confirmation card still waiting (TEN-174) is denied, nobody is left
      * to tap it and the turn would hang on it. The model is told the action was refused.
      * Same for a question (TEN-187): it is dismissed, the model is told the user gave no answer.
+     *
+     * And so are the ones the turn raises later, until a screen shows the conversation again: the screen stops
+     * showing it in [ChatTurns], whose [ChatTurns.answerUnattended] answers them.
      */
     fun leave() {
         warmUpJob?.cancel()
-        runningTurn()?.let {
-            confirmationGate.deny(it.callIds)
-            askUserGate.dismiss(it.callIds)
-        }
+        chatTurns.hide(this)
     }
 
     /**
@@ -1039,6 +1042,8 @@ class ChatViewModel(
 
     init {
         refreshContextUsage()
+        // Built by the screen that shows it, see [leave].
+        chatTurns.show(this, _conversationId.value)
     }
 
     /**
