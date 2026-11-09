@@ -1,6 +1,8 @@
 package io.github.tensaiapp.bench
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -124,7 +126,9 @@ object DeviceBench {
 
     private fun report(context: Context, done: DeviceBenchOutcome.Done): DeviceReport {
         val profile = runCatching { RuntimeGraph.deviceProfiler.profile() }.getOrNull()
-        val battery = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        // The sticky battery status, not BatteryManager.isCharging: that one stays false on a slow USB charge.
+        val batteryStatus = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
         return DeviceReport(
             appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
@@ -134,7 +138,8 @@ object DeviceBench {
             android = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
             model = done.model,
             points = done.points,
-            charging = battery?.isCharging,
+            charging = if (batteryStatus < 0) null else batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                batteryStatus == BatteryManager.BATTERY_STATUS_FULL,
             thermal = power?.currentThermalStatus?.let(DeviceReport::thermalName),
             stopped = done.stopped,
         )

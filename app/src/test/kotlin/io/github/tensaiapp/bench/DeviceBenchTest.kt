@@ -47,7 +47,7 @@ class DeviceBenchTest {
         assertTrue(text, "prefill tok/s: 61.2, 55.0\n" in text)
         assertTrue(text, "decode tok/s: 11.0, -\n" in text)
         assertTrue(text, "first token (ms): 420, -\n" in text)
-        assertTrue(text, "RAM: 7.7 GB\n" in text)
+        assertTrue(text, "RAM: 7.2 GB\n" in text)
     }
 
     @Test

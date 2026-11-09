@@ -175,7 +175,8 @@ data class DeviceReport(
         line("app version", appVersion)
         line("phone", phone)
         line("SoC", soc)
-        line("RAM", if (ramBytes > 0) String.format(Locale.ROOT, "%.1f GB", ramBytes / 1e9) else null)
+        // 1024^3, the unit of the This device screen next to it.
+        line("RAM", if (ramBytes > 0) String.format(Locale.ROOT, "%.1f GB", ramBytes / (1024.0 * 1024.0 * 1024.0)) else null)
         line("Android version", android)
         line("model", model.name)
         line("quant", model.quant)
