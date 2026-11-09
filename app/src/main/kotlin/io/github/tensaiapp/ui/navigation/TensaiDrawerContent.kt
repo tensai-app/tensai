@@ -39,6 +39,7 @@ import io.github.tensaiapp.R
 import io.github.tensaiapp.data.chat.ChatRepository
 import io.github.tensaiapp.runtime.RuntimeGraph
 import io.github.tensaiapp.ui.components.KanjiGlyph
+import io.github.tensaiapp.ui.components.TensaiBadge
 import io.github.tensaiapp.ui.theme.tensaiTints
 
 /**
@@ -126,20 +127,9 @@ fun TensaiDrawerContent(
                     )
 
                     NavigationDrawerItem(
-                        label = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(stringResource(R.string.nav_server))
-                                Text(
-                                    text = stringResource(R.string.nav_server_badge),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
+                        label = { Text(stringResource(R.string.nav_server)) },
                         icon = { Icon(Icons.Rounded.Lan, contentDescription = null) },
+                        badge = { TensaiBadge(text = stringResource(R.string.nav_server_badge)) },
                         selected = selectedKey == "server",
                         shape = CircleShape,
                         colors = drawerItemColors(),
