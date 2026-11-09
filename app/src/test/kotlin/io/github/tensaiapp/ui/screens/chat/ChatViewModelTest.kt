@@ -21,6 +21,7 @@ import io.github.tensaiapp.data.chat.ChatDao
 import io.github.tensaiapp.data.chat.ChatRepository
 import io.github.tensaiapp.data.chat.ConversationEntity
 import io.github.tensaiapp.data.chat.MessageEntity
+import io.github.tensaiapp.data.chat.SendState
 import io.github.tensaiapp.data.chat.ToolActivityRow
 import io.github.tensaiapp.data.chat.ToolCallEntity
 import io.github.tensaiapp.data.chat.ToolCallsJson
@@ -207,6 +208,13 @@ class ChatViewModelTest {
     private fun CoroutineScope.newViewModel(conversationId: String?): ChatViewModel {
         if (answerJob.children.none()) {
             launch(answerJob) { chatTurns.answerUnattended(confirmationGate, askUserGate) { logLines += it } }
+            launch(answerJob) {
+                chatTurns.dispatchPending(
+                    inferenceQueue.state,
+                    // RuntimeGraph.markNotSent without its runCatching: a failed write here is a failed test.
+                    dropped = { sends -> chatRepository.markNotSent(sends.map { it.messageId }) },
+                ) { logLines += it }
+            }
         }
         return buildViewModel(conversationId)
     }
@@ -1981,27 +1989,232 @@ class ChatViewModelTest {
         assertFalse(reopened.turnRunning.first())
     }
 
-    /** While a tool of A runs the engine is A's, a send in B would take it from under the turn. */
-    @Test
-    fun aSendInAnotherConversationIsRefusedWhileATurnRunsATool() = runBlocking {
+    /**
+     * A's turn hanging in one of its tools: the engine reads idle while a turn runs, the case a send in another chat
+     * must wait through (TEN-224). Answers A's view model, to stop it.
+     */
+    private suspend fun CoroutineScope.aTurnHangingInATool(): ChatViewModel {
         val entered = CompletableDeferred<Unit>()
         agentRuntime = AgentRuntime(ToolRegistry(listOf(hangingTool(entered))))
         loadFakeModel(supportsTools = true)
         engine.scriptQueue += toolCallsReply(ToolCall("c1", "hang", "{}"))
-        val a = chatRepository.createConversation(modelId = null)
-        val b = chatRepository.createConversation(modelId = null)
-        val viewModelA = newViewModel(a)
-        val viewModelB = newViewModel(b)
+        val viewModelA = newViewModel(chatRepository.createConversation(modelId = null))
         viewModelA.send("go")
         entered.await()
+        return viewModelA
+    }
+
+    private suspend fun awaitWaiting(conversationId: String) {
+        withTimeout(5_000) { chatTurns.pending.first { conversationId in it } }
+    }
+
+    /** Every waiting send started, and every turn over: a send started by the dispatcher is not a child yet when one ends. */
+    private suspend fun awaitQueueDrained() {
+        withTimeout(5_000) { chatTurns.pending.first { it.isEmpty() } }
+        awaitGeneration()
+    }
+
+    /**
+     * While a tool of A runs the engine is A's, a send in B would take it from under the turn: B's message waits,
+     * stored and shown at once, and goes out by itself when A ends (TEN-224). Its screen left meanwhile.
+     */
+    @Test
+    fun aSendInAnotherConversationWaitsForTheTurnAndGoesOutWhenItEnds() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val a = viewModelA.currentConversationId.value!!
+        val b = chatRepository.createConversation(modelId = null)
+        val viewModelB = newViewModel(b)
 
         viewModelB.send("hi")
+        awaitWaiting(b)
+        val waiting = chatDao.observeMessages(b).first().single()
+        assertEquals("hi", waiting.content)
+        assertEquals(SendState.Pending.name, waiting.sendState)
+        assertEquals(SendState.Pending, viewModelB.messages.first().single().sendState)
+        assertTrue(viewModelB.sendPending.first())
+        assertEquals(a, viewModelB.answeringElsewhere.first())
         assertFalse("B has no turn of its own to stop", viewModelB.canStop.first())
+
+        viewModelB.leave()
+        viewModelA.stop()
+        awaitQueueDrained()
+
+        assertEquals(listOf("stopped"), chatDao.toolCalls.map { it.status })
+        val stored = chatDao.observeMessages(b).first()
+        assertEquals(listOf("user", "assistant"), stored.map { it.role })
+        assertNull("it went out", stored[0].sendState)
+        assertEquals("hi", stored[1].content)
+        assertEquals("hi", engine.requests.last().messages.last().content)
+        assertFalse(viewModelB.sendPending.first())
+    }
+
+    /** Cancel send takes the waiting message back: its row goes, a draft's conversation with it, and the text comes back. */
+    @Test
+    fun cancellingAWaitingSendRemovesItsRowAndAnswersItsText() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val viewModelB = newViewModel(null)
+
+        viewModelB.send("hi")
+        val b = withTimeout(5_000) { chatTurns.pending.first { it.isNotEmpty() } }.keys.single()
+        assertEquals("hi", viewModelB.cancelSend())
+        assertNull("nothing left to take back", viewModelB.cancelSend())
+        assertFalse(viewModelB.sendPending.first())
+
         viewModelA.stop()
         awaitGeneration()
 
         assertTrue(chatDao.observeMessages(b).first().isEmpty())
-        assertEquals(listOf("stopped"), chatDao.toolCalls.map { it.status })
+        assertNull("the draft's row went with its only message", chatRepository.getConversation(b))
+        assertEquals("only A's request reached the engine", 1, engine.requests.size)
+    }
+
+    /** Two chats waiting go out one after the other, in the order they were sent. */
+    @Test
+    fun twoWaitingChatsGoOutInTheOrderTheyWereSent() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        val c = chatRepository.createConversation(modelId = null)
+        newViewModel(b).send("from b")
+        awaitWaiting(b)
+        newViewModel(c).send("from c")
+        awaitWaiting(c)
+
+        viewModelA.stop()
+        awaitQueueDrained()
+
+        assertEquals(listOf("from b", "from c"), engine.requests.takeLast(2).map { it.messages.last().content })
+        assertEquals(listOf("user", "assistant"), chatDao.observeMessages(b).first().map { it.role })
+        assertEquals(listOf("user", "assistant"), chatDao.observeMessages(c).first().map { it.role })
+    }
+
+    /** One message waits per chat: a second send there, from the same screen or a reopened one, does nothing. */
+    @Test
+    fun onlyOneMessageWaitsPerChat() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        val viewModelB = newViewModel(b)
+        viewModelB.send("first")
+        awaitWaiting(b)
+
+        viewModelB.send("second")
+        newViewModel(b).send("third")
+        yield()
+
+        assertEquals(listOf("first"), chatDao.observeMessages(b).first().map { it.content })
+        assertEquals("first", chatTurns.pending.value.getValue(b).text)
+        viewModelA.stop()
+        awaitQueueDrained()
+        assertEquals(listOf("first", "hi"), chatDao.observeMessages(b).first().map { it.content })
+    }
+
+    /**
+     * A model switch drops the waiting sends: their rows are marked not sent and nothing sends them, the turn's end
+     * included. A tap sends one again, as a new send, its old row gone.
+     */
+    @Test
+    fun aModelSwitchMarksTheWaitingSendsNotSent() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        val viewModelB = newViewModel(b)
+        viewModelB.send("hi")
+        awaitWaiting(b)
+
+        importModel(id = "other", fileName = "other.gguf")
+        loadImportedModel("other")
+        withTimeout(5_000) { chatDao.observeMessages(b).first { it.single().sendState == SendState.NotSent.name } }
+        assertTrue(chatTurns.pending.value.isEmpty())
+        viewModelA.stop()
+        awaitGeneration()
+
+        val notSent = viewModelB.messages.first().single()
+        assertEquals(SendState.NotSent, notSent.sendState)
+        val requests = engine.requests.size
+        viewModelB.resend(notSent)
+        awaitGeneration()
+
+        val stored = chatDao.observeMessages(b).first()
+        assertEquals(listOf("user", "assistant"), stored.map { it.role })
+        assertNull(stored[0].sendState)
+        assertEquals(requests + 1, engine.requests.size)
+    }
+
+    /**
+     * The notification's Stop stops the engine, not only A: what waits is taken back before A's turn ends, so none
+     * starts in its place, and marked not sent as `InferenceService` does.
+     */
+    @Test
+    fun theNotificationsStopMarksTheWaitingSendsNotSent() = runBlocking {
+        aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        newViewModel(b).send("hi")
+        awaitWaiting(b)
+
+        val drained = chatTurns.stopAll()
+        chatRepository.markNotSent(drained.map { it.messageId })
+        awaitGeneration()
+
+        assertEquals(listOf(SendState.NotSent.name), chatDao.observeMessages(b).first().map { it.sendState })
+        assertTrue(chatTurns.pending.value.isEmpty())
+        assertEquals("only A's request reached the engine", 1, engine.requests.size)
+    }
+
+    /** B deleted from the Chats page while its message waited, its screen gone: nothing is sent, nothing is left waiting. */
+    @Test
+    fun aWaitingSendWhoseConversationWasDeletedSendsNothing() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        newViewModel(b).send("hi")
+        awaitWaiting(b)
+
+        chatRepository.deleteConversation(b)
+        viewModelA.stop()
+        awaitQueueDrained()
+
+        assertTrue(chatDao.observeMessages(b).first().isEmpty())
+        assertTrue(chatTurns.pending.value.isEmpty())
+        assertTrue(chatTurns.running.value.isEmpty())
+        assertEquals("only A's request reached the engine", 1, engine.requests.size)
+    }
+
+    /** An unload drops the waiting sends as a switch does: not sent, and nothing sends them once the turn ends. */
+    @Test
+    fun anUnloadMarksTheWaitingSendsNotSent() = runBlocking {
+        val viewModelA = aTurnHangingInATool()
+        val b = chatRepository.createConversation(modelId = null)
+        newViewModel(b).send("hi")
+        awaitWaiting(b)
+
+        inferenceQueue.unloadModel()
+        withTimeout(5_000) { chatDao.observeMessages(b).first { it.single().sendState == SendState.NotSent.name } }
+        viewModelA.stop()
+        awaitGeneration()
+
+        assertTrue(chatTurns.pending.value.isEmpty())
+        assertEquals(listOf(SendState.NotSent.name), chatDao.observeMessages(b).first().map { it.sendState })
+        assertEquals(1, engine.requests.size)
+    }
+
+    /**
+     * A message the process was killed on while it waited is marked not sent at the next start (what `RuntimeGraph`
+     * runs), and never goes out by itself: not with the engine idle, not after another chat's reply. It is in no prompt.
+     */
+    @Test
+    fun aMessageLeftWaitingByAKilledProcessIsNeverSentByItself() = runBlocking {
+        loadFakeModel()
+        val b = chatRepository.createConversation(modelId = null)
+        chatRepository.appendUserMessage(b, "hi", SendState.Pending)
+        chatRepository.markWaitingNotSent()
+        val viewModelB = newViewModel(b)
+        val c = chatRepository.createConversation(modelId = null)
+        newViewModel(c).send("other")
+        awaitGeneration()
+
+        val stored = chatDao.observeMessages(b).first()
+        assertEquals(SendState.NotSent.name, stored.single().sendState)
+        assertEquals(SendState.NotSent, viewModelB.messages.first().single().sendState)
+        assertFalse(viewModelB.sendPending.first())
+        assertTrue(chatRepository.toEngineMessages(stored, systemPrompt = null).isEmpty())
+        assertEquals(listOf("other"), engine.requests.map { it.messages.last().content })
     }
 
     /**
@@ -3332,6 +3545,16 @@ class ChatViewModelTest {
                     return
                 }
             }
+        }
+
+        override suspend fun updateSendState(id: String, sendState: String?) {
+            messages.values.forEach { list -> list.replaceAll { if (it.id == id) it.copy(sendState = sendState) else it } }
+            messagesFlow.value = messages.mapValues { it.value.toList() }
+        }
+
+        override suspend fun replaceSendState(from: String, to: String) {
+            messages.values.forEach { list -> list.replaceAll { if (it.sendState == from) it.copy(sendState = to) else it } }
+            messagesFlow.value = messages.mapValues { it.value.toList() }
         }
 
         override suspend fun deleteMessagesForConversation(conversationId: String) {

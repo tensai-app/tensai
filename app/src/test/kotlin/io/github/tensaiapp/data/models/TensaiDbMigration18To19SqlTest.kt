@@ -42,10 +42,10 @@ class TensaiDbMigration18To19SqlTest {
     }
 
     @Test
-    fun theMigrationGoesFromEighteenToNineteenAndIsLastInTheChain() {
+    fun theMigrationGoesFromEighteenToNineteenAndIsInTheChain() {
         assertEquals(18, TensaiDbMigrations.MIGRATION_18_19.startVersion)
         assertEquals(19, TensaiDbMigrations.MIGRATION_18_19.endVersion)
-        assertEquals(TensaiDbMigrations.MIGRATION_18_19, TensaiDbMigrations.ALL.last())
+        assertTrue(TensaiDbMigrations.MIGRATION_18_19 in TensaiDbMigrations.ALL)
     }
 
     @Test

@@ -43,6 +43,8 @@ import androidx.room.PrimaryKey
  *   reasoning, between a call and its result, is replayed, see [ChatRepository.toEngineMessages].
  * @param tokenCountModelId the loaded model's id (or name, for a load with no row) [tokenCount] was
  *   counted with. A count under another model is stale: a different tokenizer, a different figure.
+ * @param sendState name of the [SendState] of a user message that has not gone out yet (schema v20), `null` for
+ *   every message that has, and for every other role.
  */
 @Entity(
     tableName = "messages",
@@ -64,4 +66,17 @@ data class MessageEntity(
     val tokenCountModelId: String? = null,
     val toolCallId: String? = null,
     val toolName: String? = null,
+    val sendState: String? = null,
 )
+
+/**
+ * Where a user message stands while it has not gone out (TEN-224), stored by name in [MessageEntity.sendState] like
+ * [MessageEntity.stopReason]. Neither state is in a prompt, see [ChatRepository.toEngineMessages].
+ */
+enum class SendState {
+    /** Sent while another chat was answering: it goes out by itself once the engine is free. */
+    Pending,
+
+    /** Its wait was cut (a model switch or unload, the app killed): it goes out on a tap, never by itself. */
+    NotSent,
+}

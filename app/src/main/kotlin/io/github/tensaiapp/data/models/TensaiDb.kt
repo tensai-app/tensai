@@ -74,6 +74,8 @@ import io.github.tensaiapp.download.DownloadEntity
  *
  * Version 19 added `sessions.withoutTools` (TEN-196), see [TensaiDbMigrations.MIGRATION_18_19].
  *
+ * Version 20 added `messages.sendState` (TEN-224), see [TensaiDbMigrations.MIGRATION_19_20].
+ *
  * [exportSchema] is on and the schema JSON for every version lives under `app/schemas/` (see the
  * `ksp { arg("room.schemaLocation", ...) }` block in the app module's `build.gradle.kts`) —
  * required for [androidx.room.testing.MigrationTestHelper] to validate [TensaiDbMigrations]
@@ -89,7 +91,7 @@ import io.github.tensaiapp.download.DownloadEntity
         ToolCallEntity::class,
         MemoryFactEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
 )
 abstract class TensaiDb : RoomDatabase() {

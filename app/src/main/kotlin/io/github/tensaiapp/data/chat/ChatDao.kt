@@ -100,6 +100,14 @@ interface ChatDao {
         stopReason: String?,
     )
 
+    /** Sets a message's [MessageEntity.sendState], `null` once it goes out. */
+    @Query("UPDATE messages SET sendState = :sendState WHERE id = :id")
+    suspend fun updateSendState(id: String, sendState: String?)
+
+    /** Moves every message in the [from] send state to [to], see [ChatRepository.markWaitingNotSent]. */
+    @Query("UPDATE messages SET sendState = :to WHERE sendState = :from")
+    suspend fun replaceSendState(from: String, to: String)
+
     /** Stores the calls an assistant message made, see [MessageEntity.toolCallsJson]. */
     @Query("UPDATE messages SET toolCallsJson = :toolCallsJson WHERE id = :id")
     suspend fun updateToolCalls(id: String, toolCallsJson: String?)

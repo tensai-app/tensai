@@ -77,17 +77,41 @@ class ChatRepository(private val dao: ChatDao, private val now: () -> Long = Sys
     }
 
     /**
-     * Appends a user message to [conversationId]. If this is the conversation's first message,
-     * also sets [ConversationEntity.title] from [content] (truncated to [TITLE_MAX_LENGTH]).
+     * Appends a user message to [conversationId] and returns its id. If this is the conversation's first message,
+     * also sets [ConversationEntity.title] from [content] (truncated to [TITLE_MAX_LENGTH]). [sendState] for a
+     * message that does not go out right away (TEN-224).
      */
-    suspend fun appendUserMessage(conversationId: String, content: String) {
+    suspend fun appendUserMessage(conversationId: String, content: String, sendState: SendState? = null): String {
         val isFirstMessage = dao.messageCount(conversationId) == 0
-        insertMessage(conversationId, MessageRole.User, content)
+        val id = insertMessage(conversationId, MessageRole.User, content, sendState)
         if (isFirstMessage) {
             dao.updateTitle(conversationId, truncateTitle(content), System.currentTimeMillis())
         } else {
             dao.updateUpdatedAt(conversationId, System.currentTimeMillis())
         }
+        return id
+    }
+
+    /** Sets [id]'s [MessageEntity.sendState], `null` once it goes out. */
+    suspend fun setSendState(id: String, sendState: SendState?) = dao.updateSendState(id, sendState?.name)
+
+    /**
+     * The waiting messages [messageIds] become [SendState.NotSent]: their wait was cut (a model switch, the
+     * notification's Stop), see [io.github.tensaiapp.runtime.ChatTurns.dispatchPending]. A tap sends them.
+     */
+    suspend fun markNotSent(messageIds: Collection<String>) {
+        messageIds.forEach { setSendState(it, SendState.NotSent) }
+    }
+
+    /**
+     * Every message still [SendState.Pending] becomes [SendState.NotSent]: run once at process start (TEN-224), when
+     * no wait is left in memory to send them. A message the process was killed on never goes out by itself.
+     */
+    suspend fun markWaitingNotSent() = dao.replaceSendState(SendState.Pending.name, SendState.NotSent.name)
+
+    /** Drops [conversationId] when no message is left in it: a draft whose only message was taken back (TEN-224). */
+    suspend fun deleteConversationIfEmpty(conversationId: String) {
+        if (dao.messageCount(conversationId) == 0) dao.deleteConversation(conversationId)
     }
 
     /** Inserts an empty assistant message and returns its id — the streaming decode fills it in via [updateAssistantMessage]. */
@@ -267,11 +291,13 @@ class ChatRepository(private val dao: ChatDao, private val now: () -> Long = Sys
      *
      * A call only stays in the history next to its result: see [withAnsweredCallsOnly].
      *
+     * A user message that has not gone out ([MessageEntity.sendState], TEN-224) is left out: the model never got it.
+     *
      * [memory], the saved facts (TEN-189), goes in front of the first user message, never in the system
      * message: see [io.github.tensaiapp.data.memory.MemoryContext].
      */
     fun toEngineMessages(messages: List<MessageEntity>, systemPrompt: String?, memory: String? = null): List<ChatMessage> {
-        val answered = withAnsweredCallsOnly(messages)
+        val answered = withAnsweredCallsOnly(messages.filter { it.sendState == null })
         val lastUser = answered.indexOfLast { it.role == "user" }
         val currentTurn = if (lastUser < 0) emptySet() else answered.subList(lastUser + 1, answered.size).mapTo(HashSet()) { it.id }
         val history = answered
@@ -294,7 +320,7 @@ class ChatRepository(private val dao: ChatDao, private val now: () -> Long = Sys
         }
     }
 
-    private suspend fun insertMessage(conversationId: String, role: MessageRole, content: String): String {
+    private suspend fun insertMessage(conversationId: String, role: MessageRole, content: String, sendState: SendState? = null): String {
         val id = UUID.randomUUID().toString()
         dao.insertMessage(
             MessageEntity(
@@ -309,6 +335,7 @@ class ChatRepository(private val dao: ChatDao, private val now: () -> Long = Sys
                 ttftMs = null,
                 stopReason = null,
                 createdAt = nextCreatedAt(),
+                sendState = sendState?.name,
             ),
         )
         return id

@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.tensaiapp.R
+import io.github.tensaiapp.data.chat.SendState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import io.github.tensaiapp.runtime.QueueState
@@ -97,6 +99,7 @@ import io.github.tensaiapp.ui.tools.toolLineSummary
  * @param onContextRingState the ring's figure and busy flag, for the shell's top bar to draw (TEN-160).
  * @param settingsRequests taps on the top bar's params button (owned by `TensaiShell`), which open
  *   [ChatSettingsSheet].
+ * @param onOpenConversation opens another conversation: the one answering while a message here waits (TEN-224).
  */
 @Composable
 fun ChatScreen(
@@ -113,6 +116,7 @@ fun ChatScreen(
     onEmptyChanged: (Boolean) -> Unit = {},
     contextRequests: Flow<Unit> = emptyFlow(),
     onContextRingState: (ContextRingState) -> Unit = {},
+    onOpenConversation: (String) -> Unit = {},
 ) {
     // A draft's row, once its first send created it (TEN-106). Saved so a screen rebuilt after
     // process death reopens that conversation instead of an empty draft, the route itself still
@@ -153,6 +157,9 @@ fun ChatScreen(
     val isGenerating = queueState is QueueState.Generating || turnRunning
     // Narrower than isGenerating, and only the stop button uses it — see ChatViewModel.canStop.
     val canStop by viewModel.canStop.collectAsState(initial = false)
+    // Another chat's turn holds the engine: a send here waits for it (TEN-224), and the line under the pill opens it.
+    val answeringElsewhere by viewModel.answeringElsewhere.collectAsState(initial = null)
+    val sendPending by viewModel.sendPending.collectAsState(initial = false)
     // Generating still has a model resident, so the pill's chip must not fall
     // back to "Load a model" mid-reply, see residentModel's KDoc (TEN-46, TEN-58).
     val modelInfo = queueState.residentModel
@@ -169,6 +176,10 @@ fun ChatScreen(
     val globalInstructions by viewModel.globalInstructions.collectAsState(initial = "")
 
     var input by rememberSaveable { mutableStateOf("") }
+    // A waiting message taken back goes back in the field, ahead of anything typed since (TEN-224).
+    val cancelSend: () -> Unit = {
+        viewModel.cancelSend()?.let { text -> input = if (input.isBlank()) text else text + "\n" + input }
+    }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
     // The params button lives in the shell's top bar (TEN-115), so it only signals; this screen owns
@@ -295,6 +306,8 @@ fun ChatScreen(
                                     isThinkingActive = isThinkingActive,
                                     onRegenerate = viewModel::regenerate.takeIf { isLastAssistantReply && !isGenerating },
                                     isGenerating = isLastAssistantReply && isGenerating,
+                                    onCancelSend = cancelSend.takeIf { message.sendState == SendState.Pending },
+                                    onResend = { viewModel.resend(message) }.takeIf { message.sendState == SendState.NotSent },
                                 )
                             }
                             is ToolLineItem -> Column {
@@ -393,8 +406,23 @@ fun ChatScreen(
                         onModelClick = { pickerOpen = true },
                         // No model, nothing to send to: the chip is the way forward, it opens the picker.
                         canSend = modelInfo != null,
+                        canQueue = answeringElsewhere != null && !canStop,
+                        sendPending = sendPending,
+                        onCancelSend = cancelSend,
                         translucent = true,
                         modifier = pillModifier,
+                    )
+                }
+                val elsewhere = answeringElsewhere
+                if (sendPending && elsewhere != null) {
+                    Text(
+                        text = stringResource(R.string.chat_send_waiting),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .clickable { onOpenConversation(elsewhere) }
+                            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
                     )
                 }
             }

@@ -99,8 +99,9 @@ class InferenceService : Service() {
             ACTION_UNLOAD -> RuntimeGraph.applicationScope.launch { RuntimeGraph.inferenceQueue.unloadModel() }
             ACTION_STOP_GENERATION -> {
                 RuntimeGraph.inferenceQueue.cancelActive()
-                // The whole turn, not only its generation: the in-app Stop's rule.
-                RuntimeGraph.chatTurns.stopAll()
+                // The whole turn, not only its generation: the in-app Stop's rule. And what waits for it (TEN-224).
+                val drained = RuntimeGraph.chatTurns.stopAll()
+                if (drained.isNotEmpty()) RuntimeGraph.applicationScope.launch { RuntimeGraph.markNotSent(drained) }
             }
         }
         // Not sticky: this service's lifecycle is entirely state-driven (see class

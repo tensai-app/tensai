@@ -266,6 +266,11 @@
     <string name="chat_reply_failed">generation failed</string>
     <string name="chat_reply_stopped">stopped</string>
 
+    <!-- Chat > a message sent while another chat answers (TEN-224). See SendState. -->
+    <string name="chat_message_pending">Waiting to send</string>
+    <string name="chat_message_not_sent">not sent, tap to send</string>
+    <string name="chat_send_waiting">Another chat is answering</string>
+
     <!-- ==================== Server, preview (TEN-40) ==================== -->
 
     <!--
@@ -336,6 +341,7 @@
     <string name="input_placeholder">Message tensai…</string>
     <string name="input_send">Send</string>
     <string name="input_stop">Stop</string>
+    <string name="input_cancel_send">Cancel send</string>
 
     <!-- Chat screen and its conversation settings sheet. Top P, Min P and Top K stay literal in code: they are parameter names, not words. -->
     <string name="chat_jump_to_latest">Jump to the latest message</string>

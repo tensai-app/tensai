@@ -202,6 +202,10 @@
     <string name="chat_reply_failed">échec de la génération</string>
     <string name="chat_reply_stopped">interrompue</string>
 
+    <string name="chat_message_pending">En attente d\'envoi</string>
+    <string name="chat_message_not_sent">non envoyé, toucher pour envoyer</string>
+    <string name="chat_send_waiting">Une autre conversation répond</string>
+
     <!-- ==================== Server, preview (TEN-40) ==================== -->
 
     <string name="server_title">Serveur d\'API</string>
@@ -267,6 +271,7 @@
     <string name="input_placeholder">Écrire à tensai…</string>
     <string name="input_send">Envoyer</string>
     <string name="input_stop">Arrêter</string>
+    <string name="input_cancel_send">Annuler l\'envoi</string>
 
     <!-- Chat screen and its conversation settings sheet. -->
     <string name="chat_jump_to_latest">Aller au dernier message</string>

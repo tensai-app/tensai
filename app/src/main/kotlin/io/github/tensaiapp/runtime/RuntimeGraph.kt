@@ -212,6 +212,14 @@ object RuntimeGraph {
             chatTurns.answerUnattended(confirmationGate, askUserGate) { Log.i(ChatLogTag, it) }
         }
 
+        // TEN-224: a send made while another chat answered goes out once the engine is free, see
+        // [ChatTurns.dispatchPending]. What the last process left waiting is marked not sent first: nothing is left in
+        // memory to send it, and it is never sent without a tap. Each write swallowed, the collection must not end.
+        applicationScope.launch {
+            runCatching { chatRepository.markWaitingNotSent() }
+            chatTurns.dispatchPending(inferenceQueue.state, dropped = ::markNotSent) { Log.i(ChatLogTag, it) }
+        }
+
         // TEN-174: read the granted tiers once, so the first turn finds them in the snapshot.
         applicationScope.launch(Dispatchers.IO) { runCatching { toolSettings.grants.first() } }
     }
@@ -414,6 +422,14 @@ object RuntimeGraph {
 
     /** The chat turns running, by conversation: a chat screen reopened mid-turn stops it from here, see [ChatTurns]. */
     val chatTurns: ChatTurns by lazy { ChatTurns() }
+
+    /**
+     * Marks waiting sends whose wait was cut not sent (TEN-224): the dispatcher's drops and the notification's Stop.
+     * Swallowed: the dispatcher's collection must not end on a failed write.
+     */
+    suspend fun markNotSent(sends: Collection<ChatTurns.PendingSend>) {
+        runCatching { chatRepository.markNotSent(sends.map { it.messageId }) }
+    }
 
     /** Asks the user before a call that sends or deletes (TEN-174): the chat draws its card, see [UiConfirmationGate]. */
     val confirmationGate: UiConfirmationGate by lazy { UiConfirmationGate() }

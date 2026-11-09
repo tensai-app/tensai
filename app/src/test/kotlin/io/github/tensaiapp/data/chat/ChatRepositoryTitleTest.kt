@@ -141,6 +141,14 @@ class ChatRepositoryTitleTest {
 
         override suspend fun updateTokenCount(id: String, tokenCount: Int, modelId: String) = Unit
 
+        override suspend fun updateSendState(id: String, sendState: String?) {
+            messages.values.forEach { list -> list.replaceAll { if (it.id == id) it.copy(sendState = sendState) else it } }
+        }
+
+        override suspend fun replaceSendState(from: String, to: String) {
+            messages.values.forEach { list -> list.replaceAll { if (it.sendState == from) it.copy(sendState = to) else it } }
+        }
+
         override suspend fun deleteMessagesForConversation(conversationId: String) {
             messages.remove(conversationId)
         }

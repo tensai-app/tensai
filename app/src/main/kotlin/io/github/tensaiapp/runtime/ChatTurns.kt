@@ -2,11 +2,13 @@ package io.github.tensaiapp.runtime
 
 import io.github.tensaiapp.agent.AskUserGate
 import io.github.tensaiapp.agent.UiConfirmationGate
+import io.github.tensaiapp.engine.LoadedModelInfo
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 
 /**
@@ -19,6 +21,9 @@ import kotlinx.coroutines.flow.update
  * The queue alone cannot tell that the engine is spoken for: it reads [QueueState.ModelReady] while a
  * turn restores its session, while an agent turn runs a tool between two generations, and while a cut
  * turn writes what it leaves behind.
+ *
+ * A send in one chat while another chat's turn runs waits here too, one per conversation, until [dispatchPending]
+ * starts it (TEN-224).
  */
 class ChatTurns {
     /**
@@ -73,6 +78,71 @@ class ChatTurns {
         }
     }
 
+    /**
+     * A message sent while another chat's turn held the engine (TEN-224): stored as [messageId],
+     * [io.github.tensaiapp.data.chat.SendState.Pending] in the store, and [start]ed by [dispatchPending] once the
+     * engine is free. [start] is the send path of the screen that queued it, which runs whether that screen is still
+     * open or not, and registers the turn before it returns. [model] is the one resident when it was sent: the
+     * message was written for it, and goes out on no other.
+     */
+    class PendingSend(val messageId: String, val text: String, val model: LoadedModelInfo, val start: () -> Unit)
+
+    private val _pending = MutableStateFlow<Map<String, PendingSend>>(emptyMap())
+
+    /** The sends waiting for the engine by conversation id, at most one per conversation, oldest first. */
+    val pending: StateFlow<Map<String, PendingSend>> = _pending.asStateFlow()
+
+    /** Queues [send] for [conversationId], `false` when that conversation already has one waiting. */
+    fun queue(conversationId: String, send: PendingSend): Boolean {
+        var queued = false
+        _pending.update {
+            queued = conversationId !in it
+            if (queued) it + (conversationId to send) else it
+        }
+        return queued
+    }
+
+    /** Takes [conversationId]'s waiting send back, `null` when it has none (already started, or never queued). */
+    fun unqueue(conversationId: String): PendingSend? {
+        var taken: PendingSend? = null
+        _pending.update {
+            taken = it[conversationId]
+            it - conversationId
+        }
+        return taken
+    }
+
+    /**
+     * Starts the oldest waiting send whenever no turn runs and the engine is idle, one at a time: the turn it starts
+     * is registered before the next look, so the next one waits for it to end. A send whose [PendingSend.model] is no
+     * longer the resident one (a switch, an unload, a load in progress, one landing while the send was being stored) is
+     * dropped instead, and [dropped] gets it to mark not sent. Never returns: collected for the life of the process.
+     * [log] gets a line per start and drop.
+     */
+    suspend fun dispatchPending(queueState: StateFlow<QueueState>, dropped: suspend (Collection<PendingSend>) -> Unit, log: (String) -> Unit) {
+        // A trigger only: the values are read again below, a combined snapshot can predate the turn just started.
+        combine(_running, _pending, queueState) { _, _, _ -> }.collect {
+            val resident = queueState.value.residentModel
+            val stale = _pending.value.filterValues { it.model != resident }
+            if (stale.isNotEmpty()) {
+                // Only these very sends: one queued since under the same id stays.
+                _pending.update { all -> all.filter { (id, send) -> stale[id] !== send } }
+                log("queued send: model changed, ${stale.size} marked not sent")
+                dropped(stale.values)
+            }
+            if (_running.value.isNotEmpty() || queueState.value !is QueueState.ModelReady) return@collect
+            val (conversationId, send) = _pending.value.entries.firstOrNull() ?: return@collect
+            var taken = false
+            _pending.update {
+                taken = it[conversationId] === send
+                if (taken) it - conversationId else it
+            }
+            if (!taken) return@collect
+            log("queued send: started, ${_pending.value.size} still waiting")
+            send.start()
+        }
+    }
+
     fun start(conversationId: String, turn: Turn) {
         _running.update { it + (conversationId to turn) }
     }
@@ -89,9 +159,15 @@ class ChatTurns {
     fun stop(conversationId: String): Job? =
         _running.value[conversationId]?.also(::stop)?.job
 
-    /** Ends every running turn: the notification's Stop, which knows no conversation. */
-    fun stopAll() {
+    /**
+     * Ends every running turn: the notification's Stop, which knows no conversation. The waiting sends go too, taken
+     * before the turns end so none starts in their place: Stop means the engine stops (TEN-224). Answers them, for the
+     * caller to mark not sent as [dispatchPending]'s `dropped` does. A chat's own Stop ([stop]) leaves them waiting.
+     */
+    fun stopAll(): Collection<PendingSend> {
+        val drained = _pending.getAndUpdate { emptyMap() }.values
         _running.value.values.forEach(::stop)
+        return drained
     }
 
     private fun stop(turn: Turn) {

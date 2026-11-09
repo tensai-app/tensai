@@ -331,6 +331,16 @@ object TensaiDbMigrations {
         }
     }
 
+    /**
+     * v19 -> v20 (TEN-224): `messages.sendState`, a user message still waiting to go out. Nullable, no default:
+     * every existing row has gone out.
+     */
+    val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `messages` ADD COLUMN `sendState` TEXT")
+        }
+    }
+
     /** All migrations, in order — pass to [androidx.room.RoomDatabase.Builder.addMigrations]. */
     val ALL = arrayOf(
         MIGRATION_1_2,
@@ -351,5 +361,6 @@ object TensaiDbMigrations {
         MIGRATION_16_17,
         MIGRATION_17_18,
         MIGRATION_18_19,
+        MIGRATION_19_20,
     )
 }

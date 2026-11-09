@@ -3,6 +3,7 @@ package io.github.tensaiapp.ui.components
 import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -28,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +79,9 @@ import java.util.Locale
  *   Ignored (and unused) when [ChatMessageUi.thinking] is `null`.
  * @param onRegenerate non-null only for the conversation's last assistant message once it's
  *   finished streaming — see `ChatScreen`, which decides that.
+ * @param onCancelSend a user message waiting for another chat to finish (TEN-224): drawn with a clock and a
+ *   cross, the cross or a long press takes it back.
+ * @param onResend a user message whose wait was cut: marked not sent, a tap sends it.
  */
 @Composable
 fun MessageBubble(
@@ -83,6 +90,8 @@ fun MessageBubble(
     onRegenerate: (() -> Unit)?,
     isGenerating: Boolean,
     modifier: Modifier = Modifier,
+    onCancelSend: (() -> Unit)? = null,
+    onResend: (() -> Unit)? = null,
 ) {
     val copyText = copyableText(message)?.takeUnless { isGenerating }
     val copiedToast = stringResource(R.string.chat_copied)
@@ -112,17 +121,28 @@ fun MessageBubble(
     // point is kept with the anchor's height.
     var pressAt by remember { mutableStateOf(Offset.Zero) }
     var anchorHeight by remember { mutableIntStateOf(0) }
-    val longPress = if (actions.isEmpty()) {
+    // A waiting message is taken back by a long press rather than given the menu, one not sent is sent by a tap (TEN-224).
+    val cancelSend by rememberUpdatedState(onCancelSend)
+    val resend by rememberUpdatedState(onResend)
+    val longPress = if (actions.isEmpty() && onCancelSend == null && onResend == null) {
         Modifier
     } else {
         Modifier
             .onSizeChanged { anchorHeight = it.height }
-            .pointerInput(Unit) {
-                detectTapGestures(onLongPress = { at ->
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    pressAt = at
-                    menuOpen = true
-                })
+            .pointerInput(onResend != null) {
+                detectTapGestures(
+                    onLongPress = { at ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        val cancel = cancelSend
+                        if (cancel != null) {
+                            cancel()
+                        } else {
+                            pressAt = at
+                            menuOpen = true
+                        }
+                    },
+                    onTap = if (onResend != null) { _ -> resend?.invoke() } else null,
+                )
             }
     }
     val menuOffset = with(LocalDensity.current) { DpOffset(pressAt.x.toDp(), (pressAt.y - anchorHeight).toDp()) }
@@ -131,20 +151,47 @@ fun MessageBubble(
             // Design: at most 82% of the row, 20dp corners with the bottom-end one tucked to 6dp,
             // 15/22 body text (between bodyMedium and bodyLarge, so a local style).
             Box(modifier = Modifier.fillMaxWidth(0.82f), contentAlignment = Alignment.CenterEnd) {
-                // The bubble itself anchors the menu, not the 82% box around it.
-                Box(modifier = longPress) {
-                    Surface(
-                        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Text(
-                            text = message.content,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                Column(horizontalAlignment = Alignment.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (onCancelSend != null) {
+                            Icon(
+                                imageVector = Icons.Rounded.Schedule,
+                                contentDescription = stringResource(R.string.chat_message_pending),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            IconButton(onClick = onCancelSend, modifier = Modifier.size(28.dp)) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.input_cancel_send),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                        // The bubble itself anchors the menu, not the 82% box around it.
+                        Box(modifier = Modifier.weight(1f, fill = false).then(longPress)) {
+                            Surface(
+                                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    text = message.content,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                                )
+                            }
+                            MessageActionsMenu(expanded = menuOpen, actions = actions, offset = menuOffset, onDismiss = { menuOpen = false })
+                        }
+                    }
+                    if (onResend != null) {
+                        EndingChip(
+                            text = stringResource(R.string.chat_message_not_sent),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp).clickable(onClick = onResend),
                         )
                     }
-                    MessageActionsMenu(expanded = menuOpen, actions = actions, offset = menuOffset, onDismiss = { menuOpen = false })
                 }
             }
         }

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.shape.CircleShape
@@ -85,6 +86,9 @@ import io.github.tensaiapp.ui.theme.tensaiTints
  *   Chat overlays the pill on its message list.
  * @param canSend a send has somewhere to go: false while no model is loaded, which leaves the send
  *   button disabled (the model chip is then the way forward).
+ * @param canQueue the generation running is another chat's: a send waits for it (TEN-224), so the
+ *   button stays enabled through [isGenerating].
+ * @param sendPending this chat has a message waiting (TEN-224): the button is Cancel send, [onCancelSend].
  */
 @Composable
 fun InputPill(
@@ -99,6 +103,9 @@ fun InputPill(
     canStop: Boolean = isGenerating,
     translucent: Boolean = false,
     canSend: Boolean = true,
+    canQueue: Boolean = false,
+    sendPending: Boolean = false,
+    onCancelSend: () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
         if (isGenerating) {
@@ -152,12 +159,21 @@ fun InputPill(
                         onClick = onModelClick,
                         modifier = Modifier.weight(1f, fill = false).padding(end = 8.dp),
                     )
+                    val cancelsSend = sendPending && !canStop
                     SendButton(
                         canStop = canStop,
-                        onClick = { if (canStop) onStop() else onSend() },
+                        cancelsSend = cancelsSend,
+                        onClick = {
+                            when {
+                                canStop -> onStop()
+                                cancelsSend -> onCancelSend()
+                                else -> onSend()
+                            }
+                        },
                         // Busy without a stop to offer leaves the button disabled rather than enabled
-                        // on a send the queue would refuse, with the ring still turning to say why.
-                        enabled = canStop || (!isGenerating && canSend && value.isNotBlank()),
+                        // on a send the queue would refuse, with the ring still turning to say why. A
+                        // send that would wait for another chat is not refused.
+                        enabled = canStop || cancelsSend || ((!isGenerating || canQueue) && canSend && value.isNotBlank()),
                     )
                 }
             }
@@ -203,12 +219,12 @@ private val ControlHeight = 32.dp
 private val ControlInset = 12.dp
 
 /**
- * Send (an up arrow) or stop, in a tonal violet circle as tall as the model chip: the circle in a
+ * Send (an up arrow), stop, or cancel send (a cross, [cancelsSend]), in a tonal violet circle as tall as the model chip: the circle in a
  * stronger primary tint, the glyph in full primary, lighter than its ground in Calm Night. Disabled
  * fades both rather than greying them out, so the button stays part of the pill.
  */
 @Composable
-private fun SendButton(canStop: Boolean, onClick: () -> Unit, enabled: Boolean) {
+private fun SendButton(canStop: Boolean, cancelsSend: Boolean, onClick: () -> Unit, enabled: Boolean) {
     val tints = MaterialTheme.tensaiTints
     val primary = MaterialTheme.colorScheme.primary
     // Lays out as the 32dp circle only, so the row is as tall as its controls and the gap under
@@ -239,10 +255,20 @@ private fun SendButton(canStop: Boolean, onClick: () -> Unit, enabled: Boolean) 
                     .background(if (enabled) tints.primary24 else tints.primary08, CircleShape),
             ) {
                 Icon(
-                    imageVector = if (canStop) Icons.Rounded.Stop else Icons.Rounded.ArrowUpward,
-                    contentDescription = stringResource(if (canStop) R.string.input_stop else R.string.input_send),
+                    imageVector = when {
+                        canStop -> Icons.Rounded.Stop
+                        cancelsSend -> Icons.Rounded.Close
+                        else -> Icons.Rounded.ArrowUpward
+                    },
+                    contentDescription = stringResource(
+                        when {
+                            canStop -> R.string.input_stop
+                            cancelsSend -> R.string.input_cancel_send
+                            else -> R.string.input_send
+                        },
+                    ),
                     tint = if (enabled) primary else primary.copy(alpha = 0.38f),
-                    modifier = Modifier.size(if (canStop) 18.dp else 20.dp),
+                    modifier = Modifier.size(if (canStop || cancelsSend) 18.dp else 20.dp),
                 )
             }
         }

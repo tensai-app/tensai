@@ -69,7 +69,7 @@ class TensaiDbMigrationSqlTest {
         val all = TensaiDbMigrations.ALL.sortedBy { it.startVersion }
         all.zipWithNext { a, b -> assertEquals("a gap after v${a.endVersion}", a.endVersion, b.startVersion) }
         assertEquals(1, all.first().startVersion)
-        assertEquals(schema(19).getJSONObject("database").getInt("version"), all.last().endVersion)
+        assertEquals(schema(20).getJSONObject("database").getInt("version"), all.last().endVersion)
     }
 
     @Test

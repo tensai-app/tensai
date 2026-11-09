@@ -154,6 +154,8 @@ fun TensaiNavGraph(
                 onContextRingState = onChatContextRingState,
                 onConversationCreated = { onChatConversationCreated(backStackEntry.id, it) },
                 onEmptyChanged = { onChatEmpty(backStackEntry.id, it) },
+                // As a Recents row in the drawer: the conversation answering becomes the root (TEN-168).
+                onOpenConversation = { id -> navController.perform(openConversationOp(createdConversationId(backStackEntry.id) ?: conversationId, id)) },
             )
         }
 

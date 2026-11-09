@@ -17,6 +17,7 @@ import io.github.tensaiapp.data.chat.ConversationEntity
 import io.github.tensaiapp.data.chat.MessageEntity
 import io.github.tensaiapp.data.chat.ReplyStreamSplitter
 import io.github.tensaiapp.data.chat.SamplingJson
+import io.github.tensaiapp.data.chat.SendState
 import io.github.tensaiapp.data.chat.ToolCallsJson
 import io.github.tensaiapp.data.chat.ThinkingStreamParser
 import io.github.tensaiapp.data.memory.MemoryPrompt
@@ -46,6 +47,7 @@ import io.github.tensaiapp.runtime.RuntimeGraph
 import io.github.tensaiapp.runtime.residentModel
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -151,6 +153,7 @@ enum class ReplyEnding {
  * @param ending how generation ended, when that is worth saying — see [ReplyEnding]. Orthogonal to
  *   [stats], not part of it: neither a failed nor a stopped decode reports stats at all, so this is
  *   the only trace either one leaves.
+ * @param sendState a user message that has not gone out yet (TEN-224), `null` once it has.
  */
 data class ChatMessageUi(
     val id: String,
@@ -159,6 +162,7 @@ data class ChatMessageUi(
     val thinking: String?,
     val stats: MessageStatsUi?,
     val ending: ReplyEnding,
+    val sendState: SendState? = null,
 )
 
 /**
@@ -251,6 +255,7 @@ internal fun MessageEntity.toUi(): ChatMessageUi? {
             StopReason.Cancelled.name -> ReplyEnding.Stopped
             else -> ReplyEnding.Normal
         },
+        sendState = SendState.entries.firstOrNull { it.name == sendState },
     )
 }
 
@@ -548,9 +553,21 @@ class ChatViewModel(
     /**
      * A turn runs in any conversation, see [ChatTurns]. The queue reads idle for parts of it (a restore, a
      * tool between two generations), so [ChatScreen] adds this to [queueState] to know the engine is spoken
-     * for, and [send] refuses.
+     * for, and [send] queues.
      */
     val turnRunning: Flow<Boolean> = chatTurns.running.map { it.isNotEmpty() }
+
+    /**
+     * The conversation whose turn holds the engine when it is not this one, `null` otherwise (TEN-224): a send here
+     * then waits for it, and the line under the composer opens it.
+     */
+    val answeringElsewhere: Flow<String?> = combine(_conversationId, chatTurns.running) { id, turns ->
+        turns.keys.firstOrNull { it != id }
+    }.distinctUntilChanged()
+
+    /** This conversation has a message waiting for the engine (TEN-224): Send becomes Cancel send. */
+    val sendPending: Flow<Boolean> = combine(_conversationId, chatTurns.pending) { id, pending -> id != null && id in pending }
+        .distinctUntilChanged()
 
     /**
      * Whether the stop button on *this* conversation's screen would stop a reply belonging to it
@@ -755,6 +772,7 @@ class ChatViewModel(
         }
         generationJob?.cancel()
         chatTurns.stop(id)
+        chatTurns.unqueue(id)
         warmUpJob?.cancel()
         _error.value = null
         draft.value = ConversationSettings()
@@ -792,16 +810,34 @@ class ChatViewModel(
      * file I/O, and a generation that breaks before ever reaching the engine must not leave the
      * previous one's banner up either.
      *
-     * Also a no-op while a turn runs, in this conversation or another, see [ChatTurns]: the queue reads
-     * [QueueState.ModelReady] while an agent turn runs a tool, and a reply started then would take the
-     * engine from under it (its next generation is refused as busy, and here the history has calls with
-     * no result yet). Refused rather than queued, as the queue refuses a second generation: [ChatScreen]
-     * keeps Send disabled through [turnRunning], so this only catches a stray call.
+     * Also a no-op while this conversation's own turn runs (the screen offers Stop instead) or while it
+     * already has a message waiting. While another conversation's turn runs, see [ChatTurns], the message
+     * waits instead (TEN-224): the queue reads [QueueState.ModelReady] while an agent turn runs a tool, and
+     * a reply started then would take the engine from under it (its next generation is refused as busy,
+     * and here the history has calls with no result yet). It is stored at once as
+     * [SendState.Pending] and [ChatTurns.dispatchPending] starts it once the engine is free, oldest first,
+     * whether this screen is still open or not. Sends already waiting put this one behind them too.
      */
-    fun send(text: String) {
+    fun send(text: String) = submit(text, replacing = null)
+
+    /**
+     * Sends a [SendState.NotSent] [message] again, the tap on its row (TEN-224): as a new send, so it lands last
+     * in the conversation and waits like one, and its old row goes once the new one is stored.
+     */
+    fun resend(message: ChatMessageUi) {
+        if (message.sendState == SendState.NotSent) submit(message.content, replacing = message.id)
+    }
+
+    private fun submit(text: String, replacing: String?) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || generationJob?.isActive == true || chatTurns.running.value.isNotEmpty()) return
-        if (inferenceQueue.state.value !is QueueState.ModelReady) {
+        if (trimmed.isEmpty() || generationJob?.isActive == true) return
+        val current = _conversationId.value
+        if (current != null && (current in chatTurns.running.value || current in chatTurns.pending.value)) return
+        val waits = chatTurns.running.value.isNotEmpty() || chatTurns.pending.value.isNotEmpty()
+        // A message that waits only needs a model resident: the one generating now, which it is written for.
+        val state = inferenceQueue.state.value
+        val waitsFor = if (waits) state.residentModel else null
+        if (if (waits) waitsFor == null else state !is QueueState.ModelReady) {
             _error.value = ChatError.NoModelLoaded
             return
         }
@@ -811,11 +847,62 @@ class ChatViewModel(
         warmUpJob?.cancel()
         generationJob = scope.launch {
             val conversationId = ensureConversation()
+            if (waitsFor != null) {
+                queue(conversationId, trimmed, replacing, waitsFor)
+                return@launch
+            }
             asTurn(conversationId) { turn ->
                 chatRepository.appendUserMessage(conversationId, trimmed)
+                replacing?.let { chatRepository.deleteMessage(it) }
                 generateReply(conversationId, turn)
             }
         }
+    }
+
+    /** Stores [text] as [conversationId]'s waiting message and queues it in [ChatTurns] for [model], see [send]. */
+    private suspend fun queue(conversationId: String, text: String, replacing: String?, model: LoadedModelInfo) {
+        val messageId = chatRepository.appendUserMessage(conversationId, text, SendState.Pending)
+        val send = ChatTurns.PendingSend(messageId, text, model) { startQueued(conversationId, messageId) }
+        // Another screen on this conversation queued one first: one message waits per conversation.
+        if (!chatTurns.queue(conversationId, send)) {
+            chatRepository.deleteMessage(messageId)
+            return
+        }
+        replacing?.let { chatRepository.deleteMessage(it) }
+        log("send queued behind another chat")
+    }
+
+    /**
+     * Starts the waiting message [messageId] as [conversationId]'s turn: [ChatTurns.dispatchPending] runs it once
+     * the engine is free, on this instance whether its screen is still open or not, as a turn outlives its screen.
+     * The turn is registered before this returns, so the dispatcher sees it running before it looks again. The
+     * message goes out (its [SendState] cleared) only if it is still there: its conversation may be gone.
+     * Not [generationJob]: this runs on the dispatcher's thread, and [ChatTurns.running] already refuses a second send.
+     */
+    private fun startQueued(conversationId: String, messageId: String) {
+        _error.value = null
+        warmUpJob?.cancel()
+        launchTurn(conversationId) { turn ->
+            if (chatRepository.observeMessages(conversationId).first().none { it.id == messageId }) return@launchTurn
+            chatRepository.setSendState(messageId, null)
+            generateReply(conversationId, turn)
+        }
+    }
+
+    /**
+     * Takes back this conversation's waiting message (TEN-224): Cancel send, the cross on its row or a long
+     * press on it. Its row goes, and the conversation too when that was its only message (a draft's first
+     * send), which turns this screen back into a draft. Answers the text for the composer, `null` when
+     * nothing waits any more (it has just started).
+     */
+    fun cancelSend(): String? {
+        val id = _conversationId.value ?: return null
+        val send = chatTurns.unqueue(id) ?: return null
+        scope.launch {
+            chatRepository.deleteMessage(send.messageId)
+            chatRepository.deleteConversationIfEmpty(id)
+        }
+        return send.text
     }
 
     /**
@@ -869,6 +956,20 @@ class ChatViewModel(
     }
 
     /**
+     * [asTurn] for a turn started from outside a coroutine ([startQueued]): the turn is in [ChatTurns] when this
+     * returns, not once the coroutine first runs. Dropped when the job completes, which a job cancelled before it
+     * ran does too.
+     */
+    private fun launchTurn(conversationId: String, block: suspend (ChatTurns.Turn) -> Unit) {
+        lateinit var turn: ChatTurns.Turn
+        val job = scope.launch(start = CoroutineStart.LAZY) { block(turn) }
+        turn = ChatTurns.Turn(job)
+        chatTurns.start(conversationId, turn)
+        job.invokeOnCompletion { chatTurns.finish(conversationId, turn) }
+        job.start()
+    }
+
+    /**
      * Drops the last assistant reply (if the conversation's last message is one — read fresh from
      * [ChatRepository] rather than remembered in this instance, so it's correct even if this
      * `ChatViewModel` was just recreated, e.g. after navigating away and back) and generates a new
@@ -879,7 +980,7 @@ class ChatViewModel(
      * the failure banner's own Retry button goes through: it is what makes a retry that works
      * take the banner down with it.
      *
-     * Refused while a turn runs anywhere, as [send] is.
+     * Refused while a turn runs anywhere: a reply redone has no message to wait with.
      */
     fun regenerate() {
         if (generationJob?.isActive == true || chatTurns.running.value.isNotEmpty()) return
