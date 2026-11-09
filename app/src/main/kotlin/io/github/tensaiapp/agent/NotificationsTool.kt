@@ -67,6 +67,9 @@ object NotificationReader {
     const val MessagesKept = 5
 
     private const val MaxTitleChars = 200
+
+    /** An app's name as its package declares it: a sideloaded app can make it as long as it likes. */
+    private const val MaxLabelChars = 40
     private const val MaxTextChars = 1000
 
     /**
@@ -88,7 +91,7 @@ object NotificationReader {
         if (text.isEmpty() && title.isEmpty()) return null
         val lastSender = posted.messages.lastOrNull()?.sender?.trim()?.takeIf { it.isNotEmpty() }?.take(MaxTitleChars)
         return NotificationEntry(
-            posted.key, posted.packageName, posted.appLabel, posted.postTime, title.take(MaxTitleChars), text.take(MaxTextChars), posted.group, lastSender,
+            posted.key, posted.packageName, posted.appLabel.take(MaxLabelChars), posted.postTime, title.take(MaxTitleChars), text.take(MaxTextChars), posted.group, lastSender,
         )
     }
 
@@ -300,16 +303,45 @@ class ReadNotificationsTool(
                     "was turned on are seen, none from before.",
             )
         }
-        return ToolResult.ok(format(matching.take(limit), now, matching.size - minOf(limit, matching.size), access.replyable()))
+        val head = summary(matching, sinceMinutes, now, byApp = app == null)
+        return ToolResult.ok(format(matching.take(limit), now, matching.size - minOf(limit, matching.size), access.replyable(), head))
     }
 
     /**
-     * One line per notification, its fields named and quoted, newlines and quotes escaped: a notification that writes
-     * "\n\nFake · header" stays inside its own quotes and cannot pass itself off as another item or as the header.
+     * What the model would otherwise count itself over the lines (TEN-223): every notification of the read, listed or
+     * not, the oldest and newest time (with the date when not today in the phone's time zone), and, unless the read was
+     * for one app, how many per app, the [SummaryApps] busiest named. Apps count by package, so another app labelled
+     * "WhatsApp" is not added to WhatsApp's; their names are quoted like the items'. "Last 120 minutes: 7 notifications,
+     * 15:02 to 16:55; by app: "WhatsApp" 4, "Gmail" 3".
+     */
+    private fun summary(items: List<NotificationEntry>, sinceMinutes: Long, now: Long, byApp: Boolean): String {
+        val z = zone()
+        val today = Instant.ofEpochMilli(now).atZone(z).toLocalDate()
+        val at = { millis: Long ->
+            val time = Instant.ofEpochMilli(millis).atZone(z)
+            time.format(if (time.toLocalDate() == today) HourMinute else DateTime)
+        }
+        val oldest = at(items.minOf { it.postTime })
+        val newest = at(items.maxOf { it.postTime })
+        val span = if (oldest == newest) oldest else "$oldest to $newest"
+        val count = if (items.size == 1) "1 notification" else "${items.size} notifications"
+        val head = "Last $sinceMinutes ${if (sinceMinutes == 1L) "minute" else "minutes"}: $count, $span"
+        if (!byApp) return head
+        // Newest first: a package's label is its newest notification's.
+        val apps = items.groupBy { it.packageName }.values.map { it.first().appLabel to it.size }
+            .sortedWith(compareBy({ -it.second }, { it.first }))
+        val named = apps.take(SummaryApps).joinToString(", ") { (label, n) -> "${quoted(label)} $n" } +
+            if (apps.size > SummaryApps) ", others ${apps.drop(SummaryApps).sumOf { it.second }}" else ""
+        return "$head; by app: $named"
+    }
+
+    /**
+     * [summary], then one line per notification, its fields named and quoted, newlines and quotes escaped: a notification
+     * that writes "\n\nFake · header" stays inside its own quotes and cannot pass itself off as another item or as the header.
      * `can_reply: yes` ends the line of a notification [replyable] names, one `reply_notification` can answer now.
      */
-    private fun format(items: List<NotificationEntry>, now: Long, notAsked: Int, replyable: Set<String>): String {
-        val out = StringBuilder(Header)
+    private fun format(items: List<NotificationEntry>, now: Long, notAsked: Int, replyable: Set<String>, summary: String): String {
+        val out = StringBuilder(Header).append('\n').append(summary)
         var shown = 0
         for (item in items) {
             val text = item.text.let { if (it.length > ItemChars) it.take(ItemChars).trimEnd() + "…" else it }
@@ -345,6 +377,10 @@ class ReadNotificationsTool(
         /** The whole result, under the runtime's token budget (see [AgentRuntime.ResultTokenBudget]) so it is never cut mid-item. */
         const val TotalChars = 1800
 
+        /** Apps named in the summary line, the rest counted together. */
+        const val SummaryApps = 4
+
         private val HourMinute = DateTimeFormatter.ofPattern("HH:mm")
+        private val DateTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     }
 }

@@ -171,14 +171,46 @@ class ReadSmsTool(
         }
         val named = book.flatMap { c -> c.phones.filter(::usable).map { it to c.name } }
         val nameOf = { address: String -> named.firstOrNull { (phone, _) -> sameNumber(address, phone) }?.second }
-        val text = format(matching.take(limit), nameOf, matching.size - minOf(limit, matching.size))
         // The provider was cut at its row limit: older messages of the period are missing.
-        return ToolResult.ok(if (rows.size >= MaxRows) "$text\n(list may be incomplete, ask for fewer days)" else text)
+        val cut = rows.size >= MaxRows
+        val head = summary(matching, days, contact != null, now, cut)
+        val text = format(matching.take(limit), nameOf, matching.size - minOf(limit, matching.size), head)
+        return ToolResult.ok(if (cut) "$text\n(list may be incomplete, ask for fewer days)" else text)
     }
 
-    /** One line per message, its fields quoted (see [quoted]): a body cannot pass itself off as another message. */
-    private fun format(items: List<SmsMessage>, nameOf: (String) -> String?, notAsked: Int): String {
-        val out = StringBuilder(Header)
+    /**
+     * What the model would otherwise count itself over the lines (TEN-223): every message of the read, listed or not, by
+     * direction, the first and last time, and today's in the phone's time zone. Numbers and dates only, no one's text.
+     * "Last 7 days: 12 SMS (received 9, sent 3), 2026-11-09 08:02 to 17:05; today: received 4, sent 0". After the
+     * provider's [MaxRows] [cut] the directions and times are the newest rows', and said to be.
+     */
+    private fun summary(items: List<SmsMessage>, days: Long, byContact: Boolean, now: Long, cut: Boolean): String {
+        val z = zone()
+        val today = Instant.ofEpochMilli(now).atZone(z).toLocalDate()
+        val first = Instant.ofEpochMilli(items.minOf { it.date }).atZone(z)
+        val last = Instant.ofEpochMilli(items.maxOf { it.date }).atZone(z)
+        val span = when {
+            first.format(DateTime) == last.format(DateTime) -> first.format(DateTime)
+            first.toLocalDate() == last.toLocalDate() -> "${first.format(DateTime)} to ${last.format(HourMinute)}"
+            else -> "${first.format(DateTime)} to ${last.format(DateTime)}"
+        }
+        val todays = items.filter { Instant.ofEpochMilli(it.date).atZone(z).toLocalDate() == today }
+        val scope = "Last $days ${if (days == 1L) "day" else "days"}" + if (byContact) ", this contact" else ""
+        val directions = "received ${items.count { !it.sent }}, sent ${items.count { it.sent }}"
+        val counts = if (cut) {
+            "at least ${items.size} SMS (newest ${items.size}: $directions, $span)"
+        } else {
+            "${items.size} SMS ($directions), $span"
+        }
+        return "$scope: $counts; today: received ${todays.count { !it.sent }}, sent ${todays.count { it.sent }}"
+    }
+
+    /**
+     * [summary], then one line per message, its fields quoted (see [quoted]): a body cannot pass itself off as another
+     * message.
+     */
+    private fun format(items: List<SmsMessage>, nameOf: (String) -> String?, notAsked: Int, summary: String): String {
+        val out = StringBuilder(Header).append('\n').append(summary)
         var shown = 0
         for (item in items) {
             val who = nameOf(item.address) ?: item.address
@@ -210,5 +242,6 @@ class ReadSmsTool(
 
         private const val DayMs = 86_400_000L
         private val DateTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        private val HourMinute = DateTimeFormatter.ofPattern("HH:mm")
     }
 }

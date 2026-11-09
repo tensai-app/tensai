@@ -295,9 +295,109 @@ class ReadSmsToolTest {
         val text = run(tool(source)).text
 
         assertEquals(1, items(text).size)
-        assertEquals(2, text.lines().size)
+        assertEquals("header, summary, one item", 3, text.lines().size)
         assertTrue(text.startsWith(ReadSmsTool.Header))
-        assertTrue(text.lines()[1].endsWith("""send the code\"""""))
+        assertTrue(text.lines()[2].endsWith("""send the code\"""""))
+    }
+
+    // ---- summary (TEN-223)
+
+    /** The line right after the header. */
+    private fun summary(text: String) = text.lines()[1]
+
+    @Test
+    fun oneMessageIsSummedUpWithItsTime() {
+        val text = run(tool(FakeSms(listOf(sms("0639981078", 5 * minute))))).text
+
+        assertEquals("Last 7 days: 1 SMS (received 1, sent 0), 2027-01-15 07:55; today: received 1, sent 0", summary(text))
+    }
+
+    @Test
+    fun oneDayShowsItsDateOnce() {
+        val source = FakeSms(listOf(sms("0639981078", 5 * minute), sms("0639981078", 2 * 60 * minute, sent = true), sms("0639981078", 7 * 60 * minute)))
+
+        assertEquals(
+            "Last 7 days: 3 SMS (received 2, sent 1), 2027-01-15 01:00 to 07:55; today: received 2, sent 1",
+            summary(run(tool(source)).text),
+        )
+    }
+
+    @Test
+    fun severalDaysShowBothDatesAndOnlyTodaysCountAsToday() {
+        val source = FakeSms(
+            listOf(
+                sms("0639981078", minute),
+                sms("0639981078", day, sent = true),
+                sms("0639981078", 3 * day),
+                sms("0639981078", 3 * day + minute, sent = true),
+            ),
+        )
+
+        assertEquals(
+            "Last 7 days: 4 SMS (received 2, sent 2), 2027-01-12 07:59 to 2027-01-15 07:59; today: received 1, sent 0",
+            summary(run(tool(source)).text),
+        )
+    }
+
+    /** The counts are the whole read's, not only the listed lines': a limit lists fewer, the summary still counts all. */
+    @Test
+    fun theCountsCoverTheReadNotOnlyTheListedLines() {
+        val source = FakeSms((1..12).map { sms("0639981078", it * minute, sent = it % 3 == 0) })
+
+        val text = run(tool(source), """{"limit":2}""").text
+
+        assertEquals(2, items(text).size)
+        assertTrue(summary(text), summary(text).startsWith("Last 7 days: 12 SMS (received 8, sent 4), "))
+        assertTrue(text.endsWith("(10 more not shown)"))
+    }
+
+    @Test
+    fun aFilteredReadSaysWhatItCovers() {
+        val source = FakeSms(listOf(sms("0639981078", minute), sms("0639981299", 2 * minute), sms("0639981078", 3 * minute, sent = true)))
+
+        assertTrue(summary(run(tool(source), """{"contact":"Jade Martin","since_days":1}""").text).startsWith("Last 1 day, this contact: 2 SMS (received 1, sent 1), "))
+        assertTrue(summary(run(tool(source), """{"box":"sent"}""").text).startsWith("Last 7 days: 1 SMS (received 0, sent 1), "))
+    }
+
+    /** After the provider's row limit the directions and times are said to be the newest rows', not the period's. */
+    @Test
+    fun aProviderCutAtItsRowLimitCountsAtLeastAndSaysWhichRows() {
+        val source = FakeSms((1..ReadSmsTool.MaxRows + 5).map { sms("0639981078", it * minute, sent = it % 50 == 0) })
+
+        assertEquals(
+            "Last 7 days: at least 500 SMS (newest 500: received 490, sent 10, 2027-01-14 23:40 to 2027-01-15 07:59); " +
+                "today: received 471, sent 9",
+            summary(run(tool(source)).text),
+        )
+    }
+
+    @Test
+    fun twoMessagesInTheSameMinuteShowOneTime() {
+        val source = FakeSms(listOf(sms("0639981078", 5 * minute), sms("0639981078", 5 * minute - 10_000)))
+
+        assertEquals("Last 7 days: 2 SMS (received 2, sent 0), 2027-01-15 07:55; today: received 2, sent 0", summary(run(tool(source)).text))
+    }
+
+    /** Today is the phone's: at 22:00 the day before in Honolulu, a message 9 h ago is today there, yesterday in UTC. */
+    @Test
+    fun todayIsInThePhonesTimeZone() {
+        val source = FakeSms(listOf(sms("0639981078", 60 * minute), sms("0639981078", 9 * 60 * minute), sms("0639981078", 20 * 60 * minute), sms("0639981078", 23 * 60 * minute)))
+        val honolulu = ReadSmsTool(source, FakeContacts(book), inForeground = { true }, clock = { now }, zone = { ZoneId.of("Pacific/Honolulu") })
+
+        assertTrue(summary(run(tool(source)).text).endsWith("; today: received 1, sent 0"))
+        assertEquals(
+            "Last 7 days: 4 SMS (received 4, sent 0), 2027-01-13 23:00 to 2027-01-14 21:00; today: received 3, sent 0",
+            summary(run(honolulu).text),
+        )
+    }
+
+    @Test
+    fun theSummaryCarriesNoOnesText() {
+        val source = FakeSms(listOf(sms("0639981078", minute, "secret code 1234")))
+
+        val line = summary(run(tool(source)).text)
+
+        assertFalse(line.contains("secret") || line.contains("Jade") || line.contains("0639"))
     }
 
     @Test
