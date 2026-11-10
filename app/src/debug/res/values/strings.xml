@@ -51,6 +51,10 @@
     <string name="bench_tool_policy_current">Current</string>
     <string name="bench_tool_policy_always">Always</string>
     <string name="bench_tool_policy_strict">Strict</string>
+    <string name="bench_prompt_list">Prompt list</string>
+    <string name="bench_prompt_list_sub">Agent checks when tools are called, Web asks facts to look up and lets web_search, web_fetch and wikipedia run</string>
+    <string name="bench_prompt_list_agent">Agent</string>
+    <string name="bench_prompt_list_web">Web</string>
     <!-- %d is prompts times repetitions. -->
     <plurals name="bench_run_calls">
         <item quantity="one">Run agent bench · %d call</item>

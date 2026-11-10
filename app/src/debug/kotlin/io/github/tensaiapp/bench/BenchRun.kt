@@ -83,6 +83,8 @@ data class BenchRun(
  *   delimit reasoning, so nothing enforced it. `null` with no cap, and for a run saved before the check.
  * @param toolPolicy the run's [BenchTrigger.toolPolicy] by [io.github.tensaiapp.agent.ToolPolicy.storageName], `null` for a
  *   run saved before it, which ran "current".
+ * @param promptList the run's [BenchTrigger.promptList] by [BenchPromptList.storageName], `null` for a run saved before
+ *   it, which read "agent".
  * @param prefixWarmed the tool prefix was warmed before the first prompt (its timings are left out of the medians either way).
  */
 @Serializable
@@ -98,6 +100,7 @@ data class BenchRunConfig(
     val examples: Boolean,
     @SerialName("tool_grammar") val toolGrammar: Boolean,
     @SerialName("tool_policy") val toolPolicy: String? = null,
+    @SerialName("prompt_list") val promptList: String? = null,
     val repetitions: Int = 1,
     @SerialName("reasoning_budget") val reasoningBudget: Int? = null,
     @SerialName("reasoning_budget_mode") val reasoningBudgetMode: String? = null,
@@ -161,6 +164,8 @@ data class BenchSampling(
  * @param tags the prompt's [BenchPrompt.tags].
  * @param reasoningCap [BenchResult.reasoningCap], `null` too in a run saved before it.
  * @param emptyRaw [BenchResult.emptyRaw], cut to [MaxTextChars].
+ * @param webSearches with [webFetches], [wikipedia], [fetchedUrls] and [citesSource], [BenchResult.web] as saved: `null` (empty) outside
+ *   a web run.
  */
 @Serializable
 data class BenchTrial(
@@ -191,6 +196,11 @@ data class BenchTrial(
     val tags: List<String> = emptyList(),
     @SerialName("reasoning_cap") val reasoningCap: Int? = null,
     @SerialName("empty_raw") val emptyRaw: String? = null,
+    @SerialName("web_search") val webSearches: Int? = null,
+    @SerialName("web_fetch") val webFetches: Int? = null,
+    val wikipedia: Int? = null,
+    @SerialName("fetched_urls") val fetchedUrls: List<String> = emptyList(),
+    @SerialName("cites_source") val citesSource: Boolean? = null,
 ) {
     /** [verdict] read back, [BenchVerdict.Error] for a name this build does not know. */
     val benchVerdict: BenchVerdict get() = BenchVerdict.entries.firstOrNull { it.storageName == verdict } ?: BenchVerdict.Error
@@ -232,6 +242,11 @@ data class BenchTrial(
                 tags = result.prompt.tags.toList(),
                 reasoningCap = result.reasoningCap,
                 emptyRaw = capText(result.emptyRaw).first,
+                webSearches = result.web?.searches,
+                webFetches = result.web?.fetches,
+                wikipedia = result.web?.wikipedia,
+                fetchedUrls = result.web?.fetchedUrls.orEmpty(),
+                citesSource = result.web?.citesSource,
             )
         }
     }

@@ -508,4 +508,30 @@ class BenchRunTest {
         assertEquals(setOf(0), bestRuns(listOf(good, bad), SummaryMetric.AnswerOk))
         assertEquals(setOf(0), bestRuns(listOf(good, bad), SummaryMetric.AnswerWrong))
     }
+
+    @Test
+    fun aWebRunSavesWhatEachTrialReadAndShowsItsListAndTheUrlsWhole() {
+        val web = BenchWeb(1, 2, listOf("https://www.viaduc-millau.fr/en", "https://en.wikipedia.org/wiki/Millau_Viaduct"), emptySet(), citesSource = true, wikipedia = 1)
+        val run = run(1, BenchTrial.of(result("millau", BenchVerdict.Correct).copy(web = web))).copy(config = config.copy(promptList = "web"))
+
+        val back = BenchRunJson.decode(BenchRunJson.encode(run))
+        val trial = back.results.single()
+        assertEquals("web", back.config.promptList)
+        assertEquals(1, trial.webSearches)
+        assertEquals(2, trial.webFetches)
+        assertEquals(1, trial.wikipedia)
+        assertEquals(web.fetchedUrls, trial.fetchedUrls)
+        assertEquals(true, trial.citesSource)
+        assertTrue("list web" to true in configChips(back.config))
+        assertTrue(configChips(config.copy(promptList = "agent")).none { it.first.startsWith("list") })
+        assertEquals(
+            listOf("web_search 1 · web_fetch 2 · wikipedia 1 · cites source yes", "fetched https://www.viaduc-millau.fr/en", "fetched https://en.wikipedia.org/wiki/Millau_Viaduct"),
+            resultNotes(trial).take(3),
+        )
+        // An agent run's trial keeps none of it.
+        val agent = trial("a", BenchVerdict.Correct)
+        assertNull(agent.webSearches)
+        assertNull(agent.citesSource)
+        assertTrue(resultNotes(agent).none { it.startsWith("web_search") || it.startsWith("fetched") })
+    }
 }

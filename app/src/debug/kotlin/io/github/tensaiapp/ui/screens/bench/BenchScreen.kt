@@ -83,6 +83,7 @@ import io.github.tensaiapp.bench.AgentBench
 import io.github.tensaiapp.bench.AgentBenchPreparing
 import io.github.tensaiapp.bench.AgentBenchProgress
 import io.github.tensaiapp.bench.BenchGate
+import io.github.tensaiapp.bench.BenchPromptList
 import io.github.tensaiapp.bench.BenchRun
 import io.github.tensaiapp.bench.BenchRunJson
 import io.github.tensaiapp.bench.BenchRunStore
@@ -338,6 +339,7 @@ private object LastRunSettings {
     val adaptiveReasoning = mutableStateOf(false)
     val repetitions = mutableIntStateOf(1)
     val toolPolicy = mutableStateOf(ToolPolicy.Current)
+    val promptList = mutableStateOf(BenchPromptList.Agent)
 }
 
 /**
@@ -354,8 +356,10 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
     val entity = resident?.let { info -> models.firstOrNull { it.id == info.modelId } }
     // One bench at a time: whatever holds the gate (the decode curve, its reload, this bench) holds the engine.
     val gateBusy by BenchGate.busy.collectAsState()
-    val promptCount by produceState<Int?>(null) {
-        value = withContext(Dispatchers.IO) { runCatching { AgentBench.prompts(context).size }.getOrNull() }
+    var promptList by LastRunSettings.promptList
+    val promptCount by produceState<Int?>(null, promptList) {
+        value = null
+        value = withContext(Dispatchers.IO) { runCatching { AgentBench.prompts(context, promptList).size }.getOrNull() }
     }
 
     var thinking by LastRunSettings.thinking
@@ -460,6 +464,27 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
                 fitLabels = true,
             )
         }
+        RowDivider()
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text(stringResource(R.string.bench_prompt_list), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(R.string.bench_prompt_list_sub), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BenchSegmented(
+                options = BenchPromptList.entries.map { list ->
+                    val label = when (list) {
+                        BenchPromptList.Agent -> R.string.bench_prompt_list_agent
+                        BenchPromptList.Web -> R.string.bench_prompt_list_web
+                    }
+                    SegmentOption(stringResource(label))
+                },
+                selected = BenchPromptList.entries.indexOf(promptList),
+                onSelect = { promptList = BenchPromptList.entries[it] },
+                mono = true,
+                fitLabels = true,
+            )
+        }
     }
 
     Spacer(Modifier.height(12.dp))
@@ -479,6 +504,7 @@ private fun NewRun(status: BenchStatus, onPickModel: (() -> Unit)?) {
                     reasoningBudget.takeIf { thinking && it in BenchTrigger.ReasoningBudgets },
                     thinking && adaptiveReasoning,
                     shownPolicy,
+                    promptList,
                 )
                 AgentBench.start(trigger, context)
             },

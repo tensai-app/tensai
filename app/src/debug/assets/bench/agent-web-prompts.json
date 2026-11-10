@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "prompts": [
+    {
+      "id": "rennes-metro-b",
+      "prompt": "In which year did line b of the Rennes metro open? Search the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 2022
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "millau-height",
+      "prompt": "What is the maximum height of the Millau Viaduct structure in metres? Look it up.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 343,
+        "tolerance": 1
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "saturn-moons",
+      "prompt": "How many moons did Saturn have after the IAU recognized 128 new ones in March 2025? Look it up online.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 274
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "loire-length",
+      "prompt": "How long is the Loire river in kilometres? Search the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 1006,
+        "tolerance": 15
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "roazhon-capacity",
+      "prompt": "What is the seating capacity of Roazhon Park stadium in Rennes? Search the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 29778,
+        "tolerance": 600
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "skytree-vs-eiffel",
+      "prompt": "How much taller is the Tokyo Skytree than the Eiffel Tower, in metres? Use the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 304,
+        "tolerance": 10
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "android-16-date",
+      "prompt": "On what date was Android 16 released as stable? Search the web and give the day.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "text": [
+          "June 10",
+          "10 June"
+        ]
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "tdf-2024",
+      "prompt": "Who won the 2024 Tour de France? Search the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "text": "Pogacar"
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "jwst-launch",
+      "prompt": "On what date did the James Webb Space Telescope launch? Check online.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "text": [
+          "December 25",
+          "25 December"
+        ]
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "id": "iceland-pop",
+      "prompt": "What was the population of Iceland on 1 January 2024 according to Statistics Iceland? Search the web.",
+      "expected": [
+        "web_search",
+        "web_fetch"
+      ],
+      "answer": {
+        "number": 383726,
+        "tolerance": 2000
+      },
+      "tags": [
+        "web"
+      ]
+    }
+  ]
+}

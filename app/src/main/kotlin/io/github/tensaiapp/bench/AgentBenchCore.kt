@@ -9,6 +9,9 @@ import io.github.tensaiapp.agent.Tool
 import io.github.tensaiapp.agent.ToolCallStatus
 import io.github.tensaiapp.agent.ToolPolicy
 import io.github.tensaiapp.agent.ConversationTrust
+import io.github.tensaiapp.agent.FetchUrls
+import io.github.tensaiapp.agent.ToolTier
+import io.github.tensaiapp.agent.WebSearchTool
 import io.github.tensaiapp.data.session.SaveResult
 import io.github.tensaiapp.engine.ChatMessage
 import io.github.tensaiapp.engine.DecodeRequest
@@ -19,6 +22,7 @@ import io.github.tensaiapp.engine.StopReason
 import io.github.tensaiapp.engine.ToolCall
 import io.github.tensaiapp.runtime.QueueBusyException
 import java.math.BigDecimal
+import java.net.URI
 import java.text.Normalizer
 import java.time.Clock
 import java.util.Locale
@@ -40,7 +44,8 @@ import kotlinx.serialization.json.put
 /**
  * What a run asks for, from `am start ... --es bench agent [--ez thinking false] [--ez base_prompt false]
  * [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256 | --ez adaptive_reasoning true]
- * [--es tool_policy current|always|always-strict]`, the debug panel of Settings > This device or Settings > Bench.
+ * [--es tool_policy current|always|always-strict] [--es prompt_list agent|web]`, the debug panel of Settings > This device
+ * or Settings > Bench.
  *
  * @param basePrompt the harness's base prompt opens the system message, as in every chat.
  * @param examples its few-shot examples follow it (debug builds only, see [io.github.tensaiapp.agent.BasePrompt]). They
@@ -60,6 +65,7 @@ import kotlinx.serialization.json.put
  * @param toolPolicy which turns get the tools and whether the base prompt adds its stricter line, see [ToolPolicy].
  *   [ToolPolicy.Current] is the chat's. Its stricter line is part of the base prompt, so [ToolPolicy.AlwaysStrict] never
  *   runs without it.
+ * @param promptList which list the run reads, and whether the web tools run, see [BenchPromptList].
  */
 data class BenchTrigger(
     val thinking: Boolean,
@@ -71,6 +77,7 @@ data class BenchTrigger(
     val reasoningBudget: Int? = null,
     val adaptiveReasoning: Boolean = false,
     val toolPolicy: ToolPolicy = ToolPolicy.Current,
+    val promptList: BenchPromptList = BenchPromptList.Agent,
 ) {
     init {
         require(repetitions in 1..MaxRepetitions) { "repetitions must be 1 to $MaxRepetitions, got $repetitions" }
@@ -115,6 +122,26 @@ data class BenchTrigger(
 }
 
 /**
+ * The prompt lists a run can read. Logged and saved by [storageName].
+ *
+ * @param runsWeb `web_search`, `web_fetch` and `wikipedia` run, unasked (TEN-183): the list measures how the model reads
+ *   the web, so a link it built is read like one a search returned; `device_info` and `memory` are refused instead, see
+ *   [benchRuns]. Off, the web tools are refused like every other network call.
+ */
+enum class BenchPromptList(val storageName: String, val runsWeb: Boolean) {
+    /** The tool / no-tool list, the bench's own. */
+    Agent("agent", false),
+
+    /** Fact questions to look up on the web. */
+    Web("web", true),
+    ;
+
+    companion object {
+        fun of(name: String?): BenchPromptList? = entries.firstOrNull { it.storageName == name }
+    }
+}
+
+/**
  * One bench at a time, whichever it is (the agent bench, the debug decode curve) and wherever it is started from (the
  * launch intent, the panel): they share the engine and the log tag. A run enters before it launches and leaves when it ends.
  */
@@ -153,7 +180,7 @@ sealed interface BenchStatus {
  * [toolGrammar] absent is on, what a chat sends. [greedy] absent is off, the chat's sampling. [reasoningBudget] absent,
  * not positive or without thinking is the chat's split. [adaptiveReasoning] needs thinking and wins over a fixed budget.
  * [toolPolicy] absent or unknown is [ToolPolicy.Current], the chat's; [ToolPolicy.AlwaysStrict] without the base prompt
- * is [ToolPolicy.Always], its line having nowhere to go.
+ * is [ToolPolicy.Always], its line having nowhere to go. [promptList] absent or unknown is [BenchPromptList.Agent].
  */
 fun benchTrigger(
     debug: Boolean,
@@ -167,6 +194,7 @@ fun benchTrigger(
     reasoningBudget: Int? = null,
     adaptiveReasoning: Boolean? = null,
     toolPolicy: String? = null,
+    promptList: String? = null,
 ): BenchTrigger? {
     if (!debug || bench != "agent") return null
     val base = basePrompt ?: true
@@ -181,6 +209,7 @@ fun benchTrigger(
         reasoningBudget = reasoningBudget?.takeIf { think && it > 0 && adaptiveReasoning != true },
         adaptiveReasoning = think && adaptiveReasoning == true,
         toolPolicy = if (policy.strictPrompt && !base) ToolPolicy.Always else policy,
+        promptList = BenchPromptList.of(promptList) ?: BenchPromptList.Agent,
     )
 }
 
@@ -207,8 +236,8 @@ data class BenchPrompt(
 /**
  * Reads the bench list: `{"version": 1, "prompts": [{"id", "prompt", "expected", "max_tokens"?, "answer"?, "tags"?}]}`,
  * `expected` being `"none"`, a tool name or an array of tool names, `max_tokens` a positive count, `answer`
- * `{"number": 37, "tolerance"?: 0.05}` or `{"text": "Tokyo"}`, see [AnswerCheck], `tags` an array of names. Throws on a
- * malformed file: a bench run on half a list would compare nothing.
+ * `{"number": 37, "tolerance"?: 0.05}`, `{"text": "Tokyo"}` or `{"text": ["June 10", "10 June"]}` (any one holds it), see
+ * [AnswerCheck], `tags` an array of names. Throws on a malformed file: a bench run on half a list would compare nothing.
  */
 fun parseBenchPrompts(json: String): List<BenchPrompt> {
     val prompts = Json.parseToJsonElement(json).jsonObject.getValue("prompts").jsonArray.map { element ->
@@ -222,7 +251,13 @@ fun parseBenchPrompts(json: String): List<BenchPrompt> {
         require(maxTokens == null || maxTokens > 0) { "max_tokens must be positive, got $maxTokens" }
         val answer = entry["answer"]?.jsonObject?.let { check ->
             check["number"]?.let { AnswerCheck.Number(it.jsonPrimitive.double, check["tolerance"]?.jsonPrimitive?.double ?: 0.0) }
-                ?: AnswerCheck.Text(check.getValue("text").jsonPrimitive.content)
+                ?: when (val text = check.getValue("text")) {
+                    is JsonArray -> text.map { it.jsonPrimitive.content }.let { options ->
+                        require(options.isNotEmpty()) { "an answer text list must not be empty" }
+                        AnswerCheck.Text(options.first(), options.drop(1))
+                    }
+                    else -> AnswerCheck.Text(text.jsonPrimitive.content)
+                }
         }
         val tags = entry["tags"]?.jsonArray?.mapTo(LinkedHashSet()) { it.jsonPrimitive.content }.orEmpty()
         BenchPrompt(entry.getValue("id").jsonPrimitive.content, entry.getValue("prompt").jsonPrimitive.content, expected, maxTokens, answer, tags)
@@ -282,12 +317,16 @@ sealed interface AnswerCheck {
         }
     }
 
-    /** [text] as words of the reply, case and accents aside: "Buenos días!" holds "buenos dias". */
-    data class Text(val text: String) : AnswerCheck {
-        override fun matches(reply: String): Boolean =
-            Regex("""(?<!\w)${Regex.escape(normalize(text))}(?!\w)""").containsMatchIn(normalize(reply))
+    /**
+     * [text], or any of its [alternatives], as words of the reply, case and accents aside: "Buenos días!" holds "buenos
+     * dias"; "June 10" or "10 June", a date written either way.
+     */
+    data class Text(val text: String, val alternatives: List<String> = emptyList()) : AnswerCheck {
+        override fun matches(reply: String): Boolean = (listOf(text) + alternatives).any { option ->
+            Regex("""(?<!\w)${Regex.escape(normalize(option))}(?!\w)""").containsMatchIn(normalize(reply))
+        }
 
-        override val shown: String get() = normalize(text)
+        override val shown: String get() = (listOf(text) + alternatives).joinToString(" | ") { normalize(it) }
 
         private fun normalize(s: String): String =
             Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("""\p{Mn}+"""), "").lowercase(Locale.ROOT).replace(Regex("""\s+"""), " ").trim()
@@ -382,21 +421,120 @@ enum class BenchVerdict {
 /**
  * The calls the bench lets run: the ones with no effect outside the reply, the user's data read and left as it was.
  * `memory` only for `list`. Anything else (network, a phone action, a permission, `ask_user`, a write) is refused by
- * [RefusingGate].
+ * [RefusingGate]. A web run ([BenchPromptList.runsWeb]) runs [WebRunnableTools] instead, see [benchRuns].
  */
 private val RunnableTools = setOf("datetime", "calculate", "convert", "convert_time", "device_info")
 
-internal fun benchRuns(name: String, argsJson: String): Boolean =
-    name in RunnableTools ||
+private const val WebFetchName = "web_fetch"
+private const val WikipediaName = "wikipedia"
+
+/** The tools a web run reads the web with. `wikipedia` takes no URL, so it can carry nothing out. */
+private val WebTools = setOf(WebSearchTool.NAME, WebFetchName, WikipediaName)
+
+/**
+ * What a web run lets run: the pure tools and [WebTools], nothing that reads the phone (`device_info`, `memory`): a
+ * fetch runs unasked there, and its URL could carry what such a read returned.
+ */
+private val WebRunnableTools = RunnableTools - "device_info" + WebTools
+
+internal fun benchRuns(name: String, argsJson: String, web: Boolean = false): Boolean = when {
+    web -> name in WebRunnableTools
+    else -> name in RunnableTools ||
         (name == "memory" && runCatching { Json.parseToJsonElement(argsJson).jsonObject["action"]?.jsonPrimitive?.content == "list" }.getOrDefault(false))
+}
 
 /**
  * [inner] as the model sees it (name, description, schema, tier: the prompt is the app's, byte for byte), except that
- * every call [benchRuns] does not allow goes through the [ConfirmationGate], where [RefusingGate] says no.
+ * every call [benchRuns] does not allow goes through the [ConfirmationGate], where [RefusingGate] says no. In a [web]
+ * run a web tool never asks: no one is there to tap the card of a link the model built.
  */
-class BenchTool(private val inner: Tool) : Tool by inner {
-    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean = !benchRuns(inner.name, argsJson) || inner.requiresConfirmation(argsJson, trust)
+class BenchTool(private val inner: Tool, private val web: Boolean = false) : Tool by inner {
+    override fun requiresConfirmation(argsJson: String, trust: ConversationTrust): Boolean = when {
+        !benchRuns(inner.name, argsJson, web) -> true
+        web && inner.name in WebTools -> false
+        else -> inner.requiresConfirmation(argsJson, trust)
+    }
 }
+
+/**
+ * Why a web run cannot read the web, `null` when it can: the Internet tier is not [granted], or the search provider
+ * chosen in Settings is not [searchReady] (it needs a key that is not stored).
+ */
+fun webBenchBlocker(granted: Set<ToolTier>, searchReady: Boolean): String? = when {
+    ToolTier.Network !in granted -> "Internet tools are not granted, turn them on in Settings > Tools"
+    !searchReady -> "the search provider has no API key, add one or pick DuckDuckGo in Settings > Tools > Internet"
+    else -> null
+}
+
+/**
+ * What a prompt of a web run read (TEN-183).
+ *
+ * @param searches the turn's `web_search` calls.
+ * @param fetches the turn's `web_fetch` calls, whatever they returned.
+ * @param fetchedUrls the URL of each of [fetches], as the model wrote it.
+ * @param sourceUrls the links the turn's searches returned and those its `wikipedia` results carried, as [FetchUrls.key]
+ *   writes them.
+ * @param citesSource the reply cites one of [fetchedUrls] or [sourceUrls], see [citesSource].
+ * @param wikipedia the turn's `wikipedia` calls.
+ */
+data class BenchWeb(
+    val searches: Int,
+    val fetches: Int,
+    val fetchedUrls: List<String>,
+    val sourceUrls: Set<String>,
+    val citesSource: Boolean,
+    val wikipedia: Int = 0,
+) {
+    /** The hosts of [fetchedUrls], `www.` aside, once each: what the log line shows. */
+    val fetchedHosts: List<String> get() = fetchedUrls.mapNotNull(::hostOf).distinct()
+
+    companion object {
+        /** What [calls] read, [sourceUrls] being the links their results held, for the turn's [reply]. */
+        fun of(calls: List<ToolCall>, sourceUrls: Set<String>, reply: String?): BenchWeb {
+            val fetched = calls.filter { it.name == WebFetchName }
+            val urls = fetched.mapNotNull { call ->
+                runCatching { Json.parseToJsonElement(call.argumentsJson).jsonObject["url"]?.jsonPrimitive?.content }.getOrNull()?.takeIf { it.isNotBlank() }
+            }
+            return BenchWeb(
+                searches = calls.count { it.name == WebSearchTool.NAME },
+                fetches = fetched.size,
+                fetchedUrls = urls,
+                sourceUrls = sourceUrls,
+                citesSource = citesSource(reply, urls + sourceUrls),
+                wikipedia = calls.count { it.name == WikipediaName },
+            )
+        }
+
+        /** The links of a [name] result, [output]: each result's of a search, any http(s) URL of a `wikipedia` one, none otherwise. */
+        internal fun linksOf(name: String, output: String): Set<String> = when (name) {
+            WebSearchTool.NAME -> FetchUrls.inSearchResult(output)
+            WikipediaName -> UrlPattern.findAll(output).mapNotNullTo(HashSet()) { FetchUrls.key(it.value) }
+            else -> emptySet()
+        }
+    }
+}
+
+private val UrlPattern = Regex("""https?://\S+""")
+
+/** A domain as a reply writes it, alone or in a URL: dotted labels ending in letters, so "3.14", "e.g." and "U.S." are not one. */
+private val DomainPattern = Regex("""(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?![\w-])""")
+
+/**
+ * Whether [reply] cites one of [sources] (URLs): a domain it writes, alone or in a URL, is a source's host, a parent of
+ * it ("wikipedia.org" for en.wikipedia.org) or under it, `www.` aside. A site named in words ("Wikipedia") is not a
+ * citation: nothing tells it from the model's memory.
+ */
+internal fun citesSource(reply: String?, sources: Collection<String>): Boolean {
+    if (reply.isNullOrBlank()) return false
+    val hosts = sources.mapNotNullTo(HashSet(), ::hostOf)
+    return DomainPattern.findAll(reply.lowercase(Locale.ROOT)).map { it.value.removePrefix("www.") }.any { named ->
+        hosts.any { it == named || it.endsWith(".$named") || named.endsWith(".$it") }
+    }
+}
+
+/** The host of [url] (its scheme optional), lowercase, without `www.` or a trailing dot, `null` for none. */
+private fun hostOf(url: String): String? =
+    FetchUrls.key(if ("://" in url) url else "https://$url")?.let { runCatching { URI(it).host }.getOrNull() }?.trimEnd('.')?.removePrefix("www.")?.ifEmpty { null }
 
 /** Refuses every call it is asked about and keeps it: the bench's record of what the model tried and was not run. */
 class RefusingGate : ConfirmationGate {
@@ -444,6 +582,8 @@ class RefusingGate : ConfirmationGate {
  *   answered wrong.
  * @param emptyRaw what the model wrote, think tags included, when an answer after a tool came out empty and the runtime
  *   asked again (TEN-204), `null` otherwise. Kept for the bench screen, never logged; the line logs `asked_again`.
+ * @param web what the turn read on the web, `null` outside a web run ([BenchPromptList.runsWeb]). The line logs its
+ *   counts (`wikipedia` included), the fetched hosts and the citation.
  */
 data class BenchResult(
     val prompt: BenchPrompt,
@@ -469,6 +609,7 @@ data class BenchResult(
     val callErrors: Map<String, String> = emptyMap(),
     val answer: AnswerOutcome = AnswerOutcome.Unchecked,
     val emptyRaw: String? = null,
+    val web: BenchWeb? = null,
 ) {
     /** One JSON line for logcat, arguments cut to [MaxArgsChars]. */
     fun toLogLine(): String = buildJsonObject {
@@ -506,6 +647,13 @@ data class BenchResult(
         if (emptyRaw != null) put("asked_again", true)
         if (namedInText.isNotEmpty()) put("named_in_text", JsonArray(namedInText.map { JsonPrimitive(it) }))
         if (truncatedCalls.isNotEmpty()) put("truncated_calls", JsonArray(truncatedCalls.map { JsonPrimitive(it) }))
+        web?.let {
+            put("web_search", it.searches)
+            put("web_fetch", it.fetches)
+            put("wikipedia", it.wikipedia)
+            put("fetched_hosts", JsonArray(it.fetchedHosts.map { host -> JsonPrimitive(host) }))
+            put("cites_source", it.citesSource)
+        }
         error?.let { put("error", it) }
     }.toString()
 
@@ -525,7 +673,9 @@ data class BenchResult(
  * [answers]: the [AnswerOutcome] counts. [medianReasoningTokens] and [medianMaxReplyReasoningTokens] leave out errors and
  * the prompts whose reasoning could not be counted; a cold prefix costs no reasoning, so it stays in. [reasoningOverCap]:
  * prompts with a [BenchResult.reasoningOverCap]. [tagAnswers]: per [BenchPrompt.tags] name, the answers right and the
- * answers checked of the prompts it tags.
+ * answers checked of the prompts it tags. Over the prompts of a web run ([BenchResult.web]), errors left out: [fetchRate],
+ * the share that made at least one `web_fetch`, and [citesSource], the replies citing a source and the prompts; both
+ * `null` outside a web run.
  */
 data class BenchSummary(
     val counts: Map<BenchVerdict, Int>,
@@ -540,6 +690,8 @@ data class BenchSummary(
     val medianMaxReplyReasoningTokens: Long? = null,
     val reasoningOverCap: Int = 0,
     val tagAnswers: Map<String, Pair<Int, Int>> = emptyMap(),
+    val fetchRate: Double? = null,
+    val citesSource: Pair<Int, Int>? = null,
 ) {
     fun toLogLine(trigger: BenchTrigger): String = buildJsonObject {
         put("event", "summary")
@@ -552,6 +704,7 @@ data class BenchSummary(
         put("reasoning_budget", trigger.reasoningBudget)
         put("reasoning_budget_mode", trigger.reasoningBudgetMode)
         put("tool_policy", trigger.toolPolicy.storageName)
+        if (trigger.promptList != BenchPromptList.Agent) put("prompt_list", trigger.promptList.storageName)
         put("prompts", counts.values.sum())
         BenchVerdict.entries.forEach { put(it.storageName, counts[it] ?: 0) }
         put("false_call_rate", falseCallRate)
@@ -571,6 +724,11 @@ data class BenchSummary(
             put("${tag}_ok", okOfChecked.first)
             put("${tag}_checked", okOfChecked.second)
         }
+        if (fetchRate != null) put("fetch_rate", fetchRate)
+        citesSource?.let {
+            put("cites_source", it.first)
+            put("cites_source_of", it.second)
+        }
     }.toString()
 
     /**
@@ -584,6 +742,7 @@ data class BenchSummary(
             "thinking ${onOff(trigger.thinking)} · base prompt ${onOff(trigger.basePrompt)} · examples ${onOff(trigger.examples)}" +
                 " · tool grammar ${onOff(trigger.toolGrammar)}" + (if (trigger.greedy) " · greedy" else "") +
                 (if (trigger.toolPolicy != ToolPolicy.Current) " · tools ${trigger.toolPolicy.storageName}" else "") +
+                (if (trigger.promptList != BenchPromptList.Agent) " · list ${trigger.promptList.storageName}" else "") +
                 (if (trigger.repetitions > 1) " · repetitions ${trigger.repetitions}" else "") +
                 when {
                     trigger.adaptiveReasoning -> " · reasoning adaptive"
@@ -600,6 +759,7 @@ data class BenchSummary(
                 " · empty ${answers[AnswerOutcome.Empty] ?: 0}",
         )
         tagAnswers.forEach { (tag, okOfChecked) -> add("${tag}_ok ${okOfChecked.first}/${okOfChecked.second}") }
+        citesSource?.let { add("fetch_rate ${fetchRate ?: "-"} · cites_source ${it.first}/${it.second}") }
         if (reasoningOverCap > 0) add("reasoning_over_cap $reasoningOverCap: the cap was not enforced")
         results.filter { it.verdict != BenchVerdict.Correct }.groupBy { it.verdict }.forEach { (verdict, wrong) ->
             add("${verdict.storageName}: " + wrong.map { it.prompt.id }.distinct().joinToString(", "))
@@ -615,6 +775,8 @@ data class BenchSummary(
                 add("answer_${outcome.storageName}: " + off.map { it.prompt.id }.distinct().joinToString(", "))
             }
         }
+        // Whole URLs here, the log keeps the hosts.
+        results.forEach { r -> r.web?.fetchedUrls?.takeIf { it.isNotEmpty() }?.let { add("fetched ${r.prompt.id}: " + it.joinToString(" ")) } }
     }
 
     companion object {
@@ -624,6 +786,7 @@ data class BenchSummary(
             val withTool = judged.filter { it.prompt.expected.isNotEmpty() }
             val timed = results.filter { it.verdict != BenchVerdict.Error && !it.prefixCold }
             fun rate(part: Int, of: Int): Double? = if (of == 0) null else Math.round(part * 1000.0 / of) / 1000.0
+            val web = results.filter { it.verdict != BenchVerdict.Error }.mapNotNull { it.web }
             return BenchSummary(
                 counts = BenchVerdict.entries.associateWith { v -> results.count { it.verdict == v } },
                 falseCallRate = rate(noTool.count { it.verdict == BenchVerdict.FalseCall }, noTool.size),
@@ -640,6 +803,8 @@ data class BenchSummary(
                     val checked = results.filter { tag in it.prompt.tags && it.answer != AnswerOutcome.Unchecked }
                     checked.count { it.answer == AnswerOutcome.Correct } to checked.size
                 },
+                fetchRate = rate(web.count { it.fetches > 0 }, web.size),
+                citesSource = (web.count { it.citesSource } to web.size).takeIf { web.isNotEmpty() },
             )
         }
 
@@ -663,6 +828,7 @@ data class BenchSummary(
  * @param countTokens tokens of a text under the loaded model's tokenizer, `null` when it cannot be counted.
  * @param samplingFor the sampling of a prompt by its text, in place of [sampling] (which still warms the prefix): the
  *   chat's per-message budget for [BenchTrigger.adaptiveReasoning]. `null`: every prompt on [sampling].
+ * @param web a web run ([BenchPromptList.runsWeb]): each result says what the turn read, see [BenchResult.web].
  */
 class BenchRunner(
     private val runtime: AgentRuntime,
@@ -673,6 +839,7 @@ class BenchRunner(
     private val clock: () -> Long = System::currentTimeMillis,
     private val system: ((Set<String>) -> String?)? = null,
     private val samplingFor: ((String) -> SamplingConfig)? = null,
+    private val web: Boolean = false,
 ) {
     /** The request the tool prefix is warmed from: the system message of the tools a turn gets, no history, those tools. */
     fun prefixRequest(): DecodeRequest = DecodeRequest(
@@ -705,6 +872,7 @@ class BenchRunner(
         var opened = emptyList<String>()
         val truncatedCalls = mutableListOf<String>()
         val callErrors = LinkedHashMap<String, String>()
+        val sourceUrls = LinkedHashSet<String>()
         var tokens = 0
         var stopReason: String? = null
         var error: Throwable? = null
@@ -730,7 +898,10 @@ class BenchRunner(
                     tokens += event.stats?.tokensGenerated ?: 0
                     stopReason = event.stats?.stopReason?.name
                 }
-                is AgentEvent.ToolCallFinished -> if (event.outcome.status == ToolCallStatus.Error) callErrors[event.outcome.call.id] = event.outcome.output
+                is AgentEvent.ToolCallFinished -> {
+                    if (event.outcome.status == ToolCallStatus.Error) callErrors[event.outcome.call.id] = event.outcome.output
+                    if (web) sourceUrls += BenchWeb.linksOf(event.outcome.call.name, event.outcome.output)
+                }
                 is AgentEvent.Error -> error = event.cause
                 else -> Unit
             }
@@ -765,6 +936,7 @@ class BenchRunner(
             callErrors = callErrors,
             answer = AnswerOutcome.of(prompt.answer, reply, stopReason, failed = error != null),
             emptyRaw = emptyRaw,
+            web = if (web) BenchWeb.of(calls, sourceUrls, reply) else null,
         )
     }
 

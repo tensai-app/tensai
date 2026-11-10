@@ -37,7 +37,7 @@ import kotlinx.serialization.json.put
  *
  * `adb shell am start -n io.github.tensaiapp/.MainActivity --activity-single-top --es bench agent [--ez thinking false]
  * [--ez base_prompt false] [--ez examples true] [--ez tool_grammar false] [--ez greedy true] [--ei reasoning_budget 256]
- * [--ez adaptive_reasoning true] [--es tool_policy current|always|always-strict]`,
+ * [--ez adaptive_reasoning true] [--es tool_policy current|always|always-strict] [--es prompt_list web]`,
  * "Run agent bench" in Settings > This device, which shows [status] (the summary included) on screen, or Settings >
  * Bench (TEN-187), which shows [progress]. Wherever it starts, a run that graded a prompt is saved as a [BenchRun] in
  * [BenchRunStore], a run stopped early ([stop], the model gone) as a partial one.
@@ -51,10 +51,15 @@ import kotlinx.serialization.json.put
  * after it, so the bench's tokens are never saved as its session; its next send prefills again. So is a conversation
  * the user sends to during the run, before the next prompt ([runBench]). Calls with an effect outside the reply are
  * refused, see [benchRuns]. The run stops when the model goes or the queue refuses a turn.
+ *
+ * `prompt_list web` (or the list picked on the bench screen) reads `assets/bench/agent-web-prompts.json` instead
+ * (TEN-183): fact questions whose `web_search`, `web_fetch` and `wikipedia` calls run, unasked, so each result says
+ * what the model searched, read and cited ([BenchWeb]). Nothing that reads the phone runs then, see [benchRuns].
  */
 object AgentBench {
     private const val TAG = "tensai.bench"
     private const val PROMPTS = "bench/agent-prompts.json"
+    private const val WEB_PROMPTS = "bench/agent-web-prompts.json"
     const val EXTRA_BENCH = "bench"
     const val EXTRA_THINKING = "thinking"
     const val EXTRA_BASE_PROMPT = "base_prompt"
@@ -64,6 +69,7 @@ object AgentBench {
     const val EXTRA_REASONING_BUDGET = "reasoning_budget"
     const val EXTRA_ADAPTIVE_REASONING = "adaptive_reasoning"
     const val EXTRA_TOOL_POLICY = "tool_policy"
+    const val EXTRA_PROMPT_LIST = "prompt_list"
 
     private val _status = MutableStateFlow<BenchStatus>(BenchStatus.Idle)
 
@@ -104,6 +110,7 @@ object AgentBench {
             reasoningBudget = intent?.takeIf { it.hasExtra(EXTRA_REASONING_BUDGET) }?.getIntExtra(EXTRA_REASONING_BUDGET, 0),
             adaptiveReasoning = flag(EXTRA_ADAPTIVE_REASONING),
             toolPolicy = intent?.getStringExtra(EXTRA_TOOL_POLICY),
+            promptList = intent?.getStringExtra(EXTRA_PROMPT_LIST),
         ) ?: return
         // Consumed once: a recreation must not run it again.
         intent?.removeExtra(EXTRA_BENCH)
@@ -157,12 +164,19 @@ object AgentBench {
         job?.cancel()
     }
 
-    /** The bench list. Throws on a malformed one, see [parseBenchPrompts]. */
-    fun prompts(context: Context): List<BenchPrompt> = parseBenchPrompts(context.assets.open(PROMPTS).bufferedReader().use { it.readText() })
+    /** The asset of [list]. */
+    private fun assetOf(list: BenchPromptList): String = when (list) {
+        BenchPromptList.Agent -> PROMPTS
+        BenchPromptList.Web -> WEB_PROMPTS
+    }
+
+    /** The bench list [list]. Throws on a malformed one, see [parseBenchPrompts]. */
+    fun prompts(context: Context, list: BenchPromptList = BenchPromptList.Agent): List<BenchPrompt> =
+        parseBenchPrompts(context.assets.open(assetOf(list)).bufferedReader().use { it.readText() })
 
     private suspend fun run(trigger: BenchTrigger, context: Context) {
-        val prompts = runCatching { prompts(context) }
-            .getOrElse { return fail("cannot read $PROMPTS: ${it.message}") }
+        val prompts = runCatching { prompts(context, trigger.promptList) }
+            .getOrElse { return fail("cannot read ${assetOf(trigger.promptList)}: ${it.message}") }
         val planned = prompts.size * trigger.repetitions
         _status.value = BenchStatus.Running(done = 0, total = planned)
         val queue = RuntimeGraph.inferenceQueue
@@ -173,9 +187,15 @@ object AgentBench {
         if (entity?.toolsAvailable != true) return fail("the loaded model's template takes no tools")
 
         val gate = RefusingGate()
-        val registry = ToolRegistry(RuntimeGraph.toolRegistry.registered().map(::BenchTool), RuntimeGraph.toolSettings)
+        val web = trigger.promptList.runsWeb
+        val registry = ToolRegistry(RuntimeGraph.toolRegistry.registered().map { BenchTool(it, web) }, RuntimeGraph.toolSettings)
         val runtime = RuntimeGraph.agentRuntimeOn(registry, gate, trigger.toolPolicy)
         if (!runtime.hasTools()) return fail("no tool is granted")
+        if (web) {
+            val provider = RuntimeGraph.toolSettings.searchProvider.first()
+            val searchReady = !provider.needsKey || !RuntimeGraph.searchKeys.of(provider)?.get().isNullOrBlank()
+            webBenchBlocker(RuntimeGraph.toolSettings.grants.first(), searchReady)?.let { return fail(it) }
+        }
         val systemPrompt = trigger.systemPrompt()
         val system = { tools: Set<String> -> systemPrompt.build(tools = tools, startedAt = null, global = null, chat = null) }
         val sampling = trigger.sampling(replySampling(null, trigger.thinking, entity.thinkingAvailable))
@@ -198,6 +218,7 @@ object AgentBench {
             countTokens = { text -> queue.countTokens(listOf(text))?.firstOrNull() },
             system = system,
             samplingFor = samplingFor,
+            web = web,
         )
 
         // The cache's owner is saved, then forgotten: from here the cache holds the bench, whatever is saved next.
@@ -239,6 +260,7 @@ object AgentBench {
                 put("examples", trigger.examples)
                 put("tool_grammar", trigger.toolGrammar)
                 put("tool_policy", trigger.toolPolicy.storageName)
+                if (web) put("prompt_list", trigger.promptList.storageName)
                 if (trigger.greedy) put("greedy", true)
                 put("reasoning_budget", ran.reasoningBudget)
                 put("reasoning_budget_mode", ran.reasoningBudgetMode)
@@ -262,6 +284,7 @@ object AgentBench {
             examples = trigger.examples,
             toolGrammar = trigger.toolGrammar,
             toolPolicy = trigger.toolPolicy.storageName,
+            promptList = trigger.promptList.storageName,
             repetitions = trigger.repetitions,
             reasoningBudget = ran.reasoningBudget,
             reasoningBudgetMode = ran.reasoningBudgetMode,

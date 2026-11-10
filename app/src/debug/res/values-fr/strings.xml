@@ -49,6 +49,10 @@
     <string name="bench_tool_policy_current">Actuelle</string>
     <string name="bench_tool_policy_always">Toujours</string>
     <string name="bench_tool_policy_strict">Stricte</string>
+    <string name="bench_prompt_list">Liste de prompts</string>
+    <string name="bench_prompt_list_sub">Agent vérifie quand les outils sont appelés, Web pose des questions à chercher et laisse tourner web_search, web_fetch et wikipedia</string>
+    <string name="bench_prompt_list_agent">Agent</string>
+    <string name="bench_prompt_list_web">Web</string>
     <plurals name="bench_run_calls">
         <item quantity="one">Lancer le banc agent · %d appel</item>
         <item quantity="many">Lancer le banc agent · %d appels</item>
