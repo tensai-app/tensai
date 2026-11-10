@@ -175,6 +175,36 @@
     <string name="settings_privacy_summary">Everything runs on this phone. Internet tools only run if you turn them on.</string>
     <!-- The site's privacy policy. A translation changes the locale path only, never the host. -->
     <string name="settings_privacy_url">https://tensai.page/privacy/</string>
+    <!-- Updates (TEN-227): the opt-in check against GitHub releases, its card and the Settings row. -->
+    <string name="settings_updates">Check for updates</string>
+    <string name="settings_updates_hint">Once a day, asks GitHub for the latest release</string>
+    <string name="settings_updates_on">Once a day</string>
+    <string name="settings_updates_on_sub">One request to api.github.com at app start. Nothing about you or your chats is sent.</string>
+    <string name="settings_updates_off">Off</string>
+    <string name="update_consent_eyebrow">Updates</string>
+    <string name="update_consent_title">Tell you when a new version is out?</string>
+    <string name="update_consent_body">Once a day, tensai would ask GitHub (api.github.com) for its latest release. It is the only request the app makes on its own, and nothing about you or your chats is sent. You can change this in Settings.</string>
+    <string name="update_consent_yes">Yes, check</string>
+    <string name="update_consent_no">No</string>
+    <string name="update_available_eyebrow">Update available</string>
+    <string name="update_failed_eyebrow">Update not installed</string>
+    <!-- %1$s is the version, e.g. 0.3.7. -->
+    <string name="update_version_title">tensai %1$s</string>
+    <string name="update_install">Update</string>
+    <string name="update_later">Later</string>
+    <string name="update_skip">Skip this version</string>
+    <string name="update_retry">Try again</string>
+    <!-- %1$s is the version. -->
+    <string name="update_downloading">Downloading tensai %1$s</string>
+    <!-- %1$d is a percentage, 0 to 100. -->
+    <string name="update_percent">%1$d%%</string>
+    <string name="update_permission_body">To install it, allow tensai to install apps in Android settings, then come back here.</string>
+    <string name="update_permission_open">Open settings</string>
+    <string name="update_installing">Android asks you to confirm the installation.</string>
+    <string name="update_failed_download">The download failed. Check the connection and try again.</string>
+    <string name="update_failed_hash">The downloaded file does not match the hash published with the release. It was deleted.</string>
+    <string name="update_failed_signature">The downloaded app is not signed like this one. It was deleted and will not be installed.</string>
+    <string name="update_failed_install">Android could not install the update.</string>
 
     <!-- What's new (TEN-193) -->
     <string name="changelog_title">What\'s new</string>

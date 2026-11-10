@@ -25,9 +25,15 @@
 
     <!-- Hugging Face model browsing/download only (TEN-136). The network is used to fetch model
          listings and files from huggingface.co and nothing else: no telemetry, no other host.
-         "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract. -->
+         "Nothing leaves the device" stays true, see the hf package (HfClient) for the contract.
+         TEN-227 adds one opt-in request: once a day, if the user said yes, GitHub's latest tensai release
+         (api.github.com), and the APK when the user taps Update. See the update package. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- TEN-227: hands a downloaded, verified update to Android's installer. "Install unknown apps" stays off until
+         the user turns it on, and Android confirms every install. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- TEN-177: set_alarm and set_timer. A normal permission (granted at install, no prompt) that lets the
          app hand an alarm or timer to the Clock app. Nothing else is read or written. -->
@@ -138,6 +144,11 @@
 
         <receiver
             android:name=".download.DownloadActionReceiver"
+            android:exported="false" />
+
+        <!-- TEN-227: the update's PackageInstaller session status, reached only through its explicit PendingIntent. -->
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
     </application>
 

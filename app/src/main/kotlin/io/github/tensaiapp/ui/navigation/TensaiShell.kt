@@ -2,6 +2,7 @@ package io.github.tensaiapp.ui.navigation
 
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.tensaiapp.R
@@ -39,6 +41,7 @@ import io.github.tensaiapp.ui.screens.chat.ContextRing
 import io.github.tensaiapp.ui.screens.chat.ContextRingState
 import io.github.tensaiapp.ui.screens.onboarding.OnboardingEntry
 import io.github.tensaiapp.ui.screens.onboarding.OnboardingStep
+import io.github.tensaiapp.ui.screens.update.UpdateCardHost
 import io.github.tensaiapp.ui.theme.tensaiTints
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -262,20 +265,27 @@ fun TensaiShell(onboardingEntry: OnboardingEntry) {
                 }
             },
         ) { innerPadding ->
-            TensaiNavGraph(
-                navController = navController,
-                startDestination = startDestination,
-                onboardingStartStep = onboardingStartStep,
-                modelsImportRequests = modelsImportRequests,
-                chatSettingsRequests = chatSettingsRequests,
-                chatContextRequests = chatContextRequests,
-                onChatContextRingState = { chatContextRing = it },
-                deviceCopyRequests = deviceCopyRequests,
-                onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
-                createdConversationId = { createdChatIds[it] },
-                onChatEmpty = { entryId, empty -> emptyChats[entryId] = empty },
-                modifier = Modifier.padding(innerPadding),
-            )
+            Column(modifier = Modifier.padding(innerPadding)) {
+                // TEN-227: the update card sits above a chat, never over another screen or the onboarding. Its resume
+                // handling (install permission, held confirmation) runs only here, deliberately, see UpdateCardHost.
+                if (currentRoute?.startsWith("chat/") == true) {
+                    UpdateCardHost(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+                }
+                TensaiNavGraph(
+                    navController = navController,
+                    startDestination = startDestination,
+                    onboardingStartStep = onboardingStartStep,
+                    modelsImportRequests = modelsImportRequests,
+                    chatSettingsRequests = chatSettingsRequests,
+                    chatContextRequests = chatContextRequests,
+                    onChatContextRingState = { chatContextRing = it },
+                    deviceCopyRequests = deviceCopyRequests,
+                    onChatConversationCreated = { entryId, id -> createdChatIds[entryId] = id },
+                    createdConversationId = { createdChatIds[it] },
+                    onChatEmpty = { entryId, empty -> emptyChats[entryId] = empty },
+                    modifier = Modifier.weight(1f),
+                )
+            }
 
             // TEN-126: Back closes an open drawer first, as anywhere else on Android, instead of
             // popping the screen under it. Composed after the NavHost on purpose: the dispatcher

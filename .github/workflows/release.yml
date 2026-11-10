@@ -154,11 +154,15 @@ jobs:
           "$apksigner" verify --print-certs "$apk"
           mkdir dist
           mv "$apk" "dist/tensai-${REF_NAME#v}.apk"
+          # Publié à côté de l'APK : l'app vérifie la mise à jour téléchargée contre ce hash (TEN-227).
+          (cd dist && sha256sum "tensai-${REF_NAME#v}.apk" > "tensai-${REF_NAME#v}.apk.sha256")
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-apk
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*.apk.sha256
           retention-days: 7
           if-no-files-found: error
 
@@ -194,7 +198,8 @@ jobs:
             exit 0
           fi
           apk=$(ls dist/tensai-*.apk)
+          [ -f "$apk.sha256" ] || { echo "::error::$apk.sha256 absent"; exit 1; }
           flags=()
           case "$TAG" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$TAG" "$apk" --repo "$GITHUB_REPOSITORY" \
+          gh release create "$TAG" "$apk" "$apk.sha256" --repo "$GITHUB_REPOSITORY" \
             --generate-notes --verify-tag "${flags[@]}"

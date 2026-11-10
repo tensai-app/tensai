@@ -141,6 +141,36 @@
     <string name="settings_privacy">Confidentialité</string>
     <string name="settings_privacy_summary">Tout tourne sur ce téléphone. Les outils Internet ne fonctionnent qu\'une fois activés.</string>
     <string name="settings_privacy_url">https://tensai.page/fr/privacy/</string>
+    <!-- Updates (TEN-227): the opt-in check against GitHub releases, its card and the Settings row. -->
+    <string name="settings_updates">Rechercher les mises à jour</string>
+    <string name="settings_updates_hint">Une fois par jour, demande à GitHub la dernière version</string>
+    <string name="settings_updates_on">Une fois par jour</string>
+    <string name="settings_updates_on_sub">Une requête vers api.github.com au lancement. Rien sur vous ni sur vos conversations n\'est envoyé.</string>
+    <string name="settings_updates_off">Désactivé</string>
+    <string name="update_consent_eyebrow">Mises à jour</string>
+    <string name="update_consent_title">Vous prévenir quand une nouvelle version sort ?</string>
+    <string name="update_consent_body">Une fois par jour, tensai demanderait à GitHub (api.github.com) sa dernière version. C\'est la seule requête que l\'app fait d\'elle-même, et rien sur vous ni sur vos conversations n\'est envoyé. Modifiable dans les Réglages.</string>
+    <string name="update_consent_yes">Oui, vérifier</string>
+    <string name="update_consent_no">Non</string>
+    <string name="update_available_eyebrow">Mise à jour disponible</string>
+    <string name="update_failed_eyebrow">Mise à jour non installée</string>
+    <!-- %1$s is the version, e.g. 0.3.7. -->
+    <string name="update_version_title">tensai %1$s</string>
+    <string name="update_install">Mettre à jour</string>
+    <string name="update_later">Plus tard</string>
+    <string name="update_skip">Ignorer cette version</string>
+    <string name="update_retry">Réessayer</string>
+    <!-- %1$s is the version. -->
+    <string name="update_downloading">Téléchargement de tensai %1$s</string>
+    <!-- %1$d is a percentage, 0 to 100. -->
+    <string name="update_percent">%1$d %%</string>
+    <string name="update_permission_body">Pour l\'installer, autorisez tensai à installer des applis dans les réglages Android, puis revenez ici.</string>
+    <string name="update_permission_open">Ouvrir les réglages</string>
+    <string name="update_installing">Android vous demande de confirmer l\'installation.</string>
+    <string name="update_failed_download">Le téléchargement a échoué. Vérifiez la connexion et réessayez.</string>
+    <string name="update_failed_hash">Le fichier téléchargé ne correspond pas à l\'empreinte publiée avec la version. Il a été supprimé.</string>
+    <string name="update_failed_signature">L\'appli téléchargée n\'est pas signée comme celle-ci. Elle a été supprimée et ne sera pas installée.</string>
+    <string name="update_failed_install">Android n\'a pas pu installer la mise à jour.</string>
 
     <!-- Nouveautés (TEN-193) -->
     <string name="changelog_title">Nouveautés</string>

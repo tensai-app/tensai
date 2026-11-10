@@ -201,6 +201,7 @@ val releasePermissions = setOf(
     "android.permission.READ_CONTACTS",
     "android.permission.READ_SMS",
     "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
     "android.permission.WAKE_LOCK",
     "com.android.alarm.permission.SET_ALARM",
     "io.github.tensaiapp.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",

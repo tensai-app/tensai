@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.Straighten
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.PrivacyTip
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -97,6 +98,7 @@ import io.github.tensaiapp.data.BackendPreference
 import io.github.tensaiapp.data.AutoMemoryShare
 import io.github.tensaiapp.data.ContextSetting
 import io.github.tensaiapp.data.InstructionsSettings
+import io.github.tensaiapp.runtime.RuntimeGraph
 import io.github.tensaiapp.runtime.rememberResumeCount
 import io.github.tensaiapp.ui.components.KanjiGlyph
 import io.github.tensaiapp.ui.screens.bench.BenchSettingsSection
@@ -106,6 +108,8 @@ import io.github.tensaiapp.ui.theme.TensaiShapes
 import io.github.tensaiapp.ui.theme.ThemeMode
 import io.github.tensaiapp.ui.theme.tensaiColors
 import io.github.tensaiapp.ui.theme.tensaiTints
+import io.github.tensaiapp.update.UpdateConsent
+import io.github.tensaiapp.update.UpdateManager
 import kotlinx.coroutines.launch
 
 /**
@@ -125,6 +129,8 @@ import kotlinx.coroutines.launch
  * @param openTokenSheet true when the screen was opened to set the Hugging Face token (the repo
  *   screen's "Open Settings"): the token sheet opens once, then [onTokenSheetOpened] resets the request.
  * @param openInstructionsSheet the same for "Your instructions", from the chat settings sheet.
+ * @param updateManager the "Check for updates" row's opt-in (TEN-227). Not on [SettingsViewModel], whose tests build
+ *   it without [RuntimeGraph].
  */
 @Composable
 fun SettingsScreen(
@@ -142,6 +148,7 @@ fun SettingsScreen(
     onInstructionsSheetOpened: () -> Unit = {},
     viewModel: SettingsViewModel = remember { SettingsViewModel() },
     toolsViewModel: ToolsViewModel = remember { ToolsViewModel() },
+    updateManager: UpdateManager = remember { RuntimeGraph.updateManager },
 ) {
     val theme by viewModel.themeMode.collectAsState(initial = ThemeMode.System)
     val language by viewModel.language.collectAsState(initial = AppLanguage.System)
@@ -156,6 +163,7 @@ fun SettingsScreen(
     val allowMobileData by viewModel.allowMobileData.collectAsState(initial = false)
     val memoryCount by viewModel.memoryCount.collectAsState(initial = 0)
     val changelogDot by viewModel.changelogDot.collectAsState(initial = false)
+    val updateConsent by updateManager.consent.collectAsState(initial = UpdateConsent.Unasked)
     // Null until the store's first emission: the sheet is seeded from it once, see GlobalInstructionsSheet.
     val globalInstructions by viewModel.globalInstructions.collectAsState(initial = null)
     val toolGroupsOn by toolsViewModel.groupsOn.collectAsState(initial = ToolGroup.countOn(DefaultTierGrants.granted()))
@@ -412,6 +420,21 @@ fun SettingsScreen(
                 )
                 RowDivider()
                 SettingsRow(
+                    icon = Icons.Rounded.SystemUpdate,
+                    title = stringResource(R.string.settings_updates),
+                    supporting = stringResource(R.string.settings_updates_hint),
+                    onClick = { picker = Picker.Updates },
+                    trailing = {
+                        ValueText(
+                            stringResource(
+                                if (updateConsent == UpdateConsent.Allowed) R.string.settings_updates_on else R.string.settings_updates_off,
+                            ),
+                        )
+                        Chevron()
+                    },
+                )
+                RowDivider()
+                SettingsRow(
                     icon = Icons.Rounded.Description,
                     title = stringResource(R.string.settings_licenses),
                     onClick = onNavigateToLicenses,
@@ -437,6 +460,7 @@ fun SettingsScreen(
 
             // Debug builds only: the release stub draws nothing.
             BenchSettingsSection(onOpen = onNavigateToBench)
+            UpdateSourcePanel()
 
             Footer()
         }
@@ -488,6 +512,14 @@ fun SettingsScreen(
                         ),
                         selected = autoShare == share,
                         onSelect = { viewModel.setAutoShare(share) },
+                    )
+                }
+                Picker.Updates -> listOf(true, false).map { allow ->
+                    PickerOption(
+                        title = stringResource(if (allow) R.string.settings_updates_on else R.string.settings_updates_off),
+                        subtitle = if (allow) stringResource(R.string.settings_updates_on_sub) else null,
+                        selected = (updateConsent == UpdateConsent.Allowed) == allow,
+                        onSelect = { updateManager.setAllowed(allow) },
                     )
                 }
                 Picker.MobileData -> listOf(false, true).map { allow ->
@@ -621,6 +653,7 @@ private enum class Picker(val titleRes: Int) {
     Context(R.string.settings_context_setting),
     AutoShare(R.string.settings_auto_share),
     MobileData(R.string.settings_mobile_data),
+    Updates(R.string.settings_updates),
 }
 
 /**

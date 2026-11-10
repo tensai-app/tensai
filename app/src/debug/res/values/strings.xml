@@ -256,4 +256,10 @@
     <string name="bench_preparing">Preparing: warming the prompt cache</string>
     <string name="bench_stop_note_preparing">Stopping now saves nothing: no prompt is graded yet.</string>
     <string name="decode_preparing">preparing the run</string>
+    <!-- Settings' DEBUG section (TEN-227): where this debug build's update check asks. -->
+    <string name="debug_update_source">Update source</string>
+    <string name="debug_update_source_unset">Not set: this build never checks</string>
+    <string name="debug_update_source_save">Save</string>
+    <string name="debug_update_check_now">Check for an update now</string>
+    <string name="debug_update_check_now_sub">Ignores the once-a-day limit, still needs the opt-in</string>
 </resources>

@@ -85,6 +85,13 @@ import io.github.tensaiapp.download.toOrigin
 import io.github.tensaiapp.hf.HfClient
 import io.github.tensaiapp.hf.TokenStore
 import io.github.tensaiapp.ui.screens.chat.ChatLogTag
+import io.github.tensaiapp.update.AndroidSigners
+import io.github.tensaiapp.update.ApkVerifier
+import io.github.tensaiapp.update.ReleaseClient
+import io.github.tensaiapp.update.UpdateInstaller
+import io.github.tensaiapp.update.UpdateLogTag
+import io.github.tensaiapp.update.UpdateManager
+import io.github.tensaiapp.update.UpdatePreferences
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -393,6 +400,35 @@ object RuntimeGraph {
                     .firstOrNull { it.fileName == name && it.sizeBytes == size && File(it.filePath).exists() }?.id
             },
             registry = drainerRegistry,
+        )
+    }
+
+    /** The update check's opt-in, last check and skipped tag (TEN-227). */
+    val updatePreferences: UpdatePreferences by lazy { UpdatePreferences(appContext) }
+
+    private val updateInstaller by lazy { UpdateInstaller(appContext) }
+
+    /**
+     * The opt-in update check and install (TEN-227), the one request the app makes on its own. Its own OkHttp pair:
+     * the API call keeps [HfClient]'s timeouts, the APK has no call timeout (like [downloadHttp]). Neither follows a
+     * redirect between https and http.
+     */
+    val updateManager: UpdateManager by lazy {
+        val api = HfClient.defaultHttp().newBuilder().followSslRedirects(false).build()
+        UpdateManager(
+            preferences = updatePreferences,
+            source = ReleaseClient(api, api.newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(30, TimeUnit.SECONDS).build()),
+            verifier = ApkVerifier(
+                archiveSigners = { AndroidSigners.archive(appContext.packageManager, it) },
+                installed = { AndroidSigners.installed(appContext.packageManager, appContext.packageName) },
+            ),
+            installedVersion = BuildConfig.VERSION_NAME,
+            isDebug = BuildConfig.DEBUG,
+            workDir = File(appContext.noBackupFilesDir, "update"),
+            scope = applicationScope,
+            canInstall = updateInstaller::canInstall,
+            install = updateInstaller::install,
+            log = { Log.i(UpdateLogTag, it) },
         )
     }
 

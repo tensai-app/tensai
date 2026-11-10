@@ -241,4 +241,10 @@
     <string name="bench_preparing">Préparation : préchauffe du cache de prompt</string>
     <string name="bench_stop_note_preparing">Arrêter maintenant n\'enregistre rien : aucun prompt n\'est encore noté.</string>
     <string name="decode_preparing">préparation du run</string>
+    <!-- Settings' DEBUG section (TEN-227): where this debug build's update check asks. -->
+    <string name="debug_update_source">Source des mises à jour</string>
+    <string name="debug_update_source_unset">Non définie : ce build ne vérifie jamais</string>
+    <string name="debug_update_source_save">Enregistrer</string>
+    <string name="debug_update_check_now">Rechercher une mise à jour</string>
+    <string name="debug_update_check_now_sub">Sans la limite d\'une fois par jour, l\'accord reste requis</string>
 </resources>

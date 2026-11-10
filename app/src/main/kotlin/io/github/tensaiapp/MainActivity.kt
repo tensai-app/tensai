@@ -103,6 +103,8 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) {
             LoadRequests.offer(intent)
             AgentBench.offer(intent, this)
+            // TEN-227: at most once a day and only once the user opted in, off the UI; see UpdateManager.
+            RuntimeGraph.applicationScope.launch { runCatching { RuntimeGraph.updateManager.checkIfDue() } }
         }
 
         lifecycleScope.launch {
