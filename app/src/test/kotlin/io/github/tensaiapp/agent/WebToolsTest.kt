@@ -21,15 +21,17 @@ class WebToolsTest {
 
     private fun run(tool: Tool, args: String) = runBlocking { tool.execute(args) }
 
-    @Test fun searchListsTitleLinkSnippetAndSource() {
+    @Test fun searchListsTitleAndLinkWithoutTheSnippet() {
         val result = run(search(FakeProvider(results = listOf(hit(1), hit(2)))), """{"query":"kotlin"}""")
 
         assertFalse(result.isError)
+        // A list to pick from, not an answer: the snippet would read as one and end the turn (TEN-183).
         assertEquals(
-            "1. Title 1\n   https://example.com/1\n   snippet 1\n2. Title 2\n   https://example.com/2\n   snippet 2\nsource: DuckDuckGo",
+            "1. Title 1\n   https://example.com/1\n2. Title 2\n   https://example.com/2\nsource: DuckDuckGo",
             result.text,
         )
         assertEquals("DuckDuckGo", result.destination)
+        assertEquals(setOf("https://example.com/1", "https://example.com/2"), FetchUrls.inSearchResult(result.text))
     }
 
     @Test fun destinationListsEveryProviderTheQueryWentTo() {
@@ -64,19 +66,29 @@ class WebToolsTest {
         assertEquals("short", WebToolLimits.clip("  short \n", 50))
     }
 
-    @Test fun urlsAreClippedAndTheListStopsAtTheFirstBlockThatDoesNotFit() {
+    @Test fun aTooLongUrlIsLeftOutAndTheListStopsAtTheFirstBlockThatDoesNotFit() {
         val long = "https://example.com/" + "a".repeat(600)
-        val results = (1..8).map { SearchResult("T$it", if (it == 1) long else "https://e.example/$it", "word ".repeat(100), "duckduckgo") }
-        val text = run(search(FakeProvider(results = results)), """{"query":"q","limit":8}""").text
+        val results = (1..10).map { SearchResult("word ".repeat(40), if (it == 2) long else "https://e.example/$it/" + "b".repeat(250), "snippet", "duckduckgo") }
+        val text = run(search(FakeProvider(results = results)), """{"query":"q","limit":10}""").text
 
-        assertTrue(text.lines().all { it.length <= WebToolLimits.UrlChars + 3 + 1 })
+        // Clipped, the long link would be a dead one the search vouches for: left out, the next result takes its number.
+        assertFalse(text.contains("aaaa"))
+        assertTrue(text.lines().filter { it.startsWith("   ") }.none { it.endsWith("…") })
+        assertTrue(text.contains("1. word") && text.contains("   https://e.example/1/") && text.contains("   https://e.example/3/"))
         val numbers = Regex("(?m)^(\\d+)\\. ").findAll(text).map { it.groupValues[1].toInt() }.toList()
         assertEquals((1..numbers.size).toList(), numbers)
-        assertTrue(numbers.size < 8)
-        assertTrue(text.length <= WebToolLimits.ResultChars)
+        assertTrue(numbers.size < 9)
+        assertTrue(text.length <= WebToolLimits.SearchChars)
+        // Every result kept vouches for its link, whole.
+        assertEquals(results.filter { it.url != long }.take(numbers.size).map { it.url }.toSet(), FetchUrls.inSearchResult(text))
+        // Nothing listable: no results, not a bare source line.
+        assertEquals("no results", run(search(FakeProvider(results = listOf(SearchResult("t", long, "", "duckduckgo")))), """{"query":"q"}""").text)
     }
 
     @Test fun limitDefaultsAndIsClamped() {
+        // Without snippets more links fit: 8 by default, up to 10.
+        assertEquals(8, WebToolLimits.DefaultLimit)
+        assertEquals(10, WebToolLimits.MaxLimit)
         val provider = FakeProvider(results = listOf(hit(1)))
         run(search(provider), """{"query":"q"}""")
         assertEquals(WebToolLimits.DefaultLimit, provider.lastLimit)
@@ -88,12 +100,49 @@ class WebToolsTest {
 
     @Test fun anAnswerStaysUnderTheResultBudget() {
         val long = "word ".repeat(200)
-        val results = (1..8).map { hit(it, snippet = long) }
-        val text = run(search(FakeProvider(results = results)), """{"query":"q","limit":8}""").text
+        val results = (1..10).map { SearchResult(long, "https://example.com/$it/" + "a".repeat(270), long, "duckduckgo") }
+        val text = run(search(FakeProvider(results = results)), """{"query":"q","limit":10}""").text
 
-        assertTrue("was ${text.length}", text.length <= WebToolLimits.ResultChars)
-        assertTrue(text.startsWith("1. Title 1"))
+        assertTrue("was ${text.length}", text.length <= WebToolLimits.SearchChars)
+        assertTrue(text.startsWith("1. word"))
         assertTrue(text.endsWith("source: DuckDuckGo"))
+        // Within the runtime's budget even at 3 characters a token, what a list of links tokenizes to at worst.
+        assertTrue(WebToolLimits.SearchChars <= WebToolLimits.ResultChars)
+        assertTrue(WebToolLimits.SearchChars / 3 < AgentRuntime.ResultTokenBudget)
+    }
+
+    @Test fun tenTypicalResultsAllFitWellUnderTheBudgets() {
+        val results = listOf(
+            "Millau Viaduct - Wikipedia" to "https://en.wikipedia.org/wiki/Millau_Viaduct",
+            "Viaduc de Millau : the structure in figures" to "https://www.leviaducdemillau.com/en/the-structure/key-figures",
+            "Millau Viaduct | Structurae" to "https://structurae.net/en/structures/millau-viaduct",
+            "How tall is the Millau Viaduct? Facts and history" to "https://www.britannica.com/topic/Millau-Viaduct",
+            "Millau Viaduct, France: the tallest bridge in the world" to "https://www.roadtraffic-technology.com/projects/millau/",
+            "The Millau Viaduct, 20 years on - Le Monde" to "https://www.lemonde.fr/en/france/article/2024/12/14/millau-viaduct_6736001_7.html",
+            "Millau Viaduct (Norman Foster) | ArchDaily" to "https://www.archdaily.com/tag/millau-viaduct",
+            "Viaduc de Millau - Aveyron tourism" to "https://www.tourisme-aveyron.com/en/discover/viaduc-de-millau",
+            "Millau Viaduct: engineering the impossible" to "https://www.ice.org.uk/what-is-civil-engineering/infrastructure-projects/millau-viaduct",
+            "Millau Viaduct - Foster + Partners" to "https://www.fosterandpartners.com/projects/millau-viaduct",
+        ).map { (title, url) -> SearchResult(title, url, "A cable-stayed bridge over the Tarn valley, 343 m at its highest.", "duckduckgo") }
+        val text = run(search(FakeProvider(results = results)), """{"query":"millau viaduct height","limit":10}""").text
+
+        assertEquals(results.map { FetchUrls.key(it.url) }.toSet(), FetchUrls.inSearchResult(text))
+        assertFalse(text.contains("cable-stayed"))
+        // About 1,100 characters, some 300 tokens: room to spare under both budgets.
+        assertTrue("was ${text.length}", text.length < 1_200)
+    }
+
+    @Test fun theDescriptionsSayTheSearchGivesLinksToReadWithFetch() {
+        val searchTool = search(null)
+        val fetch = WebFetchTool(PageReader(FakeHttp(), PublicGuard))
+
+        assertTrue(searchTool.description, searchTool.description.contains("links"))
+        assertTrue(searchTool.description, searchTool.description.contains("web_fetch"))
+        assertFalse(searchTool.description, searchTool.description.contains("snippet"))
+        assertTrue(fetch.description, fetch.description.contains("page"))
+        // Prompt tokens on a small model: a sentence or two each.
+        assertTrue(searchTool.description.length <= 120)
+        assertTrue(fetch.description.length <= 80)
     }
 
     @Test fun noResultsIsNotAnError() {

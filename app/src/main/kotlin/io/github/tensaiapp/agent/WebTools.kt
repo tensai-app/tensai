@@ -10,11 +10,17 @@ import org.json.JSONObject
 
 /** Sizes of what the web tools hand back, under [AgentRuntime]'s result budget (512 tokens, about 2,000 characters). */
 object WebToolLimits {
-    /** Room for a whole `web_search` answer; the runtime would cut anything longer. */
+    /** Room for a whole result; the runtime would cut anything longer. */
     const val ResultChars = 1_900
-    const val DefaultLimit = 5
-    const val MaxLimit = 8
-    const val SnippetChars = 220
+
+    /**
+     * Room for a whole `web_search` answer, below [ResultChars]. At about 3 characters a token, what URLs and Latin titles
+     * take, a full answer stays under the 512-token result budget; CJK titles or percent-encoded URLs take more tokens a
+     * character and can pass it, and then [AgentRuntime]'s token cut drops the tail. Ten typical results take about 1,100.
+     */
+    const val SearchChars = 1_500
+    const val DefaultLimit = 8
+    const val MaxLimit = 10
     const val UrlChars = 300
 
     /** Page text kept by `web_fetch`, the rest of [ResultChars] being the URL header and the cut notice. */
@@ -35,6 +41,9 @@ object WebToolLimits {
 /**
  * `web_search`: the search provider chosen in Settings, with the free fallbacks of [SearchProviders].
  *
+ * A list to pick from, not an answer (TEN-183): titles and links, no snippet. A snippet read as the answer, so the model
+ * answered from it instead of reading a page; without them more results fit, and `web_fetch` reads the one it picks.
+ *
  * Never asks: the query goes to the search engine the user chose, not to a host the model picks, so it cannot hand
  * data to a third party of the model's choosing. The links it returns are what lets `web_fetch` read a result
  * without asking, see [ConversationTrust].
@@ -49,7 +58,7 @@ class WebSearchTool(
     class Setup(val chain: FallbackSearch?, val chosen: String)
 
     override val name = NAME
-    override val description = "Searches the web: titles, links and snippets."
+    override val description = "Finds web pages: titles and links only. Read one or more with web_fetch before giving a precise fact."
     override val parametersSchema =
         """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","description":"max ${WebToolLimits.MaxLimit}"}},"required":["query"]}"""
     override val tier = ToolTier.Network
@@ -87,23 +96,27 @@ class WebSearchTool(
     }
 
     /**
-     * A numbered list, title then link then snippet. It stops at the first result that does not fit, so the
-     * numbering has no gap and no result is cut in half.
+     * A numbered list, each title with its link on the line under it, the shape [FetchUrls.inSearchResult] reads. A
+     * result whose link is longer than [WebToolLimits.UrlChars] is left out: clipped, it would be a dead link the search
+     * vouches for. It stops at the first result that does not fit [WebToolLimits.SearchChars], so the numbering has no
+     * gap and no result is cut in half.
      */
     internal fun format(results: List<SearchResult>, source: String): String {
         val footer = "source: $source"
         val out = StringBuilder()
-        for ((index, result) in results.withIndex()) {
+        var listed = 0
+        for (result in results) {
+            val url = result.url.trim()
+            if (url.length > WebToolLimits.UrlChars) continue
             val block = buildString {
-                append(index + 1).append(". ").append(WebToolLimits.clip(result.title, 120)).append('\n')
-                append("   ").append(WebToolLimits.clip(result.url, WebToolLimits.UrlChars)).append('\n')
-                val snippet = WebToolLimits.clip(result.snippet, WebToolLimits.SnippetChars)
-                if (snippet.isNotEmpty()) append("   ").append(snippet).append('\n')
+                append(listed + 1).append(". ").append(WebToolLimits.clip(result.title, 120)).append('\n')
+                append("   ").append(url).append('\n')
             }
-            if (index > 0 && out.length + block.length + footer.length > WebToolLimits.ResultChars) break
+            if (listed > 0 && out.length + block.length + footer.length > WebToolLimits.SearchChars) break
             out.append(block)
+            listed++
         }
-        return out.append(footer).toString()
+        return if (listed == 0) "no results" else out.append(footer).toString()
     }
 
     companion object {
@@ -127,7 +140,7 @@ class WebFetchTool(
     private val maxChars: Int = WebToolLimits.PageChars,
 ) : Tool {
     override val name = "web_fetch"
-    override val description = "Returns the text of one web page, given its full https URL."
+    override val description = "Reads one web page, given its full https URL."
     override val parametersSchema = """{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}"""
     override val tier = ToolTier.Network
     override val returnsUntrustedContent = true
